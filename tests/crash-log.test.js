@@ -20,6 +20,7 @@ const path = require('node:path');
 
 const { createCrashLog } = require('../src/crash-log');
 const { installCrashGuards } = require('../src/crash-guard');
+const { APP_KEEP_JS } = require('../scripts/harden-package');
 
 const ROOT = path.join(__dirname, '..');
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8');
@@ -154,6 +155,8 @@ test('the crash path ships and the desktop server does not own process errors', 
   const pkg = JSON.parse(read('package.json'));
   assert.ok(pkg.build.files.includes('src/crash-log.js'), 'crash-log.js is missing from app.asar');
   assert.ok(pkg.build.files.includes('src/crash-guard.js'), 'crash-guard.js is missing from app.asar');
+  assert.ok(APP_KEEP_JS.has('src/crash-log.js'), 'crash-log.js is compiled to bytecode');
+  assert.ok(APP_KEEP_JS.has('src/crash-guard.js'), 'crash-guard.js is compiled to bytecode');
 
   const main = read('src/main.js');
   assert.match(main, /installCrashGuards\s*\(/);
@@ -164,4 +167,7 @@ test('the crash path ships and the desktop server does not own process errors', 
   const logger = read('api/src/utils/logger.js');
   assert.match(logger, /POSNIC_MAIN_PROCESS/);
   assert.match(logger, /mainOwnsProcessErrors/);
+
+  const apiServer = read('api/server.js');
+  assert.match(apiServer, /process\.env\.POSNIC_MAIN_PROCESS\s*!==\s*['"]1['"]/);
 });

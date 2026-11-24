@@ -28,6 +28,17 @@ let registered = false;
 let lastLoad = null;
 
 /*
+ * V8 drops bytecode that has not run for several garbage collections and
+ * recompiles it from source on the next call. A .jsc has no real source - the
+ * loader passes spaces of the right length - so a flushed function fails with
+ * "SyntaxError: Unexpected end of input" the first time it is used again.
+ * That is how an idle till died the moment a settings page called a handler
+ * that had not run since startup. The compile step sets this same flag so the
+ * cache it writes is accepted here.
+ */
+v8.setFlagsFromString('--no-flush-bytecode');
+
+/*
  * A read that returns fewer bytes than the file has is a real failure mode on
  * a FUSE mount that is being torn down (the AppImage runtime on Linux). A
  * short cache starts with a valid header and ends in the middle of V8's data;
@@ -115,47 +126,52 @@ function loadBytecode(module, filename) {
   const dummySource = ' '.repeat(header.sourceLength);
 
   let script;
+  /*
+   * Keep --no-lazy set while the cache is instantiated and run. The cache was
+   * created under the same flag, and any function V8 still treats as lazy
+   * would be parsed from the dummy source instead of its real body.
+   */
   v8.setFlagsFromString('--no-lazy');
   try {
     script = new vm.Script(dummySource, {
       filename: virtualFilename,
       cachedData: header.cachedData,
     });
+
+    if (script.cachedDataRejected) {
+      throw new Error(
+        `[bytecode] V8 rejected the cache for ${filename}. Rebuild with the Electron runtime that runs the app.`,
+      );
+    }
+
+    const compiled = script.runInThisContext();
+    if (typeof compiled !== 'function') {
+      throw new Error(`[bytecode] compiled module did not return a function: ${filename}`);
+    }
+
+    const actualJs = filename.replace(/\.jsc$/, '.js');
+    module.filename = actualJs;
+    module.id = actualJs;
+    module.path = path.dirname(actualJs);
+    module.paths = Module._nodeModulePaths(path.dirname(actualJs));
+
+    const localRequire = (request) => module.require(request);
+    localRequire.resolve = (request) => Module._resolveFilename(request, module);
+    localRequire.main = process.mainModule;
+    localRequire.extensions = Module._extensions;
+    localRequire.cache = Module._cache;
+
+    compiled.call(
+      module.exports,
+      module.exports,
+      localRequire,
+      module,
+      virtualFilename,
+      path.dirname(actualJs),
+    );
   } finally {
     v8.setFlagsFromString('--lazy');
   }
-
-  if (script.cachedDataRejected) {
-    throw new Error(
-      `[bytecode] V8 rejected the cache for ${filename}. Rebuild with the Electron runtime that runs the app.`,
-    );
-  }
-
-  const compiled = script.runInThisContext();
-  if (typeof compiled !== 'function') {
-    throw new Error(`[bytecode] compiled module did not return a function: ${filename}`);
-  }
-
-  const actualJs = filename.replace(/\.jsc$/, '.js');
-  module.filename = actualJs;
-  module.id = actualJs;
-  module.path = path.dirname(actualJs);
-  module.paths = Module._nodeModulePaths(path.dirname(actualJs));
-
-  const localRequire = (request) => module.require(request);
-  localRequire.resolve = (request) => Module._resolveFilename(request, module);
-  localRequire.main = process.mainModule;
-  localRequire.extensions = Module._extensions;
-  localRequire.cache = Module._cache;
-
-  compiled.call(
-    module.exports,
-    module.exports,
-    localRequire,
-    module,
-    virtualFilename,
-    path.dirname(actualJs),
-  );
   lastLoad = {
     filename,
     phase: 'loaded',

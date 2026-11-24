@@ -90,6 +90,47 @@ test('runtime rejects bytecode whose cached data was changed or cut short', () =
   }
 });
 
+test('bytecode survives V8 flushing a function that has not run', (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'posnic-bytecode-flush-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const entry = path.join(dir, 'entry.js');
+  fs.writeFileSync(
+    entry,
+    [
+      "'use strict';",
+      'exports.early = () => "early";',
+      'exports.late = () => "late";',
+    ].join('\n'),
+  );
+
+  const manifest = path.join(dir, 'manifest.json');
+  fs.writeFileSync(
+    manifest,
+    JSON.stringify({
+      files: [{ input: entry, output: entry.replace(/\.js$/, '.jsc'), filename: '/posnic/test/flush.js' }],
+    }),
+  );
+  const compiled = spawnSync(process.execPath, [COMPILER, '--manifest', manifest], { encoding: 'utf8' });
+  assert.equal(compiled.status, 0, compiled.stderr);
+
+  require(RUNTIME).register();
+  const loaded = require(entry.replace(/\.js$/, '.jsc'));
+  assert.equal(loaded.early(), 'early');
+
+  /* Flush every function that has not run, then call one of them. Without
+     --no-flush-bytecode V8 recompiles it from the dummy source and throws
+     "SyntaxError: Unexpected end of input". */
+  const v8 = require('node:v8');
+  v8.setFlagsFromString('--stress-flush-code');
+  v8.setFlagsFromString('--allow-natives-syntax');
+  try {
+    for (let i = 0; i < 12; i += 1) eval('%CollectGarbage(null)');
+    assert.equal(loaded.late(), 'late');
+  } finally {
+    v8.setFlagsFromString('--no-stress-flush-code');
+  }
+});
+
 test('runtime rejects a cache from a different V8 version', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'posnic-bytecode-bad-'));
   try {

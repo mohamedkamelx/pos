@@ -29,6 +29,15 @@ const APP_RENDERER_FILES = new Set([
   'src/preload.js',
 ]);
 
+// The crash path stays readable JavaScript. A .jsc has no source to recompile
+// from if V8 flushes its bytecode, so a crash handler compiled to bytecode can
+// itself throw "Unexpected end of input" while recording an unrelated failure.
+// Keeping these two plain means the next crash still leaves a full stack.
+const APP_KEEP_JS = new Set([
+  'src/crash-log.js',
+  'src/crash-guard.js',
+]);
+
 // These two are also read as text and executed inside the hidden print window.
 // Bytecode would make them unreadable to that renderer.
 const API_KEEP_JS = new Set([
@@ -215,6 +224,7 @@ async function harden(context) {
     for (const file of walk(path.join(tempDir, 'src'), (name) => name.endsWith('.js'))) {
       const rel = path.relative(tempDir, file).replace(/\\/g, '/');
       if (APP_RENDERER_FILES.has(rel)) continue;
+      if (APP_KEEP_JS.has(rel)) continue;
       if (renderers.has(path.basename(file))) continue;
       if (rel === 'src/server.js') continue;
       addFile(appFiles, file, `/posnic/app/${rel}`);
@@ -273,6 +283,11 @@ async function harden(context) {
     if (listed.some((name) => name.endsWith('.map'))) {
       throw new Error('[bytecode] source maps remain in app.asar');
     }
+    for (const name of APP_KEEP_JS) {
+      if (!listed.includes(`/${name}`) || listed.includes(`/${name.replace(/\.js$/, '.jsc')}`)) {
+        throw new Error(`[bytecode] ${name} must ship as plain JavaScript`);
+      }
+    }
     if (walk(path.join(resources, 'frontend')).some((name) => name.endsWith('.map'))) {
       throw new Error('[bytecode] source maps remain beside the frontend');
     }
@@ -289,4 +304,4 @@ async function harden(context) {
   }
 }
 
-module.exports = { harden };
+module.exports = { APP_KEEP_JS, harden };

@@ -23,13 +23,18 @@ require('./src/config/verify-secrets').verifySecrets();
 const app = require('./app');
 const config = require('./src/config/config');
 
-// Handle uncaught exceptions
-process.on('uncaughtException', (err) => {
-  console.log('❌ UNCAUGHT EXCEPTION! Shutting down...');
-  console.log(err.name, err.message);
-  console.error(err);
-  process.exit(1);
-});
+// Handle uncaught exceptions. The desktop loads the API inside the Electron
+// main process, and that process owns uncaught errors and writes crash.log;
+// registering this handler there would exit the till from underneath it. A
+// standalone server still gets the handler.
+if (process.env.POSNIC_MAIN_PROCESS !== '1') {
+  process.on('uncaughtException', (err) => {
+    console.log('❌ UNCAUGHT EXCEPTION! Shutting down...');
+    console.log(err.name, err.message);
+    console.error(err);
+    process.exit(1);
+  });
+}
 
 // Get MongoDB URI from environment
 const DB_URI =
@@ -154,15 +159,17 @@ const startServer = async () => {
       console.log('🚀 =====================================');
     });
 
-    // Handle unhandled promise rejections
-    process.on('unhandledRejection', (err) => {
-      console.log('❌ UNHANDLED REJECTION! Shutting down...');
-      console.log(err.name, err.message);
-      console.error(err);
-      server.close(() => {
-        process.exit(1);
+    // Handle unhandled promise rejections. The desktop main process owns them.
+    if (process.env.POSNIC_MAIN_PROCESS !== '1') {
+      process.on('unhandledRejection', (err) => {
+        console.log('❌ UNHANDLED REJECTION! Shutting down...');
+        console.log(err.name, err.message);
+        console.error(err);
+        server.close(() => {
+          process.exit(1);
+        });
       });
-    });
+    }
 
     // Graceful shutdown
     process.on('SIGTERM', () => {
