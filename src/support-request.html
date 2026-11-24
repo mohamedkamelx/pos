@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Copy Support Report | Posnic</title>
+  <link rel="stylesheet" href="window-theme.css">
+  <script src="window-theme.js"></script>
+  <style>
+    /*
+      A support report that stays on this computer.
+      The shop can see everything the report contains before copying it, and
+      nothing is sent to a vendor endpoint by this build.
+    */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Segoe UI', system-ui, sans-serif; background: #f5f7fa; color: #16233b;
+      height: 100vh; overflow-y: auto; padding: 22px; }
+    .wrap { max-width: 660px; margin: 0 auto; }
+    h1 { font-size: 19px; margin-bottom: 3px; }
+    .sub { color: #5b6b82; font-size: 13px; margin-bottom: 16px; }
+    .card { background: #fff; border: 1px solid #e3e9f1; border-radius: 12px; padding: 18px; margin-bottom: 14px; }
+    label { display: block; font-size: 12.5px; font-weight: 600; color: #43536b; margin: 12px 0 5px; }
+    label:first-child { margin-top: 0; }
+    textarea { width: 100%; padding: 9px 12px; border: 1.5px solid #d5dde8;
+      border-radius: 8px; font-size: 14px; font-family: inherit; color: #16233b; background: #fff; }
+    textarea:focus { outline: none; border-color: #3D85C6; }
+    .btn { border: 1px solid #d5dde8; background: #fff; border-radius: 8px; padding: 9px 16px;
+      font-size: 14px; cursor: pointer; color: #16233b; }
+    .btn.primary { background: #3D85C6; border-color: #3D85C6; color: #fff; font-weight: 600; }
+    .attach { display: flex; align-items: flex-start; gap: 10px; padding: 9px 0; font-size: 13.5px; }
+    .attach input[type=checkbox] { width: 15px; height: 15px; margin-top: 3px; flex: none; accent-color: #3D85C6; }
+    .attach small { display: block; color: #5b6b82; font-size: 12.5px; }
+    .peek { max-height: 150px; overflow: auto; background: #f7fafd; border: 1px solid #e3e9f1;
+      border-radius: 8px; padding: 9px 11px; font-family: ui-monospace, Consolas, monospace;
+      font-size: 11.5px; white-space: pre-wrap; color: #43536b; margin-top: 8px; }
+    .msg { display: none; padding: 10px 13px; border-radius: 8px; font-size: 13.5px; margin-top: 12px; }
+    .msg.err { display: block; background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+    .msg.ok { display: block; background: #f0fdf4; color: #15803d; border: 1px solid #bbf7d0; }
+    .to { font-size: 12px; color: #5b6b82; margin-top: 10px; }
+  </style>
+  <link rel="stylesheet" href="desktop-design.css">
+</head>
+<body class="desktop-window" data-desktop-window="support">
+  <div class="wrap">
+    <h1 id="title">Copy a support report</h1>
+    <p class="sub" id="sub">This build keeps the report on this computer. Copy it into your usual support channel.</p>
+
+    <div class="card">
+      <label for="detail">What happened?</label>
+      <textarea id="detail" rows="5" placeholder="What were you doing, what did you expect, and what happened instead? If it happens at a particular time of day or with a particular item, say so."></textarea>
+    </div>
+
+    <div class="card">
+      <b style="font-size:14px;">What the report contains</b>
+
+      <label class="attach" for="incSystem" style="margin-top:10px;">
+        <input type="checkbox" id="incSystem" checked>
+        <span><b>This computer's details</b>
+          <small id="sysSummary">Loading…</small></span>
+      </label>
+
+      <label class="attach" for="incLog">
+        <input type="checkbox" id="incLog" checked>
+        <span><b>The last few hundred lines of the log</b>
+          <small>What the application recorded while the problem happened. Passwords are
+            removed before anything is written to it.</small></span>
+      </label>
+      <div class="peek" id="logPeek">Loading…</div>
+
+      <p class="to">Nothing is sent automatically.</p>
+    </div>
+
+    <div class="msg" id="msg"></div>
+    <div style="display:flex;gap:10px;margin-top:4px;flex-wrap:wrap;">
+      <button class="btn primary" id="copyReport">Copy report</button>
+      <button class="btn" id="close">Close</button>
+    </div>
+  </div>
+
+  <script>
+    const $ = (id) => document.getElementById(id);
+    let CTX = null;
+
+    function say(text, cls) { const m = $('msg'); m.textContent = text; m.className = 'msg ' + cls; }
+
+    (async () => {
+      try {
+        CTX = await window.electronAPI.support.context();
+        const s = CTX.system;
+        $('sysSummary').textContent =
+          `Posnic ${s.app} · ${s.osName} ${s.platform} · ${s.memoryGB} GB`;
+        $('logPeek').textContent = CTX.logTail.length
+          ? CTX.logTail.slice(-40).join('\n')
+          : 'The log is empty.';
+      } catch (e) {
+        say('Could not gather the details: ' + e.message, 'err');
+      }
+    })();
+
+    $('close').onclick = () => window.close();
+
+    $('copyReport').onclick = async () => {
+      if (!CTX) { say('The report is still loading.', 'err'); return; }
+      const s = CTX.system;
+      const lines = [
+        'Posnic support report',
+        `Version: ${s.app}`,
+      ];
+      if ($('incSystem').checked) {
+        lines.push(
+          `Electron: ${s.electron}`,
+          `Node: ${s.node}`,
+          `Platform: ${s.platform}`,
+          `Locale: ${s.locale}`,
+          `Uptime: ${s.uptimeMinutes} minutes`,
+        );
+      }
+      const detail = $('detail').value.trim();
+      if (detail) lines.push('', 'What happened:', detail);
+      if ($('incLog').checked) lines.push('', 'Log:', ...(CTX.logTail || []));
+      try {
+        await navigator.clipboard.writeText(lines.join('\n'));
+        $('copyReport').textContent = 'Copied';
+        say('The report is on the clipboard. Paste it into your support channel.', 'ok');
+        setTimeout(() => { $('copyReport').textContent = 'Copy report'; }, 2600);
+      } catch (e) {
+        say('Could not copy the report: ' + e.message, 'err');
+      }
+    };
+  </script>
+</body>
+</html>

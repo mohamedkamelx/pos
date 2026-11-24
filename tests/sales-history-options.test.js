@@ -1,0 +1,50 @@
+const { describe, it: test, before: beforeAll, after: afterAll } = require('node:test');
+const assert = require('node:assert/strict');
+const { MongoMemoryServer } = require('../api/node_modules/mongodb-memory-server');
+const { MongoClient, ObjectId } = require('../api/node_modules/mongodb');
+const pipeline = require('../api/src/helpers/sales-history-options');
+
+describe('recorded history filter choices', () => {
+  let server, client, sales;
+  const branchId = new ObjectId(), licenseId = new ObjectId();
+  beforeAll(async () => {
+    server = await MongoMemoryServer.create();
+    client = await MongoClient.connect(server.getUri());
+    sales = client.db('choices').collection('sales');
+    await sales.insertMany([
+      { license: licenseId, branch_id: branchId, user_name: 'Jack', created_by: '', client: { device_id: 'tablet-1', device_model: 'Counter tablet' } },
+      { license: licenseId, branch_id: branchId, second_actor: { name: '' }, client: { staff_name: 'Asha', device_id: 'tablet-1', device_model: 'Counter tablet' } },
+      { license: new ObjectId(), branch_id: branchId, created_by: 'Other tenant' },
+      { license: licenseId, branch_id: new ObjectId(), created_by: 'Other branch' },
+      ...Array.from({length:12}, (_,i)=>({license:licenseId,branch_id:branchId,created_by:'Staff '+i})),
+    ]);
+  });
+  afterAll(async () => { if (client) await client.close(); if (server) await server.stop(); });
+  const options = (field, query='') => sales.aggregate(pipeline({branchId,licenseId,field,query})).toArray();
+  test('initial choices are capped, tenant scoped and use staff names', async () => {
+    const rows = await options('staff');
+    assert.equal(rows.length,10);
+    assert.ok(rows.some(r=>r.value==='Asha'));assert.ok(rows.some(r=>r.value==='Jack'));
+    assert.deepEqual(await options('staff','Cashier'),[]);
+    assert.deepEqual(await options('staff','Other'),[]);
+  });
+  test('device search uses model or ID and deduplicates records', async () => {
+    assert.deepEqual(await options('device','counter'),[{label:'Counter tablet',value:'tablet-1'}]);
+    assert.equal((await options('device','tablet-1')).length,1);
+    assert.deepEqual(await options('device','.*'),[]);
+  });
+  test('seller suggestions preserve separate identities for namesakes and legacy creator IDs', async () => {
+    const first = new ObjectId(), second = new ObjectId();
+    await sales.insertMany([
+      { license: licenseId, branch_id: branchId, user_id: first, user_name: 'Ravi' },
+      { license: licenseId, branch_id: branchId, user_id: '', user_name: 'Importer', created_by_id: second, created_by: 'Ravi' },
+      { license: licenseId, branch_id: branchId, user_name: 'Ravi' },
+      { license: licenseId, branch_id: new ObjectId(), user_id: new ObjectId(), user_name: 'Ravi' },
+    ]);
+    assert.deepEqual(await options('seller','Ravi'), [first,second].map(id => ({value:String(id),label:'Ravi'})));
+  });
+  test('invalid field, query objects and branch IDs are rejected', () => {
+    for (const extra of [{field:'password'}, {query:{$ne:''}}, {branchId:'invalid'}])
+      assert.throws(()=>pipeline({branchId,licenseId,field:'staff',...extra}));
+  });
+});

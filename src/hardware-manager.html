@@ -1,0 +1,1771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hardware Manager</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            width: 100%;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+            overflow: hidden;
+        }
+
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 35px 40px;
+            text-align: center;
+        }
+
+        .header h1 {
+            font-size: 36px;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .header p {
+            opacity: 0.95;
+            font-size: 17px;
+            font-weight: 400;
+        }
+
+        /* Responsive Tabs */
+        .tabs {
+            display: flex;
+            flex-wrap: wrap;
+            background: white;
+            border-bottom: 3px solid #e9ecef;
+            gap: 0;
+            padding: 0;
+        }
+
+        .tab {
+            flex: 1 1 auto;
+            min-width: 180px;
+            padding: 18px 25px;
+            text-align: center;
+            cursor: pointer;
+            background: #f8f9fa;
+            border: none;
+            border-bottom: 3px solid transparent;
+            font-size: 16px;
+            font-weight: 600;
+            transition: all 0.3s;
+            color: #6c757d;
+            position: relative;
+        }
+
+        .tab:hover:not(.tab-disabled) {
+            background: rgba(102,126,234,.08);
+            border-bottom-color: #667eea;
+            color: #667eea;
+        }
+
+        .tab.active {
+            background: white;
+            color: #667eea;
+            border-bottom-color: #667eea;
+        }
+
+        .tab-active-indicator {
+            position: absolute;
+            bottom: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 40px;
+            height: 3px;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+            border-radius: 3px 3px 0 0;
+        }
+
+        .tab-disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+            background: #e9ecef;
+        }
+
+        .tab-disabled:hover {
+            transform: none;
+        }
+
+        /* Content Area */
+        .content {
+            padding: 40px;
+            min-height: 500px;
+            background: #fafbfc;
+        }
+
+        .tab-content {
+            display: none;
+            animation: fadeIn 0.3s ease-out;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(15px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .btn-loading {
+            opacity: 0.8;
+            cursor: not-allowed;
+        }
+
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.5; transform: scale(1.3); }
+        }
+
+        /* Form Elements */
+        .form-group {
+            margin-bottom: 24px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 10px;
+            font-weight: 600;
+            font-size: 15px;
+            color: #374151;
+        }
+
+        select, input[type="text"], textarea {
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid #e5e7eb;
+            border-radius: 12px;
+            font-size: 15px;
+            background: white;
+            transition: all 0.3s;
+            color: #374151;
+        }
+
+        select:focus, input:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 4px rgba(102,126,234,.1);
+        }
+
+        /* Buttons */
+        .btn {
+            padding: 14px 28px;
+            border: none;
+            border-radius: 12px;
+            cursor: pointer;
+            font-size: 15px;
+            font-weight: 600;
+            transition: all 0.3s;
+            letter-spacing: 0.3px;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+
+        .btn-primary:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(102,126,234,.4);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+            color: white;
+        }
+
+        .btn-success:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(40,167,69,.4);
+        }
+
+        .btn-danger {
+            background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+            color: white;
+        }
+
+        .btn-danger:hover:not(:disabled) {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px rgba(220,53,69,.4);
+        }
+
+        /* Status Messages */
+        .status {
+            padding: 16px;
+            margin: 15px 0;
+            border-radius: 8px;
+            text-align: center;
+            font-weight: 600;
+        }
+
+        .status-connected {
+            background: #d4edda;
+            border: 2px solid #28a745;
+            color: #155724;
+        }
+
+        #scaleNetwork.hidden { display: none; }
+        #scaleNetwork:not(.hidden) { display: grid; grid-template-columns: 2fr 1fr; gap: 12px; }
+        .hidden {
+            display: none;
+        }
+
+        /* Lists */
+        .printer-list {
+            list-style: none;
+            padding: 0;
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+            gap: 15px;
+            margin: 20px 0;
+        }
+
+        .printer-item {
+            padding: 18px;
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .printer-item:hover {
+            border-color: #506fe4;
+            box-shadow: 0 2px 8px rgba(80, 111, 228, 0.15);
+            transform: translateY(-2px);
+        }
+
+        .printer-item.selected {
+            border-color: #28a745;
+            background: #e8f5e9;
+            box-shadow: 0 2px 8px rgba(40, 167, 69, 0.15);
+        }
+
+        .printer-item.default {
+            border-color: #506fe4;
+            background: rgba(80, 111, 228, 0.1);
+        }
+
+        .printer-name {
+            font-weight: 700;
+            font-size: 16px;
+            color: #333;
+            margin-bottom: 6px;
+        }
+
+        .printer-info {
+            font-size: 13px;
+            color: #666;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 10px;
+            border-radius: 12px;
+            font-size: 11px;
+            font-weight: 700;
+            margin-left: 8px;
+            text-transform: uppercase;
+        }
+
+        .badge.default {
+            background: #506fe4;
+            color: white;
+        }
+
+        /* Responsive Design */
+        @media (max-width: 768px) {
+            .tabs {
+                flex-direction: column;
+            }
+
+            .tab {
+                min-width: 100%;
+            }
+
+            .content {
+                padding: 20px;
+            }
+
+            .printer-list {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .live-data {
+            font-size: 28px;
+            font-weight: bold;
+            color: #506fe4;
+            margin: 20px 0;
+            padding: 30px;
+            background: rgba(80, 111, 228, 0.1);
+            border: 2px solid #506fe4;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .port-info {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 15px 0;
+        }
+
+        h2 {
+            color: #506fe4;
+            margin: 25px 0 15px;
+            font-size: 22px;
+            font-weight: 600;
+        }
+    </style>
+  <!-- The shop's theme, applied over this window's own styles. See window-theme.js. -->
+  <link rel="stylesheet" href="window-theme.css">
+  <script src="window-theme.js"></script>
+  <link rel="stylesheet" href="desktop-design.css">
+</head>
+<body class="desktop-window" data-desktop-window="hardware">
+    <div class="container">
+        <div class="header">
+            <h1>🔧 Hardware Manager</h1>
+            <p>Connections, test printing and diagnostics for this computer.</p>
+        </div>
+
+        <div class="tabs">
+            <button class="tab active" onclick="switchTab('receipt')">🧾 Receipt Printer</button>
+            <button class="tab" onclick="switchTab('cash')">💰 Cash Drawer</button>
+            <button class="tab" onclick="switchTab('weight')">⚖️ Weight Machine</button>
+            <button class="tab" onclick="switchTab('scanner')">🔎 Barcode Scanner</button>
+        </div>
+
+        <div class="content">
+            <!-- Cash Drawer Tab (now default) -->
+            <!--
+              Receipt printing lives here rather than in Settings because it
+              describes this machine, not the shop. Two counters have different
+              printers attached and often different paper: a shop-wide setting
+              would have one till overwriting the other's.
+
+              Everything about what the receipt SAYS - header, footer, logo,
+              extra lines - stays in Settings, because that is a shop decision.
+            -->
+            <div id="receiptTab" class="tab-content active">
+                <nav class="printer-nav" role="tablist" aria-label="Receipt printer settings"><button type="button" id="printer-nav-0" role="tab" aria-controls="printer-panel-0" aria-selected="true" tabindex="0" onclick="showPrinterPanel(0)">Printers</button>
+<button type="button" id="printer-nav-2" role="tab" aria-controls="printer-panel-2" aria-selected="false" tabindex="-1" onclick="showPrinterPanel(2)">Diagnostics</button>
+<button type="button" id="printer-nav-3" role="tab" aria-controls="printer-panel-3" aria-selected="false" tabindex="-1" onclick="showPrinterPanel(3)">Help</button></nav>
+                <div id="rpStatus" role="status" style="display:none;"></div>
+                <section id="printer-panel-0" class="printer-panel" role="tabpanel" aria-labelledby="printer-nav-0">
+                    <div class="printer-card">
+                        <div class="printer-heading"><div><h2>Receipt printers</h2><p class="printer-note">Choose printers, paper size and copies for this computer.</p></div>
+                            <button type="button" onclick="rpLoadPrinters()">Reload printers</button></div>
+                        <div id="rpPrinterList"><p class="printer-note">Loading printers…</p></div>
+                        <div class="printer-actions"><button class="btn btn-primary" onclick="rpSave()">Save settings</button>
+                            <button id="rpTestBtn" onclick="rpTestPrint()">Print test receipt</button>
+                            <span id="rpSummary" role="status" class="printer-note"></span></div>
+                    </div>
+                    <div class="printer-health-strip"><span id="printerHealthSummary" role="status">Checking print service…</span><button type="button" onclick="showPrinterPanel(2, true)">View diagnostics</button></div>
+            <div class="printer-card">
+                <div class="printer-heading">
+                    <div style="font-size:15px;font-weight:700;color:#374151;">🧾 Receipt &amp; Bill Prints</div>
+                    <div style="display:flex;gap:8px;align-items:center;">
+                        <input type="date" id="rcptLogDate" aria-label="Receipt log date" style="padding:8px 12px;border:2px solid #e5e7eb;border-radius:8px;font-size:13px;">
+                        <button onclick="rcptLoadLogs()" class="btn btn-primary" style="padding:8px 16px;font-size:13px;">🔍 Load</button>
+                    </div>
+                </div>
+                <div style="background:#fff;border:2px solid #e9ecef;border-radius:12px;overflow:auto;">
+                    <div id="rcptLogsEmpty" style="padding:32px;text-align:center;color:#9ca3af;font-size:14px;">Select a date and click Load to view receipt prints.</div>
+                    <table id="rcptLogsTable" style="display:none;width:100%;border-collapse:collapse;font-size:13px;">
+                        <thead>
+                            <tr style="background:#f8f9fa;border-bottom:2px solid #e9ecef;">
+                                <th style="padding:10px 12px;text-align:left;font-weight:700;color:#374151;">Time</th>
+                                <th style="padding:10px 12px;text-align:left;font-weight:700;color:#374151;">Bill</th>
+                                <th style="padding:10px 12px;text-align:left;font-weight:700;color:#374151;">Document</th>
+                                <th style="padding:10px 12px;text-align:left;font-weight:700;color:#374151;">From</th>
+                                <th style="padding:10px 12px;text-align:left;font-weight:700;color:#374151;">Printers</th>
+                                <th style="padding:10px 12px;text-align:left;font-weight:700;color:#374151;">Speed</th>
+                                <th style="padding:10px 12px;text-align:left;font-weight:700;color:#374151;">Result</th>
+                            </tr>
+                        </thead>
+                        <tbody id="rcptLogsBody"></tbody>
+                    </table>
+                </div>
+            </div>
+
+                </section>
+                <section id="printer-panel-2" class="printer-panel" role="tabpanel" aria-labelledby="printer-nav-2" hidden>
+                    <div class="printer-card" id="printerEnvironment"><h2>Computer readiness</h2><p class="printer-note">Read-only checks. No printer data is sent.</p><div id="printerEnvironmentStatus" role="status"></div><div id="printerEnvironmentChecks"></div><ol id="printerEnvironmentSteps"></ol></div>
+                    <div id="windowsRecovery" style="display:none;">
+                        <div class="printer-card"><h2>Print jobs &amp; recovery</h2><p class="printer-note">“Sent to printer” confirms software delivery. Check the paper to confirm printing.</p><div id="wrMessage" role="status"></div><div id="wrJobs" role="status"></div></div>
+                        <div class="printer-card"><h2>Windows printer binding</h2><p class="printer-note">Changes apply to new jobs. Pending jobs keep their original printer and port.</p>
+                            <div class="printer-fields"><label for="wrPrinter">Printer queue<select id="wrPrinter" onchange="wrSelection()"></select></label><label for="wrPort">Expected port<input id="wrPort" placeholder="Detected on first use" maxlength="128"></label><label class="printer-wide" for="wrPnp">Physical USB instance ID (optional)<input id="wrPnp" placeholder="USBPRINT\…" maxlength="512"></label></div>
+                            <label class="printer-check"><input type="checkbox" id="wrInitialize" checked> Initialize ESC/POS before sending</label>
+                            <label class="printer-check"><input type="checkbox" id="wrKeepAlive" checked> Send idle ESC/POS initialization</label>
+                            <p class="printer-note">Supported printers only. Sends a reset after 30 seconds idle, without feed or cut. See Help before enabling.</p>
+                            <button type="button" onclick="wrSave()">Save recovery settings</button>
+                        </div>
+                        <div class="printer-card"><h2>Technical details</h2><h3>Windows queues</h3><pre id="wrHealth"></pre><h3>Idle initialization</h3><pre id="wrKeepAliveStatus"></pre><h3>Last helper diagnostic</h3><pre id="wrDiagnostic"></pre></div>
+                    </div>
+                </section>
+                <section id="printer-panel-3" class="printer-panel" role="tabpanel" aria-labelledby="printer-nav-3" hidden>
+                    <div class="printer-card printer-guide"><h2>Printing stops after idle</h2><p class="printer-note">Change one setting at a time and record its original value. Check the queue before sending another copy.</p><ol id="printerEnvironmentSteps"></ol></div>
+                    <div class="printer-card printer-guide"><h2>Power &amp; connections</h2><div id="wrPower"></div><p>For a dedicated counter, keep the computer plugged in and prevent sleep or hibernate while serving. Battery settings affect battery life. Posnic does not change these Windows settings.</p><p>If USB disconnects, inspect the affected USB hub in Device Manager → Properties → Power Management. Temporarily test without “Allow the computer to turn off this device to save power”, where available. Restore it if there is no improvement.</p><p>For extender connections, test with a short direct USB cable across the usual idle period. Initialization cannot restore a device Windows cannot see.</p></div>
+                    <div class="printer-card printer-guide"><h2>About idle initialization</h2><p>ESC @ resets printer state; it is not a guaranteed wake command. Enable only for compatible ESC/POS printers. It pauses during app printing or disconnection. Do not run a separate keep-alive helper alongside it.</p><p class="printer-note">Checks refresh while this page is open. System results may be cached for one minute. Windows recovery controls are available on Windows only.</p></div>
+                </section>
+            </div>
+
+            <div id="cashTab" class="tab-content">
+                <!-- Status bar -->
+                <div id="cdStatus" style="display:none;padding:16px 20px;border-radius:12px;margin-bottom:20px;font-weight:600;font-size:15px;box-shadow:0 2px 8px rgba(0,0,0,0.1);"></div>
+
+                <!-- Printer method config -->
+                <div id="cdPrinterConfig" style="background:#fff;padding:24px;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,0.08);margin-bottom:20px;">
+                    <div class="form-group">
+                        <label style="font-size:16px;font-weight:700;color:#2c3e50;display:block;margin-bottom:12px;">🖨️ Receipt Printer (cash drawer connected to it):</label>
+                        <div style="display:flex;gap:12px;">
+                            <select id="cdPrinterSelect" style="flex:1;padding:14px 16px;border:2px solid #e9ecef;border-radius:10px;font-size:15px;background:#fff;color:#2c3e50;transition:border-color .2s;">
+                                <option value="">-- Load printers --</option>
+                            </select>
+                            <button onclick="cdLoadPrinters()" class="btn btn-primary" style="padding:14px 24px;border-radius:10px;font-weight:600;white-space:nowrap;">🔍 Load</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Pin & auto-open -->
+                <div style="background:linear-gradient(135deg,#f8f9fa 0%,#e9ecef 100%);padding:24px;border-radius:16px;box-shadow:0 4px 16px rgba(0,0,0,0.08);margin-bottom:20px;">
+                    <div style="display:flex;align-items:center;gap:32px;flex-wrap:wrap;">
+                        <div style="flex:1;min-width:280px;">
+                            <label style="font-size:16px;font-weight:700;color:#2c3e50;display:block;margin-bottom:12px;">📍 Trigger Pin:</label>
+                            <div style="display:flex;gap:20px;">
+                                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px 16px;background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.08);transition:all .2s;">
+                                    <input type="radio" name="cdPin" value="0" checked style="width:18px;height:18px;"> Pin 2 (RJ11)
+                                </label>
+                                <label style="display:flex;align-items:center;gap:8px;cursor:pointer;padding:10px 16px;background:#fff;border-radius:8px;box-shadow:0 2px 6px rgba(0,0,0,0.08);transition:all .2s;">
+                                    <input type="radio" name="cdPin" value="1" style="width:18px;height:18px;"> Pin 5
+                                </label>
+                            </div>
+                        </div>
+                        <div style="display:flex;align-items:center;gap:10px;padding:12px 20px;background:#fff;border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,0.08);">
+                            <input type="checkbox" id="cdAutoOpen" style="width:20px;height:20px;">
+                            <label for="cdAutoOpen" style="cursor:pointer;font-weight:600;color:#2c3e50;font-size:15px;">Auto-open on every sale</label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Big Open Drawer button -->
+                <div style="text-align:center;margin:32px 0;">
+                    <button id="cdOpenBtn" onclick="cdOpen()"
+                        style="background:linear-gradient(135deg,#00c853 0%,#69f0ae 100%);color:#fff;border:none;border-radius:20px;padding:28px 80px;font-size:26px;font-weight:800;cursor:pointer;box-shadow:0 8px 30px rgba(0,200,83,0.4);transition:all .3s;letter-spacing:1px;text-transform:uppercase;">
+                        🗃️ Open Cash Drawer
+                    </button>
+                    <div style="margin-top:12px;color:#6c757d;font-size:14px;">Click to test cash drawer connection</div>
+                </div>
+
+                <!-- Save config -->
+                <div style="border-top:2px solid #e9ecef;padding-top:20px;display:flex;justify-content:flex-end;">
+                    <button onclick="cdSaveConfig()" style="background:linear-gradient(135deg,#007bff 0%,#00d4ff 100%);color:#fff;border:none;border-radius:10px;padding:14px 32px;font-size:16px;font-weight:700;cursor:pointer;box-shadow:0 4px 16px rgba(0,123,255,0.3);transition:all .2s;">💾 Save Settings</button>
+                </div>
+            </div>
+
+            <!-- Weight Machine Tab -->
+            <div id="weightTab" class="tab-content">
+                <div id="portSelection">
+                    <div class="form-group">
+                        <label>📡 Available Serial Ports:</label>
+                        <div style="display:flex;gap:12px;align-items:center;margin-top:6px;">
+                            <button id="listPortsBtn" class="btn btn-primary" style="flex:1;">🔍 Scan for Devices</button>
+                            <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-weight:500;">
+                                <input type="checkbox" id="enableSimulation" style="width:18px;height:18px;">
+                                <span>🎮 Simulation Mode (no hardware)</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div id="portsDropdownSection" class="form-group hidden">
+                        <label for="portsDropdown">Choose your weight machine:</label>
+                        <select id="portsDropdown">
+                            <option value="">Select a device...</option>
+                        </select>
+                        <div class="port-info" id="selectedPortInfo" style="display: none;"></div>
+                    </div>
+
+
+                    <div class="form-group"><label for="scaleProfile">Scale type / protocol</label><select id="scaleProfile" data-scale="protocol"></select><p id="scaleProfileNote" style="font-size:13px"></p></div>
+                    <div class="form-group"><label>Connection<select id="scaleTransport" data-scale="transport"><option value="serial">USB COM / RS-232</option><option value="tcp">Network TCP/IP (text protocol)</option></select></label></div>
+                    <div id="scaleNetwork" class="hidden"><label>Scale IP address / host<input data-scale="host" placeholder="192.168.1.100" maxlength="253"></label><label>TCP port<input data-scale="tcpPort" data-number type="number" min="1" max="65535" value="4001"></label></div>
+                    <details style="margin:16px 0">
+                        <summary style="cursor:pointer;font-weight:600">Scale connection and reading format</summary>
+                        <p>For serial connections, match these values to the scale's manual. Readings are converted to kilograms.</p>
+                        <div id="scaleOptions" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px">
+                            <label>Baud rate<select data-scale="baudRate" data-number><option>1200</option><option>2400</option><option>4800</option><option selected>9600</option><option>19200</option><option>38400</option><option>57600</option><option>115200</option></select></label>
+                            <label>Data bits<select data-scale="dataBits" data-number><option>7</option><option selected>8</option></select></label>
+                            <label>Parity<select data-scale="parity"><option value="none">None</option><option value="even">Even</option><option value="odd">Odd</option><option value="mark">Mark</option><option value="space">Space</option></select></label>
+                            <label>Stop bits<select data-scale="stopBits" data-number><option>1</option><option>1.5</option><option>2</option></select></label>
+                            <label>Unit when not sent by scale<select data-scale="unit"><option value="auto">Auto: decimal kg / integer grams</option><option value="kg">Kilograms</option><option value="g">Grams</option><option value="lb">Pounds</option><option value="oz">Ounces</option></select></label>
+                            <label>Decimal separator<select data-scale="decimalSeparator"><option value=".">Point (0.375)</option><option value=",">Comma (0,375)</option></select></label>
+                            <label>Implied decimal places<input data-scale="integerDecimals" data-number type="number" min="0" max="6" value="0"></label>
+                            <label>Number to read (0 = auto)<input data-scale="numberIndex" data-number type="number" min="0" max="20" value="0"></label>
+                            <label>Fixed frame length (0 = automatic)<input data-scale="frameLength" data-number type="number" min="0" max="256" value="0"></label>
+                            <label>Maximum capacity (kg)<input data-scale="maxKg" data-number type="number" min="0.001" max="999999" step="any" value="9999"></label>
+                            <label>Matching readings to settle<input data-scale="stableFrames" data-number type="number" min="1" max="20" value="5"></label>
+                            <label>Reading timeout (milliseconds)<input data-scale="idleMs" data-number type="number" min="500" max="60000" value="3000"></label>
+                            <label><input data-scale="rtscts" type="checkbox"> RTS/CTS flow control</label>
+                        </div>
+                        <p style="font-size:13px">Units sent by the scale always take priority. For 00375 meaning 0.375 kg, choose Kilograms and 3 implied decimal places. If a message contains several numbers, choose its weight number (1 = first). For fixed-width streams without line endings, enter the frame length from the manual.</p>
+                        <details><summary>Scale requires a read command</summary>
+                            <label>Read command (hex bytes, optional)<input data-scale="pollHex" maxlength="192" placeholder="Only enter the command documented by the manufacturer"></label>
+                            <label>Repeat every (milliseconds)<input data-scale="pollIntervalMs" data-number type="number" min="100" max="60000" value="1000"></label>
+                        </details>
+                        <p style="font-size:13px">Connect, place a known weight and verify the live value below. Choose a protocol documented by your scale manufacturer. Proprietary binary, USB HID and OPOS devices need their matching driver; do not select a text preset for them.</p>
+                    </details>
+                    <button id="connectToPortBtn" class="btn btn-success hidden" disabled>🔌 Connect to Device</button>
+                </div>
+
+                <div id="connectedState" class="hidden">
+                    <div class="status status-connected">
+                        <div>✅ Connected to Weight Machine</div>
+                        <div id="connectedPortDisplay" style="font-size: 14px; margin-top: 8px;"></div>
+                    </div>
+
+                    <div id="liveWeightDisplay" class="live-data">
+                        <div style="font-size: 18px; margin-bottom: 12px;">Current Weight:</div>
+                        <div id="weightValue">---.--- kg</div><div id="scaleReadingStatus" role="status">Waiting for a reading</div><pre id="scaleRawReading" style="white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;text-align:left"></pre>
+                        <div id="lastUpdate" style="font-size: 13px; margin-top: 12px; opacity: 0.8;"></div>
+                    </div>
+
+                    <button id="disconnectBtn" class="btn btn-danger">❌ Disconnect</button>
+                </div>
+            </div>
+
+            <!--
+                Scanner Tab
+
+                There is nothing to connect here, and that is the point. A USB
+                barcode scanner is a keyboard: it types the digits and presses
+                Enter. It needs no driver and no port, and the item search
+                already matches on barcode, so a scanner works the moment it is
+                plugged in.
+
+                This tab used to say "coming soon", which told shopkeepers the
+                opposite of the truth. What it offers instead is the thing that
+                is actually hard - seeing what the scanner really sent, because
+                when one misbehaves it is almost always a missing Enter, a
+                stray prefix, or a keyboard layout turning digits into
+                something else. All three are obvious the moment you can see
+                the raw input, and invisible otherwise.
+            -->
+            <div id="scannerTab" class="tab-content">
+                <h2>🔎 Barcode Scanner</h2>
+
+                <div class="status" style="background:#d4edda;color:#155724;display:block;">
+                    ✓ No setup needed. A USB scanner acts as a keyboard - plug it in and it works.
+                </div>
+
+                <div class="card" style="margin-top:20px;">
+                    <h3 style="margin-top:0;">Test your scanner</h3>
+                    <p style="color:#555;font-size:14px;margin-bottom:14px;">
+                        Click the box and scan any barcode. What the scanner typed appears below,
+                        exactly as the till receives it.
+                    </p>
+                    <input type="text" id="scannerTestInput" autocomplete="off"
+                        placeholder="Click here, then scan a barcode"
+                        style="width:100%;padding:16px;font-size:18px;border:2px solid #d5dae5;
+                               border-radius:10px;font-family:monospace;">
+
+                    <div id="scannerResult" style="margin-top:18px;display:none;"></div>
+
+                    <div id="scannerHistory" style="margin-top:18px;"></div>
+                </div>
+
+                <div class="card" style="margin-top:20px;">
+                    <h3 style="margin-top:0;">If a scan does not work</h3>
+                    <ul style="color:#555;font-size:14px;line-height:1.9;margin:0;padding-left:20px;">
+                        <li><strong>Nothing appears at all</strong> - the scanner is not in keyboard
+                            mode. Most scanners ship with a manual containing a "USB HID" or
+                            "keyboard wedge" barcode; scan that one.</li>
+                        <li><strong>Digits appear but the item is not found</strong> - the barcode is
+                            not on any item yet. Add it in the item's Barcode field.</li>
+                        <li><strong>The code appears but nothing happens until you press Enter</strong>
+                            - the scanner is not sending a return. Its manual has a "add Enter
+                            suffix" barcode.</li>
+                        <li><strong>Letters or symbols instead of digits</strong> - the scanner is set
+                            to a different keyboard layout than this computer. Set both to the same.</li>
+                    </ul>
+                </div>
+            </div>
+
+    <script src="scale-profiles.js"></script>
+    <script>
+        /*
+         * What this operating system calls its default printer.
+         *
+         * The page said "Windows default" everywhere, including on a Mac,
+         * where it named a thing that does not exist - and a shop reading that
+         * reasonably wonders what else the software has misunderstood about
+         * their machine.
+         *
+         * Falls back to the neutral wording rather than guessing Windows, so a
+         * page opened somewhere the bridge is unavailable is vague rather than
+         * wrong.
+         */
+        const OS_PLATFORM = (window.electronAPI && window.electronAPI.platform) || '';
+        const OS_DEFAULT_LABEL =
+            OS_PLATFORM === 'win32'  ? 'Windows default' :
+            OS_PLATFORM === 'darwin' ? 'macOS default'   :
+            OS_PLATFORM === 'linux'  ? 'system default'  : 'system default';
+
+        /*
+         * There was a listener here relabelling #rpDefaultOption, and that
+         * element is gone - it was the "default printer" entry in the old
+         * single-select dropdown, which the checkbox list replaced. Guarded by
+         * `if (opt)`, so it never threw; it simply stopped doing anything and
+         * nothing said so.
+         *
+         * OS_DEFAULT_LABEL itself stays: the warning below still uses it to
+         * say "a receipt cannot be sent to the Windows default" in the words
+         * of whichever operating system this is.
+         */
+
+        // Global variables
+        let availablePorts = [];
+        let selectedPortPath = null;
+        let connectedPortPath = null;
+
+        // DOM Elements
+        const listPortsBtn = document.getElementById('listPortsBtn');
+        const portsDropdownSection = document.getElementById('portsDropdownSection');
+        const portsDropdown = document.getElementById('portsDropdown');
+        const selectedPortInfo = document.getElementById('selectedPortInfo');
+        const connectToPortBtn = document.getElementById('connectToPortBtn');
+        const portSelection = document.getElementById('portSelection');
+        const connectedState = document.getElementById('connectedState');
+        const connectedPortDisplay = document.getElementById('connectedPortDisplay');
+        const weightValue = document.getElementById('weightValue');
+        const lastUpdate = document.getElementById('lastUpdate');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+
+        // ===========================
+        // TAB SWITCHING
+        // ===========================
+        function showPrinterPanel(index, focus = false) {
+            const tabs = Array.from(document.querySelectorAll('.printer-nav [role="tab"]'));
+            if (!tabs[index]) return;
+            tabs.forEach((tab, i) => {
+                tab.setAttribute('aria-selected', String(i === index));
+                tab.tabIndex = i === index ? 0 : -1;
+                document.getElementById(tab.getAttribute('aria-controls')).hidden = i !== index;
+            });
+            if (focus) tabs[index].focus();
+        }
+        document.querySelector('.printer-nav').addEventListener('keydown', event => {
+            const tabs = Array.from(document.querySelectorAll('.printer-nav [role="tab"]'));
+            const current = tabs.indexOf(event.target);
+            if (current < 0) return;
+            const next = { ArrowRight: (current + 1) % tabs.length, ArrowLeft: (current + tabs.length - 1) % tabs.length, Home: 0, End: tabs.length - 1 }[event.key];
+            if (next === undefined) return;
+            event.preventDefault();
+            showPrinterPanel(next, true);
+        });
+
+        function switchTab(tabName) {
+            const selectedButton = Array.from(document.querySelectorAll('.tabs .tab')).find(button => button.getAttribute('onclick') === "switchTab('" + tabName + "')");
+            if (!selectedButton || selectedButton.classList.contains('tab-disabled')) {
+                return;
+            }
+
+            document.querySelectorAll('.tab').forEach(tab => {
+                const active = tab === selectedButton;
+                tab.classList.toggle('active', active);
+                tab.setAttribute('aria-selected', String(active));
+                tab.tabIndex = active ? 0 : -1;
+            });
+
+            document.querySelectorAll('.tab-content').forEach(content => content.classList.remove('active'));
+
+            /*
+             * Every tab button's name must appear here.
+             *
+             * 'receipt' did not. The line above had already stripped .active
+             * from every panel, so clicking Receipt Printer hid all of them and
+             * then had nothing to show - a blank window. It looked fine until
+             * you clicked it, because receiptTab is marked active in the markup
+             * and starts out visible; the first click was what broke it.
+             */
+            const tabMap = {
+                'receipt': 'receiptTab',
+                'weight':  'weightTab',
+                'scanner': 'scannerTab',
+                'cash':    'cashTab'
+            };
+
+            const targetTab = tabMap[tabName];
+            if (targetTab) {
+                document.getElementById(targetTab).classList.add('active');
+
+                if (tabName === 'scanner') {
+                    setTimeout(() => document.getElementById('scannerTestInput').focus(), 60);
+                }
+            }
+        }
+
+        // ===========================
+        // WEIGHT MACHINE FUNCTIONS
+        // ===========================
+        async function listAvailablePorts() {
+            listPortsBtn.disabled = true;
+            listPortsBtn.textContent = '🔄 Scanning...';
+
+            const enableSimulation = document.getElementById('enableSimulation').checked;
+
+            try {
+                if (!window.electronAPI || !window.electronAPI.hardware) {
+                    throw new Error('electronAPI not available');
+                }
+
+                availablePorts = await window.electronAPI.hardware.scanSerialPorts(enableSimulation);
+
+                if (availablePorts.length === 0) {
+                    alert('No COM ports found. Check the cable and install the scale manufacturer’s USB/serial driver. Simulation is only a test, not a hardware connection.');
+                    return;
+                }
+
+                portsDropdown.innerHTML = '<option value="">Select a device...</option>';
+                availablePorts.forEach((port, index) => {
+                    const option = document.createElement('option');
+                    option.value = port.path;
+                    option.dataset.isMock = port.isMock || false;
+                    option.textContent = `${index + 1}. ${port.path} - ${port.manufacturer || 'Unknown'}${port.isMock ? ' (SIMULATION)' : ''}`;
+                    portsDropdown.appendChild(option);
+                });
+
+                portsDropdownSection.classList.remove('hidden');
+            } catch (error) {
+                alert('Error: ' + error.message);
+            } finally {
+                listPortsBtn.disabled = false;
+                listPortsBtn.textContent = '🔍 Scan for Devices';
+            }
+        }
+
+        function onPortSelected() {
+            selectedPortPath = portsDropdown.value;
+
+            if (selectedPortPath) {
+                const selectedPort = availablePorts.find(p => p.path === selectedPortPath);
+                if (selectedPort) {
+                    selectedPortInfo.style.display = 'block';
+                    selectedPortInfo.innerHTML = `<strong>Device:</strong> ${selectedPort.path}<br><strong>Manufacturer:</strong> ${selectedPort.manufacturer || 'Unknown'}${selectedPort.isMock ? '<br><strong>⚠️ SIMULATION MODE</strong>' : ''}`;
+                    connectToPortBtn.classList.remove('hidden');
+                    connectToPortBtn.disabled = false;
+                }
+            } else {
+                selectedPortInfo.style.display = 'none';
+                connectToPortBtn.classList.add('hidden');
+            }
+        }
+
+        function scaleOptionsFromForm() {
+            const options = {};
+            document.querySelectorAll('[data-scale]').forEach(el => {
+                if (!el.checkValidity()) throw Error('Check scale setting: ' + el.dataset.scale);
+                options[el.dataset.scale] = el.type === 'checkbox' ? el.checked : el.hasAttribute('data-number') ? Number(el.value) : el.value.trim();
+            });
+            return options;
+        }
+        function restoreScaleOptions(options) {
+            document.querySelectorAll('[data-scale]').forEach(el => {
+                if (!options || options[el.dataset.scale] === undefined) return;
+                if (el.type === 'checkbox') el.checked = options[el.dataset.scale] === true;
+                else el.value = options[el.dataset.scale];
+            });
+            const profile = window.ScaleProfiles.find(p => p.id === document.getElementById('scaleProfile').value);
+            document.getElementById('scaleProfileNote').textContent = profile ? profile.note : '';
+            updateScaleTransport();
+        }
+        function updateScaleTransport() {
+            const network = document.getElementById('scaleTransport').value === 'tcp';
+            document.getElementById('scaleNetwork').classList.toggle('hidden', !network);
+            listPortsBtn.closest('.form-group').classList.toggle('hidden', network);
+            portsDropdownSection.classList.toggle('hidden', network || !availablePorts.length);
+            connectToPortBtn.classList.toggle('hidden', !network && !selectedPortPath);
+            connectToPortBtn.disabled = !network && !selectedPortPath;
+        }
+        const scaleProfileSelect = document.getElementById('scaleProfile');
+        (window.ScaleProfiles || []).forEach(profile => { const option=document.createElement('option');option.value=profile.id;option.textContent=profile.name;scaleProfileSelect.appendChild(option); });
+        scaleProfileSelect.addEventListener('change', () => {
+            const profile=window.ScaleProfiles.find(p=>p.id===scaleProfileSelect.value);
+            if (!profile) return;
+            restoreScaleOptions({ ...profile.options, protocol:profile.id, frameLength:0, numberIndex:0, integerDecimals:0, decimalSeparator:'.' });
+            document.getElementById('scaleProfileNote').textContent=profile.note;
+        });
+        document.getElementById('scaleTransport').addEventListener('change', updateScaleTransport);
+        async function connectToSelectedPort() {
+            const isNetwork = document.getElementById('scaleTransport').value === 'tcp';
+            if (isNetwork) selectedPortPath = 'tcp://' + document.querySelector('[data-scale=host]').value.trim() + ':' + document.querySelector('[data-scale=tcpPort]').value;
+            if (!selectedPortPath) return;
+
+            const selectedPort = availablePorts.find(p => p.path === selectedPortPath);
+            const isMock = selectedPort ? (selectedPort.isMock || false) : false;
+
+            connectToPortBtn.disabled = true;
+            connectToPortBtn.textContent = '🔄 Connecting...';
+
+            try {
+                const options = scaleOptionsFromForm();
+                const result = await window.electronAPI.hardware.connectPort(selectedPortPath, { ...options, isMock });
+                if (result.success) {
+                    connectedPortPath = selectedPortPath;
+                    portSelection.classList.add('hidden');
+                    connectedState.classList.remove('hidden');
+                    connectedPortDisplay.textContent = `Connected to: ${connectedPortPath}${isMock ? ' (SIMULATION)' : ''}`;
+                    // Persist for auto-reconnect on next startup
+                    await window.electronAPI.preferences.set('hardware.weightMachine', {
+                        port: connectedPortPath,
+                        options,
+                        isMock: isMock,
+                        simulation: document.getElementById('enableSimulation').checked
+                    });
+                } else {
+                    throw new Error(result.error || 'Connection failed');
+                }
+            } catch (error) {
+                alert('Connection failed: ' + error.message);
+                connectToPortBtn.disabled = false;
+                connectToPortBtn.textContent = '🔌 Connect to Device';
+            }
+        }
+
+        async function disconnectFromPort() {
+            await window.electronAPI.hardware.disconnectPort();
+            await window.electronAPI.preferences.set('hardware.weightMachine', null);
+            connectedPortPath = null;
+            connectedState.classList.add('hidden');
+            portSelection.classList.remove('hidden');
+            selectedPortPath = null;
+            portsDropdown.value = '';
+            selectedPortInfo.style.display = 'none';
+            connectToPortBtn.classList.add('hidden');
+            updateScaleTransport();
+        }
+
+        function updateWeightDisplay(data) {
+            if (!weightValue) return;
+
+            if (typeof data === 'object' && data.weight !== undefined) {
+                weightValue.textContent = data.isValid !== false && Number.isFinite(data.weight) ? data.weight.toFixed(3) + ' kg' : '---.--- kg';
+                document.getElementById('scaleReadingStatus').textContent = data.isValid === false ? data.error || 'Invalid reading' : data.stable ? 'Stable reading' : 'Waiting for the weight to settle';
+                document.getElementById('scaleRawReading').textContent = 'Raw: ' + JSON.stringify(String(data.raw || '').slice(0, 200));
+                if (lastUpdate && data.timestamp) {
+                    const timestamp = new Date(data.timestamp).toLocaleTimeString();
+                    lastUpdate.textContent = `Last updated: ${timestamp}`;
+                    lastUpdate.style.color = data.isValid ? '#28a745' : '#d63384';
+                }
+            }
+        }
+
+        /*
+         * THE SINGLE-PRINTER PICKER IS GONE, and it never worked.
+         *
+         * refreshPrinters, selectPrinter, printToSelected and printToDefault
+         * wrote to #printerStatus, #printerList, #printBtn, #printContent and
+         * #copies. Not one of those elements has ever existed in this file -
+         * `git log --follow -S 'id="printerList"'` finds no commit that added
+         * or removed them, including before the move into src/.
+         *
+         * So every click on the Receipt Printer tab called refreshPrinters,
+         * which did `statusDiv.classList.remove('hidden')` on null OUTSIDE its
+         * own try block and threw, unhandled, into switchTab. And because the
+         * throw came before `printers` was assigned, the `printers.length === 0`
+         * guard never went false: it threw again on every single click.
+         *
+         * What actually chooses printers is rpLoadPrinters and #rpPrinterList
+         * higher up this file - checkboxes, several printers, saved as
+         * `receipt_printers`. That is the multi-select a shop uses and it is
+         * untouched.
+         */
+
+        // ===========================
+        // INITIALIZATION
+        // ===========================
+        if (window.electronAPI && window.electronAPI.hardware) {
+            if (window.electronAPI.hardware.onScaleRaw) window.electronAPI.hardware.onScaleRaw(raw => {
+                document.getElementById('scaleRawReading').textContent = 'Raw: ' + JSON.stringify(raw);
+            });
+            window.electronAPI.hardware.onUsbData((data) => {
+                updateWeightDisplay(data);
+            });
+
+            window.electronAPI.hardware.onPortError((error) => {
+                if (lastUpdate) {
+                    lastUpdate.textContent = `Error: ${error}`;
+                    lastUpdate.style.color = 'red';
+                }
+            });
+        }
+
+        listPortsBtn.addEventListener('click', listAvailablePorts);
+        portsDropdown.addEventListener('change', onPortSelected);
+        connectToPortBtn.addEventListener('click', connectToSelectedPort);
+        disconnectBtn.addEventListener('click', disconnectFromPort);
+
+        // Auto-reconnect
+        async function autoReconnect() {
+            const prefs = await window.electronAPI.preferences.get('hardware.weightMachine');
+            restoreScaleOptions(prefs && prefs.options);
+        }
+
+        document.addEventListener('DOMContentLoaded', () => {
+            autoReconnect();
+            rpInit();
+            cdInit();
+            const today = new Date();
+            document.getElementById('rcptLogDate').value = [
+                today.getFullYear(),
+                String(today.getMonth() + 1).padStart(2, '0'),
+                String(today.getDate()).padStart(2, '0')
+            ].join('-');
+        });
+
+        // ===========================
+        // CASH DRAWER FUNCTIONS
+        // ===========================
+        const cd = () => window.electronAPI.cashDrawer;
+
+        function cdShowStatus(msg, type) {
+            const el = document.getElementById('cdStatus');
+            el.style.display = 'block';
+            const styles = {
+                success: 'background:#d4edda;color:#155724;border:1px solid #c3e6cb;',
+                error:   'background:#f8d7da;color:#721c24;border:1px solid #f5c6cb;',
+                info:    'background:#d1ecf1;color:#0c5460;border:1px solid #bee5eb;',
+                warn:    'background:#fff3cd;color:#856404;border:1px solid #ffeaa7;'
+            };
+            el.style.cssText = `display:block;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:600;${styles[type]||styles.info}`;
+            el.textContent = msg;
+        }
+
+        async function cdLoadPrinters() {
+            cdShowStatus('Loading printers...', 'info');
+            const list = await window.electronAPI.printer.list();
+            const sel = document.getElementById('cdPrinterSelect');
+            sel.innerHTML = '<option value="">-- Select printer --</option>';
+            list.forEach(p => {
+                const opt = document.createElement('option');
+                opt.value = p.name;
+                opt.textContent = (p.displayName || p.name) + (p.isDefault ? ' (Default)' : '');
+                sel.appendChild(opt);
+            });
+            cdShowStatus(`Found ${list.length} printer(s)`, list.length ? 'success' : 'warn');
+        }
+
+        async function cdOpen() {
+            const pin    = Number(document.querySelector('input[name="cdPin"]:checked').value);
+            const printerName = document.getElementById('cdPrinterSelect').value;
+            const btn    = document.getElementById('cdOpenBtn');
+
+            if (!printerName) {
+                cdShowStatus('Please select a printer first.', 'warn');
+                return;
+            }
+
+            btn.style.opacity = '0.7';
+            btn.disabled = true;
+            cdShowStatus('Opening drawer...', 'info');
+
+            const result = await cd().openViaPrinter(printerName, pin);
+
+            if (result.success) {
+                cdShowStatus('✅ Cash drawer opened!', 'success');
+                btn.style.background = 'linear-gradient(135deg,#1976d2,#42a5f5)';
+                setTimeout(() => {
+                    btn.style.background = 'linear-gradient(135deg,#28a745,#20c997)';
+                }, 600);
+            } else {
+                cdShowStatus(`❌ ${result.error}`, 'error');
+            }
+            btn.style.opacity = '1'; btn.disabled = false;
+        }
+
+        async function cdSaveConfig() {
+            const pin         = Number(document.querySelector('input[name="cdPin"]:checked').value);
+            const autoOpen    = document.getElementById('cdAutoOpen').checked;
+            const printerName = document.getElementById('cdPrinterSelect').value;
+
+            const config = { method: 'printer', printerName, pin, autoOpenOnSale: autoOpen };
+            const result = await cd().saveConfig(config);
+            cdShowStatus(result.success ? '✅ Settings saved!' : `❌ ${result.error}`, result.success ? 'success' : 'error');
+        }
+
+        // ===========================
+        // RECEIPT PRINTER
+        // ===========================
+        //
+        // Stored through the preferences bridge rather than localStorage: this
+        // window and the till's own window are different origins, so they do
+        // not share a localStorage. preferences is a file the main process
+        // owns, which both can reach.
+        const rpPref = () => window.electronAPI && window.electronAPI.preferences;
+
+        function rpShowStatus(msg, type) {
+            const el = document.getElementById('rpStatus');
+            const styles = {
+                success: 'background:#d4edda;color:#155724;border:1px solid #c3e6cb;',
+                error:   'background:#f8d7da;color:#721c24;border:1px solid #f5c6cb;',
+                info:    'background:#d1ecf1;color:#0c5460;border:1px solid #bee5eb;',
+                warn:    'background:#fff3cd;color:#856404;border:1px solid #ffeaa7;'
+            };
+            el.style.cssText = `display:block;padding:12px 16px;border-radius:8px;margin-bottom:16px;font-weight:600;${styles[type]||styles.info}`;
+            el.textContent = msg;
+        }
+
+        async function rpLoadPrinters(saved) {
+            try {
+                await _loadPaperSizes();
+                const list = await window.electronAPI.printer.list();
+                /* Keep what is already ticked when this is a manual reload, so
+                   pressing Reload never quietly discards a configuration. */
+                const keep = saved !== undefined ? saved : _collectTargets('rpPrinterList');
+                _renderTargetRows('rpPrinterList', 'rp', list, keep,
+                    'No printers found on this computer.');
+                rpUpdateSummary();
+                rpShowStatus(`Found ${(list || []).length} printer(s)`, (list || []).length ? 'success' : 'warn');
+            } catch (e) {
+                rpShowStatus('Could not read the printer list: ' + e.message, 'error');
+            }
+        }
+
+        function rpUpdateSummary() {
+            const el = document.getElementById('rpSummary');
+            if (el) el.textContent = _describeTargets(_collectTargets('rpPrinterList'));
+        }
+
+        /*
+         * The summary follows the ticks, not the Save button.
+         *
+         * It was written once when the list was drawn and once more after a
+         * save, and nothing listened in between - so ticking a printer left
+         * "No printer selected." sitting under a list with a printer visibly
+         * selected. Delegated from the container because the rows are redrawn
+         * on every reload, which would strip listeners bound to them.
+         */
+        (function () {
+            const list = document.getElementById('rpPrinterList');
+            if (!list) return;
+            list.addEventListener('change', rpUpdateSummary);
+            list.addEventListener('input', rpUpdateSummary);
+        })();
+
+        async function rpInit() {
+            if (!rpPref()) { await rpLoadPrinters([]); return; }
+            try {
+                /* The per-printer list if this machine has been configured since
+                   the update, otherwise the single printer and width it has been
+                   using all along - so an existing till shows its real setup
+                   rather than an empty screen. */
+                const savedJson = await rpPref().get('receipt_printers');
+                let saved = [];
+                if (savedJson) {
+                    try { saved = JSON.parse(savedJson) || []; } catch (e) { saved = []; }
+                }
+                if (!saved.length) {
+                    const printer = await rpPref().get('receipt_printer');
+                    const width = await rpPref().get('print_width');
+                    if (printer && printer !== 'default') {
+                        saved = [{ name: printer, copies: 1, pageSize: width || '80mm' }];
+                    }
+                }
+                await rpLoadPrinters(saved);
+
+                /* A printer unplugged or renamed since it was chosen leaves no
+                   row to tick, and saying nothing there reads as though it was
+                   never configured. */
+                const shown = _collectTargets('rpPrinterList').map(function (t) { return t.name.toLowerCase(); });
+                const missing = saved
+                    .map(function (t) { return String(t.name || '').toLowerCase(); })
+                    .filter(function (n) { return n && shown.indexOf(n) === -1; });
+                if (missing.length) {
+                    rpShowStatus('Saved printer' + (missing.length > 1 ? 's' : '') + ' '
+                        + missing.join(', ') + ' not connected. Tick another or reconnect it.', 'warn');
+                }            } catch (e) {
+                console.warn('rpInit:', e.message);
+            }
+        }
+
+        let wrBindings = {};
+        function wrSelection() {
+            const binding = wrBindings[document.getElementById('wrPrinter').value.toLowerCase()] || {};
+            document.getElementById('wrPort').value = binding.port || '';
+            document.getElementById('wrPnp').value = binding.pnpId || '';
+            document.getElementById('wrInitialize').checked = binding.initialize !== false;
+            document.getElementById('wrKeepAlive').checked = binding.keepAlive !== false;
+        }
+        async function wrRefresh() {
+            if (!window.electronAPI?.printer?.recoveryStatus) return;
+            try {
+                const status = await window.electronAPI.printer.recoveryStatus();
+                const environment = status.environment;
+                const environmentStatus = document.getElementById('printerEnvironmentStatus');
+                if (environmentStatus) {
+                    environmentStatus.textContent = environment
+                        ? ({ win32: 'Windows', darwin: 'macOS', linux: 'Linux' }[environment.platform] || environment.platform) +
+                          ' · Checked ' + new Date(environment.checkedAt).toLocaleTimeString()
+                        : 'Could not verify settings. Use your operating system’s printer and power settings.';
+                    const checks = document.getElementById('printerEnvironmentChecks'); checks.replaceChildren();
+                    (environment?.checks || []).forEach(check => {
+                        const row = document.createElement('p');
+                        row.style.whiteSpace = 'pre-wrap';
+                        row.textContent = ({ review: 'Review', unknown: 'Could not verify', info: 'Detected' }[check.status] || 'Detected') + ' — ' + check.label + ': ' + check.detail;
+                        checks.appendChild(row);
+                    });
+                    const steps = document.getElementById('printerEnvironmentSteps'); steps.replaceChildren();
+                    [...(environment?.instructions || []), ...(environment?.common || [])].forEach(message => {
+                        const row = document.createElement('li'); row.textContent = message; steps.appendChild(row);
+                    });
+                }
+                const summary = document.getElementById('printerHealthSummary');
+                const pending = (status.jobs || []).filter(job => job.canRecover || /failed|uncertain|unknown|offline/i.test(job.status || '')).length;
+                summary.textContent = !status.supported ? 'Windows recovery is not available on this platform.'
+                    : pending ? pending + ' print job(s) need attention. Review diagnostics before retrying.'
+                    : status.helper?.state === 'ready' ? 'Print service ready · Confirm output at the printer.'
+                    : 'Print service: ' + (status.helper?.state || 'not checked') + ' · Open diagnostics for details.';
+                summary.parentElement.classList.toggle('needs-attention', pending > 0 || status.helper?.state === 'backoff');
+                if (!status.supported) return;
+                document.getElementById('windowsRecovery').style.display = 'block';
+                wrBindings = status.bindings || {};
+                document.getElementById('wrMessage').textContent = status.helper
+                    ? 'Print helper: ' + status.helper.state : '';
+                document.getElementById('wrDiagnostic').textContent = status.helper?.diagnostic ? JSON.stringify(status.helper.diagnostic, null, 2) : 'No startup diagnostic recorded.';
+                const power = document.getElementById('wrPower');
+                power.replaceChildren();
+                const messages = status.systemSettings?.guidance || ['Power settings have not been checked.'];
+                (messages.length ? messages : ['Checked Sleep, Hibernate and USB selective suspend: all disabled in the current power plan.']).forEach(message => {
+                    const row = document.createElement('p'); row.textContent = message; power.appendChild(row);
+                });
+                document.getElementById('wrKeepAliveStatus').textContent = Object.values(status.keepAlive || {}).map(p =>
+                    p.printer + ' | ' + p.status + ' | ' + new Date(p.at).toLocaleTimeString()).join('\n');
+                document.getElementById('wrHealth').textContent = (status.health || []).map(p =>
+                    p.printer + ' | ' + p.port + ' | USB: ' + (p.discovery || p.present) + ' | WorkOffline: ' + p.workOffline + ' | Windows status: ' + p.printerStatus).join('\n');
+                const list = document.getElementById('wrJobs');
+                list.replaceChildren();
+                (status.jobs || []).slice().reverse().forEach(job => {
+                    const row = document.createElement('p');
+                    row.textContent = job.printer + ' | ' + job.status + (job.error ? ' - ' + job.error : '') + ' | Job ' + job.jobId.slice(0, 12) + (job.spoolerJobId ? ' | Windows ' + job.spoolerJobId : '');
+                    if (job.canRecover) {
+                        const retry = document.createElement('button');
+                        retry.type = 'button'; retry.textContent = 'Retry verified unsubmitted receipt';
+                        retry.onclick = async () => {
+                            retry.disabled = true;
+                            try {
+                                const result = await window.electronAPI.printer.recoverUnsubmitted(job.jobId);
+                                await wrRefresh();
+                                document.getElementById('wrMessage').textContent = result.error || result.status || 'Recovery requested';
+                            } catch (error) { retry.disabled = false; document.getElementById('wrMessage').textContent = error.message; }
+                        };
+                        row.appendChild(retry);
+                    }
+                    list.appendChild(row);
+                });
+            } catch (error) {
+                document.getElementById('wrMessage').textContent = error.message;
+                document.getElementById('printerHealthSummary').textContent = 'Unable to check print service. Open diagnostics for details.';
+                const status = document.getElementById('printerEnvironmentStatus');
+                if (status) status.textContent = 'Could not check settings. Open your system printer queue and Power settings; check paper, cover and connection. ' + error.message;
+            }
+        }
+        async function wrSave() {
+            const result = await window.electronAPI.printer.configureRecovery(document.getElementById('wrPrinter').value, {
+                port: document.getElementById('wrPort').value, pnpId: document.getElementById('wrPnp').value,
+                initialize: document.getElementById('wrInitialize').checked,
+                keepAlive: document.getElementById('wrKeepAlive').checked,
+            });
+            document.getElementById('wrMessage').textContent = result.success ? 'Recovery settings saved for new jobs.' : result.error;
+            await wrRefresh();
+        }
+        document.addEventListener('DOMContentLoaded', async function () {
+            if (!window.electronAPI?.printer?.recoveryStatus) return;
+            await wrRefresh();
+            const printers = await window.electronAPI.printer.list();
+            for (const printer of printers) {
+                const option = document.createElement('option'); option.value = printer.name; option.textContent = printer.name;
+                document.getElementById('wrPrinter').appendChild(option);
+            }
+            wrSelection();
+            const timer = setInterval(wrRefresh, 5000);
+            window.addEventListener('beforeunload', () => clearInterval(timer), { once: true });
+        });
+
+        async function rpSave() {
+            const targets = _collectTargets('rpPrinterList');
+            if (!targets.length) { rpShowStatus('Tick at least one printer first.', 'warn'); return; }
+            try {
+                await rpPref().set('receipt_printers', JSON.stringify(targets));
+                /*
+                 * The two original keys are written as well, set to the first
+                 * printer. A till still running the previous build reads only
+                 * those, and would otherwise stop printing the moment this is
+                 * saved - an upgrade that breaks the counter is worse than one
+                 * that ignores the new setting.
+                 */
+                await rpPref().set('receipt_printer', targets[0].name || 'default');
+                await rpPref().set('print_width', targets[0].pageSize || '80mm');
+                rpUpdateSummary();
+
+                /*
+                 * SAY WHETHER THE PRINTER IS ACTUALLY THERE, not just that a
+                 * setting was written.
+                 *
+                 * "Saved" only ever proved this window could write a file.
+                 * Owner: "we need show confirmation its done. its failed or
+                 * really done. hardware level also good." A shop that picks a
+                 * printer which is switched off, unplugged or renamed learns
+                 * nothing here and finds out with a customer waiting.
+                 *
+                 * So the machine is asked again, fresh, and the answer is
+                 * about the queue rather than about us: gone from the list at
+                 * all is an error, present but not reporting ready is a
+                 * warning, and only a printer Windows calls ready gets a tick.
+                 * No paper is spent - Test print is still there for that, and
+                 * it is the only thing that proves the whole path.
+                 */
+                var said = 'Saved. ' + _describeTargets(targets)
+                    + ' The till picks this up on its next receipt.';
+                try {
+                    var live = await window.electronAPI.printer.list();
+                    var byName = {};
+                    (live || []).forEach(function (p) {
+                        byName[String(p.name || '').toLowerCase()] = p;
+                    });
+                    var missing = [];
+                    var notReady = [];
+                    targets.forEach(function (t) {
+                        var found = byName[String(t.name || '').toLowerCase()];
+                        if (!found) { missing.push(t.name); return; }
+                        if (Number(found.status || 0) !== 0) notReady.push(t.name);
+                    });
+                    if (missing.length) {
+                        rpShowStatus(said + ' But this machine has no printer called '
+                            + missing.join(', ') + ' - check it is switched on and still has that name.',
+                            'error');
+                    } else if (notReady.length) {
+                        rpShowStatus(said + ' Windows does not report ' + notReady.join(', ')
+                            + ' as ready - it may be offline or out of paper. Run Test print to be sure.',
+                            'warn');
+                    } else {
+                        rpShowStatus(said + ' This machine can see '
+                            + targets.map(function (t) { return t.name; }).join(', ')
+                            + ' and Windows reports it ready.', 'success');
+                    }
+                } catch (e) {
+                    /* The save is what was asked for and it worked; a failed
+                       readback must not read as a failed save. */
+                    rpShowStatus(said + ' (Could not re-check the printer list: ' + e.message + ')', 'success');
+                }
+            } catch (e) {
+                rpShowStatus('Could not save: ' + e.message, 'error');
+            }
+        }
+
+        /*
+         * A sample on the paper that is actually loaded.
+         *
+         * Built here rather than borrowed from the till, because this window
+         * does not load the till's scripts - and the point is to prove the
+         * printer and the width before a customer is waiting.
+         */
+        /*
+         * A sample receipt through the same path a real sale takes.
+         *
+         * Sales print as ESC/POS on the desktop, so a test that sent HTML
+         * would prove nothing about them. The figures below are chosen to be
+         * awkward on purpose: a name longer than the paper, an amount at the
+         * widest it gets, and a total that has to stay hard right.
+         */
+        async function rpTestPrint() {
+            /* Test the first ticked printer on its own paper. Testing all of
+               them would spend a sheet per printer to answer one question,
+               which is whether this machine can reach a printer at all. */
+            const targets = _collectTargets('rpPrinterList');
+            if (!targets.length) {
+                rpShowStatus('Tick a printer first, then run the test.', 'warn');
+                return;
+            }
+            const printer = targets[0].name;
+            const width = String(targets[0].pageSize || '80mm').replace(/mm$/, '');
+
+            if (!printer) {
+                rpShowStatus(`Choose a named printer: a receipt cannot be sent to the ${OS_DEFAULT_LABEL}.`, 'warn');
+                return;
+            }
+            if (!/^\d+$/.test(width)) {
+                rpShowStatus('Sheet sizes print as a page, not as raw bytes. This test is for thermal rolls.', 'info');
+                return;
+            }
+
+            const now = new Date();
+            const sale = {
+                storeName: 'TEST RECEIPT',
+                storeAddress: width + 'mm roll \u00b7 ' + (width === '58' ? '32' : '48') + ' columns',
+                billNo: 'TEST-001',
+                date: now.toLocaleString('en-IN'),
+                items: [
+                    { name: 'Rice 5kg premium sona masoori', qty: '1', amount: 480 },
+                    { name: 'Sugar 1kg', qty: '2', amount: 90 },
+                    { name: 'Cooking oil 1L pouch', qty: '1', amount: 145 }
+                ],
+                subTotal: 715,
+                total: 715,
+                payments: [{ label: 'Cash', amount: 1000 }], change: 285,
+                itemCount: 3,
+                footer: 'If every amount above ends flush with\nthe right edge, the width is correct.',
+                showThanks: false
+            };
+
+            const btn = document.getElementById('rpTestBtn');
+            btn.disabled = true;
+            rpShowStatus('Sending a test receipt...', 'info');
+            try {
+                const result = await window.electronAPI.printer.printReceipt(sale, {
+                    printerName: printer, paperWidth: width, cut: true
+                });
+                if (result && result.success) {
+                    rpShowStatus('Sent ' + result.bytes + ' bytes. Check that every amount ends flush right.', 'success');
+                } else {
+                    rpShowStatus((result && result.status || 'Failed') + ': ' + ((result && result.error) || 'unknown reason'), result && result.pending ? 'warn' : 'error');
+                }
+            } catch (e) {
+                rpShowStatus('Print failed: ' + e.message, 'error');
+            } finally {
+                btn.disabled = false;
+            }
+        }
+
+        async function cdInit() {
+            /*
+             * Fill the printer list first, always.
+             *
+             * This used to read the saved settings and return early when there
+             * were none - which is exactly the state of a machine that has just
+             * been set up. The list was never fetched, so the dropdown held
+             * nothing but its placeholder and the shop had to find the Load
+             * button before it could choose anything. It looked like printer
+             * support had been removed.
+             *
+             * The list does not depend on the settings. Load it, then lay any
+             * saved choice on top.
+             */
+            try {
+                await cdLoadPrinters();
+            } catch (e) {
+                cdShowStatus('Could not read the printer list: ' + e.message, 'error');
+                return;
+            }
+
+            try {
+                const cfg = await cd().loadConfig();
+                if (!cfg) return;   // nothing saved yet; the list is still usable
+
+                const pinRadio = document.querySelector(`input[name="cdPin"][value="${cfg.pin || 0}"]`);
+                if (pinRadio) pinRadio.checked = true;
+
+                document.getElementById('cdAutoOpen').checked = !!cfg.autoOpenOnSale;
+
+                if (cfg.printerName) {
+                    const sel = document.getElementById('cdPrinterSelect');
+                    sel.value = cfg.printerName;
+                    // A printer that has been unplugged or renamed is no longer
+                    // in the list, so the select silently falls back to blank.
+                    // Say so, rather than letting them press Open and wonder.
+                    if (sel.value !== cfg.printerName) {
+                        cdShowStatus(`Saved printer "${cfg.printerName}" is not connected. Choose another.`, 'warn');
+                    }
+                }
+            } catch (e) {
+                console.warn('cdInit error:', e.message);
+            }
+        }
+        /*
+         * One printer row for receipt printing.
+         *
+         * A row is a printer plus its own copies and its own paper. Size has to
+         * be per row: once several printers can be picked, one global size is
+         * wrong for all but one of them.
+         */
+        let _paperSizeCache = null;
+
+        async function _loadPaperSizes() {
+            if (_paperSizeCache) return _paperSizeCache;
+            try {
+                _paperSizeCache = await window.electronAPI.printer.getPaperSizes();
+            } catch (e) {
+                /* The catalogue comes from the main process so the screen can
+                   never offer a size the print layer will not honour. If it
+                   cannot be read, fall back to the two that cover almost every
+                   till rather than showing an empty menu. */
+                console.warn('[hardware] paper sizes unavailable:', e.message);
+                _paperSizeCache = {
+                    sizes: [{ key: '80mm', label: '80mm roll' }, { key: 'a4', label: 'A4 sheet' }],
+                    defaultSize: '80mm', maxCopies: 20
+                };
+            }
+            return _paperSizeCache;
+        }
+
+        function _sizeOptions(selected) {
+            const cat = _paperSizeCache || { sizes: [], defaultSize: '80mm' };
+            const want = String(selected || cat.defaultSize).toLowerCase();
+            return cat.sizes.map(sz =>
+                '<option value="' + sz.key + '"' + (sz.key === want ? ' selected' : '') + '>'
+                + sz.label + '</option>').join('');
+        }
+
+        /* Saved targets, keyed by lowercase printer name, so a row can find its
+           own settings whatever order the printer list comes back in. */
+        function _targetsByName(saved) {
+            const map = new Map();
+            (Array.isArray(saved) ? saved : []).forEach(t => {
+                if (typeof t === 'string') map.set(t.toLowerCase(), { name: t, copies: 1, pageSize: null });
+                else if (t && t.name !== undefined) map.set(String(t.name).toLowerCase(), t);
+            });
+            return map;
+        }
+
+        function _renderTargetRows(containerId, idPrefix, list, saved, emptyText) {
+            const container = document.getElementById(containerId);
+            if (!container) return;
+            if (!list || !list.length) {
+                container.innerHTML = '<div style="padding:14px;color:#9ca3af;font-size:13px;text-align:center;">'
+                    + (emptyText || 'No printers found.') + '</div>';
+                return;
+            }
+            const savedMap = _targetsByName(saved);
+            container.innerHTML = '';
+
+            list.forEach((pr, i) => {
+                const name = pr.name;
+                const label = (pr.displayName || pr.name) + (pr.isDefault ? ' \u2b50 Default' : '');
+                const mine = savedMap.get(String(name).toLowerCase());
+                const checked = !!mine;
+                const id = idPrefix + 'Cb_' + i;
+
+                const row = document.createElement('div');
+                row.style.cssText = 'display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;transition:background .15s;';
+                row.onmouseenter = () => row.style.background = '#eef2ff';
+                row.onmouseleave = () => row.style.background = '';
+                row.innerHTML =
+                    '<input type="checkbox" id="' + id + '" data-printer-name="' + String(name).replace(/"/g, '&quot;') + '"'
+                        + (checked ? ' checked' : '')
+                        + ' style="width:16px;height:16px;accent-color:#667eea;cursor:pointer;flex-shrink:0;">'
+                    + '<label for="' + id + '" style="flex:1;min-width:0;font-size:14px;color:#374151;cursor:pointer;'
+                        + 'font-weight:' + (pr.isDefault ? '700' : '500') + ';overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">'
+                        + label + '</label>'
+                    + '<span style="display:flex;align-items:center;gap:6px;flex-shrink:0;">'
+                        + '<span style="font-size:12px;color:#6b7280;">Copies</span>'
+                        + '<input type="number" class="' + idPrefix + '-copies" min="1" max="'
+                            + ((_paperSizeCache && _paperSizeCache.maxCopies) || 20) + '" value="'
+                            + ((mine && mine.copies) || 1) + '"'
+                            + ' style="width:56px;padding:5px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;text-align:center;">'
+                        + '<select class="' + idPrefix + '-size" style="padding:5px 6px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;">'
+                            + _sizeOptions(mine && mine.pageSize) + '</select>'
+                    + '</span>';
+                container.appendChild(row);
+            });
+        }
+
+        /* Only ticked rows, each with the numbers typed beside it. */
+        function _collectTargets(containerId) {
+            const container = document.getElementById(containerId);
+            if (!container) return [];
+            return Array.from(container.children).reduce((out, row) => {
+                const cb = row.querySelector('input[type=checkbox]');
+                if (!cb || !cb.checked) return out;
+                const copiesEl = row.querySelector('input[type=number]');
+                const sizeEl = row.querySelector('select');
+                out.push({
+                    name: cb.getAttribute('data-printer-name') || '',
+                    copies: Math.max(1, parseInt(copiesEl && copiesEl.value, 10) || 1),
+                    pageSize: (sizeEl && sizeEl.value) || '80mm'
+                });
+                return out;
+            }, []);
+        }
+
+        /* "3 sheets across 2 printers" - the number that tells a shop whether
+           they have configured what they meant to. */
+        function _describeTargets(targets) {
+            if (!targets.length) return 'No printer selected.';
+            const sheets = targets.reduce((n, t) => n + (t.copies || 1), 0);
+            return sheets + (sheets === 1 ? ' sheet' : ' sheets')
+                + ' across ' + targets.length + (targets.length === 1 ? ' printer' : ' printers') + '.';
+        }
+
+        /*
+         * A DAY OF RECEIPT PRINTS, TRIED AS WELL AS DONE.
+         *
+         * The list deliberately shows failures in red rather than hiding them.
+         * A receipt that printed is not the one anybody comes to this screen
+         * about; the one that did not is, and until now nothing anywhere
+         * recorded it.
+         */
+        /*
+         * EVERYTHING FROM A PRINT JOB IS SOMEBODY ELSE'S TEXT.
+         *
+         * The log is drawn with innerHTML, and its rows carry values that did
+         * not come from this machine: a bill number, a document title, a
+         * printer's own error message, and - for a job taken off the cloud
+         * queue - a whole record written by another installation.
+         *
+         * CodeQL found the file half of this (alert #919) and it was bounded at
+         * the point of writing, which stops control bytes and unbounded strings
+         * reaching the file. It does not make the text safe to paste into
+         * markup: `<img src=x onerror=...>` survives every one of those checks
+         * intact.
+         *
+         * This window is sandboxed with contextIsolation on, so injected script
+         * cannot reach Node - but it CAN call everything preload.js exposes,
+         * which includes the printers and the log deletion. That is not a thing
+         * to leave open on a diagnostics screen.
+         *
+         * One helper, used on every value the log renders.
+         */
+        function logEsc(value) {
+            return String(value ?? '')
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;')
+                .replace(/'/g, '&#39;');
+        }
+
+        async function rcptLoadLogs() {
+            const date = document.getElementById('rcptLogDate').value;
+            const empty = document.getElementById('rcptLogsEmpty');
+            const table = document.getElementById('rcptLogsTable');
+            const body  = document.getElementById('rcptLogsBody');
+            if (!date) { empty.textContent = 'Pick a date first.'; return; }
+
+            let rows = [];
+            try {
+                rows = await window.electronAPI.bill.getReceiptLogs(date) || [];
+            } catch (e) {
+                empty.textContent = 'Could not read the receipt log: ' + e.message;
+                table.style.display = 'none'; empty.style.display = 'block';
+                return;
+            }
+
+            if (!rows.length) {
+                empty.textContent = 'No receipts or bills were printed on ' + date + '.';
+                table.style.display = 'none'; empty.style.display = 'block';
+                return;
+            }
+
+            empty.style.display = 'none';
+            table.style.display = 'table';
+            body.innerHTML = '';
+
+            /* Newest first: somebody opening this is asking about the last one. */
+            [...rows].reverse().forEach((r, i) => {
+                const t = new Date(r.time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+                const ok = r.status === 'printed';
+
+                const printers = (r.printers || []).map(p => {
+                    const good = p.status === 'success';
+                    const why = good ? '' : ' title="' + String(p.reason || '').replace(/"/g, '&quot;') + '"';
+                    return '<span' + why + ' style="display:inline-block;font-size:11px;padding:2px 6px;border-radius:4px;margin:1px;'
+                        + 'background:' + (good ? '#d4edda' : '#f8d7da') + ';color:' + (good ? '#155724' : '#721c24') + ';">'
+                        + (good ? '✓ ' : '✗ ') + logEsc(p.name || '(default)') + '</span>';
+                }).join('') || '<span style="color:#9ca3af;">-</span>';
+
+                /* Speed bands chosen so a slow print is easy to spot at a glance. */
+                let speed = '<span style="color:#9ca3af;">-</span>';
+                if (Number.isFinite(r.ms)) {
+                    const colour = r.ms < 1000 ? '#155724' : (r.ms < 3000 ? '#856404' : '#721c24');
+                    const bg     = r.ms < 1000 ? '#d4edda' : (r.ms < 3000 ? '#fff3cd' : '#f8d7da');
+                    const shown  = r.ms < 1000 ? (r.ms + ' ms') : ((r.ms / 1000).toFixed(1) + ' s');
+                    speed = '<span style="display:inline-block;font-size:11px;font-weight:700;padding:2px 6px;border-radius:4px;background:'
+                          + bg + ';color:' + colour + ';">' + shown + '</span>';
+                }
+
+                /* The printer's own words, not a summary of them. */
+                const firstWhy = (r.printers || []).map(p => p.reason).filter(Boolean)[0] || '';
+                const result = ok
+                    ? '<span style="font-weight:700;color:#155724;">✓ Sent to printer</span>'
+                    : '<span style="font-weight:700;color:#b91c1c;" title="' + logEsc(firstWhy) + '">' + logEsc(r.printStatus || 'Failed') + '</span>'
+                      + (firstWhy ? '<div style="font-size:11px;color:#b91c1c;">' + logEsc(firstWhy) + '</div>' : '');
+
+                const tr = document.createElement('tr');
+                tr.style.background = ok ? (i % 2 === 0 ? '#fff' : '#f9fafb') : '#fff5f5';
+                tr.style.borderBottom = '1px solid #f0f0f0';
+                tr.innerHTML =
+                    '<td style="padding:10px 12px;color:#374151;">' + t + '</td>'
+                  + '<td style="padding:10px 12px;font-weight:600;color:#2563eb;">' + logEsc(r.saleId || '-') + '</td>'
+                  + '<td style="padding:10px 12px;color:#374151;">' + logEsc(r.title || (r.kind === 'bill' ? 'Bill' : 'Receipt')) + '</td>'
+                  /* The fallback is markup of OURS, so it is the one thing here
+                     that must not be escaped. */
+                  + '<td style="padding:10px 12px;font-weight:600;color:#374151;">' + (r.source ? logEsc(r.source) : '<span style="color:#9ca3af;font-weight:400;">not recorded</span>') + '</td>'
+                  + '<td style="padding:10px 12px;">' + printers + '</td>'
+                  + '<td style="padding:10px 12px;">' + speed + '</td>'
+                  + '<td style="padding:10px 12px;">' + result + '</td>';
+                body.appendChild(tr);
+            });
+        }
+
+        (function scannerTest() {
+            const scans = [];
+            let firstKeyAt = 0;
+            let lastKeyAt = 0;
+
+            document.addEventListener('DOMContentLoaded', () => {
+                const input = document.getElementById('scannerTestInput');
+                if (!input) return;
+
+                input.addEventListener('keydown', (e) => {
+                    const now = Date.now();
+                    if (!input.value) firstKeyAt = now;
+                    lastKeyAt = now;
+
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        report(input.value, firstKeyAt, now, true);
+                        input.value = '';
+                        return;
+                    }
+                });
+
+                // A scanner with no Enter suffix still stops typing, so a short
+                // pause is treated as the end of a scan. Without this the tab
+                // would look broken for exactly the scanners it should be
+                // diagnosing.
+                let idle = null;
+                input.addEventListener('input', () => {
+                    clearTimeout(idle);
+                    idle = setTimeout(() => {
+                        if (!input.value) return;
+                        report(input.value, firstKeyAt, lastKeyAt, false);
+                        input.value = '';
+                    }, 700);
+                });
+            });
+
+            function esc(s) {
+                return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            }
+
+            function report(raw, from, to, hadEnter) {
+                const chars = raw.length;
+                const ms = Math.max(0, to - from);
+                const perChar = chars > 1 ? ms / (chars - 1) : 0;
+                const looksScanned = chars > 3 && perChar < 30;
+
+                const digitsOnly = /^[0-9]+$/.test(raw);
+                const notes = [];
+                if (!hadEnter) {
+                    notes.push('No Enter at the end. The till will wait for one - '
+                        + 'set an Enter suffix on the scanner.');
+                }
+                if (!digitsOnly) {
+                    notes.push('Contains characters that are not digits. If the barcode is '
+                        + 'numeric, the scanner and this computer are on different keyboard layouts.');
+                }
+                if (!looksScanned && chars > 3) {
+                    notes.push('Typed at ' + Math.round(perChar) + 'ms per character, which is '
+                        + 'hand speed rather than a scanner.');
+                }
+
+                const box = document.getElementById('scannerResult');
+                box.style.display = 'block';
+                box.innerHTML =
+                    '<div style="padding:16px;border-radius:10px;background:'
+                    + (notes.length ? '#fff3cd' : '#d4edda') + ';color:'
+                    + (notes.length ? '#856404' : '#155724') + ';">'
+                    + '<div style="font-size:20px;font-family:monospace;font-weight:700;'
+                    + 'word-break:break-all;">' + esc(raw) + '</div>'
+                    + '<div style="margin-top:8px;font-size:13px;">'
+                    + chars + ' characters'
+                    + (chars > 1 ? ' &middot; ' + Math.round(perChar) + 'ms per character' : '')
+                    + (hadEnter ? ' &middot; ended with Enter' : '')
+                    + '</div>'
+                    + (notes.length
+                        ? '<ul style="margin:10px 0 0;padding-left:18px;font-size:13px;">'
+                          + notes.map((n) => '<li>' + n + '</li>').join('') + '</ul>'
+                        : '<div style="margin-top:8px;font-size:13px;">'
+                          + 'This is exactly what the till receives. Nothing to change.</div>')
+                    + '</div>';
+
+                scans.unshift({ raw, chars, hadEnter });
+                const history = document.getElementById('scannerHistory');
+                history.innerHTML = scans.length < 2 ? '' :
+                    '<div style="font-size:13px;color:#666;margin-bottom:6px;">Earlier scans</div>'
+                    + scans.slice(1, 6).map((s) =>
+                        '<div style="font-family:monospace;font-size:14px;padding:6px 0;'
+                        + 'border-bottom:1px solid #eee;">' + esc(s.raw) + '</div>').join('');
+            }
+        }());
+
+        document.addEventListener('DOMContentLoaded', () => {
+            // Weight machine: restore last connected port
+            (async () => {
+                try {
+                    const saved = await window.electronAPI.preferences.get('hardware.weightMachine');
+                    if (!saved || !saved.port) return;
+
+                    // Restore simulation checkbox
+                    const simCheck = document.getElementById('enableSimulation');
+                    if (simCheck) simCheck.checked = !!(saved.simulation || saved.isMock);
+
+                    // Scan ports with saved simulation setting
+                    availablePorts = await window.electronAPI.hardware.scanSerialPorts(!!(saved.simulation || saved.isMock));
+
+                    // Ensure the saved port is in the list (for mock ports)
+                    if (!availablePorts.find(p => p.path === saved.port) && saved.isMock) {
+                        availablePorts.push({ path: saved.port, isMock: true, manufacturer: 'Simulation' });
+                    }
+
+                    // Try to reconnect
+                    restoreScaleOptions(saved.options);
+                    const status = await window.electronAPI.hardware.getStatus();
+                    const result = status.connected && status.port === saved.port ? { success: true } : await window.electronAPI.hardware.connectPort(saved.port, { ...(saved.options || {}), isMock: saved.isMock === true });
+                    if (result && result.success) {
+                        connectedPortPath = saved.port;
+                        portSelection.classList.add('hidden');
+                        connectedState.classList.remove('hidden');
+                        connectedPortDisplay.textContent = `Connected to: ${connectedPortPath}${saved.isMock ? ' (SIMULATION)' : ''} ✅ Auto-reconnected`;
+                    }
+                } catch (e) { /* ignore if hardware not ready */ }
+            })();
+        });
+
+    </script>
+</body>
+</html>

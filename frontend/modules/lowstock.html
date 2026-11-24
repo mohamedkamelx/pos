@@ -1,0 +1,95 @@
+<div class="vertical-layout page_loader" id="lowstockitems" style="display: none">
+    <!-- Low stock watchlist with a branch-specific restock basket. -->
+    <div id="containerbar">
+        <div class="breadcrumbbar crumbbar_padding">
+            <div class="row align-items-center row_filter">
+                <div class="col-auto">
+                    <h4 class="page-title break_title mb-0"><lang class="lang_lowstockdetail_title">Low Stock</lang></h4>
+                </div>
+
+                <div class="lf-toolbar-slot">
+                    <div class="lf-panel" id="lowstockitems_filter_panel" style="display:none;"></div>
+                </div>
+                <div class="col-auto text-right ml-auto lf-actions">
+                    <div class="widgetbar" id="lowstockitems_controls">
+                        <div class="btn-group">
+                            <button type="button" class="btn btn-primary-rgba dropdown-toggle" data-toggle="dropdown"><lang class="lang_stock_tools">Stock tools</lang></button>
+                            <div class="dropdown-menu dropdown-menu-right">
+                                <a class="dropdown-item" href="#/inventorycounts"><lang class="lang_stock_counts_recount">Stock counts / recount</lang></a>
+                                <button class="dropdown-item" data-module="item" data-access="write" onclick="PosnicPro.items.openStockAdjustment();"><lang class="lang_stock_adjust_title">Stock adjustment</lang></button>
+                                <button class="dropdown-item" data-module="item" data-access="write" onclick="PosnicPro.items.openBulkStock();"><lang class="lang_bulk_stock_update">Bulk stock update</lang></button>
+                            </div>
+                        </div>
+                        <div class="btn-group">
+                        <button type="button" class="btn btn-primary-rgba dropdown-toggle" data-toggle="dropdown"
+                            aria-haspopup="true" aria-expanded="false" title="Export CSV" data-t-title="lang_export_csv" aria-label="Export CSV" data-t-aria-label="lang_export_csv">
+                            <i class="feather icon-share mr-1"></i><span class="list-file-action-label" data-t="lang_export"><lang class="lang_export">Export</lang></span>
+                        </button>
+                        <div class="dropdown-menu dropdown-menu-right">
+                            <a class="dropdown-item" href="javascript:void(0)" onclick="PosnicPro.lowstockitems.exportCsv(); return false;"><lang class="lang_this_page_what_is_shown">This page (what is shown)</lang></a>
+                            <a class="dropdown-item" href="javascript:void(0)" onclick="PosnicPro.lowstockitems.exportAllCsv(); return false;"><lang class="lang_everything_matching_the_filter">Everything matching the filter</lang></a>
+                        </div>
+                        </div>
+                        <button type="button" class="btn btn-primary-rgba lf-btn" id="lowstockitems_filter_btn"
+                            data-toggle="tooltip" title="Filter low stock" data-t-title="lang_filter_low_stock">
+                            <i class="feather icon-filter mr-2"></i><lang class="lang_filter">Filter</lang>
+                        </button>
+                    </div>
+                </div>
+                <div id="lowstock_applied" class="lf-applied" aria-live="polite"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="contentbar">
+        <div id="restock_dock" class="card border-primary mb-3" style="display:none; position:sticky; top:0; z-index:10;">
+            <div class="card-body py-3 d-flex align-items-center justify-content-between flex-wrap">
+                <div><strong><lang class="lang_restock_basket">Restock basket</lang></strong><div id="restock_summary" class="text-muted" aria-live="polite"></div></div>
+                <button type="button" class="btn btn-primary p-3" onclick="PosnicPro.lowstockitems.reviewRestock();"><lang class="lang_review_restock">Review restock</lang></button>
+            </div>
+        </div>
+        <div id="lowstockitems_split">
+        <div class="card m-b-30 md-rail" id="lowstockitems_list_card">
+            <div class="card-body">
+                <div id="lowstockitems_list_rows" class="md-rail-rows text-muted"><lang class="lang_loading_low_stock">Loading low stock ...</lang></div>
+                <div class="q-pager" id="lowstockitems_list_paging"></div>
+            </div>
+        </div>
+            <div class="card m-b-30 md-detail" id="lowstockitems_detail_card" style="display:none;">
+                <div id="lowstockitems_doc"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<div class="modal fade" id="restock_modal" tabindex="-1" role="dialog" aria-labelledby="restock_title" aria-hidden="true">
+ <div class="modal-dialog modal-lg modal-dialog-centered" role="document"><div class="modal-content">
+  <div class="modal-header"><h5 id="restock_title" class="modal-title"><lang class="lang_restock_basket">Restock basket</lang></h5><button type="button" class="close p-3" data-dismiss="modal" aria-label="Close" data-t-aria-label="lang_close_title"><lang class="lang_text">&times;</lang></button></div>
+  <div class="modal-body">
+   <p><lang class="lang_restock_intro">Choose how to add these quantities. Stock increases immediately in both options.</lang></p>
+   <div id="restock_status" role="status" aria-live="polite"></div>
+   <div class="table-responsive" style="max-height:45vh; overflow:auto;"><table class="table"><thead><tr><th><lang class="lang_newitem_title">Item</lang></th><th><lang class="lang_instock_title">In stock</lang></th><th><lang class="lang_quantity_to_add">Quantity to add</lang></th><th></th></tr></thead><tbody id="restock_rows"></tbody></table></div>
+   <div id="restock_finish" class="border-top pt-3">
+    <div class="form-group mb-3"><label for="restock_supplier"><lang class="lang_restock_supplier_label">Supplier (for the purchase record)</lang></label><select id="restock_supplier" class="form-control"></select><small class="form-text text-muted"><lang class="lang_restock_supplier_hint">Used only when you record a purchase. You can change it on the purchase form.</lang></small></div>
+    <p class="text-muted"><lang class="lang_direct_addition_includes_the_whole_basket">Direct addition includes the whole basket. Purchase includes this supplier's items and items without a supplier; other supplier groups stay in the basket.</lang></p>
+    <div class="row"><div class="col-sm-6 mb-2"><button type="button" class="btn btn-primary p-3 w-100" data-module="item" data-access="write" onclick="PosnicPro.lowstockitems.restockDirect();"><lang class="lang_add_to_stock_now">Add to stock now</lang></button></div><div class="col-sm-6 mb-2"><button type="button" class="btn btn-outline-primary p-3 w-100" data-module="receiving" data-access="write" onclick="PosnicPro.lowstockitems.restockPurchase();"><lang class="lang_record_as_purchase">Record as purchase</lang></button></div></div>
+   </div>
+  </div>
+  <div class="modal-footer"><button type="button" class="btn btn-outline-primary p-3" data-dismiss="modal"><lang class="lang_back_to_list">Back to list</lang></button></div>
+ </div></div>
+</div>
+
+<div class="modal fade" id="restock_unfinished_modal" tabindex="-1" role="dialog" aria-labelledby="restock_unfinished_title" aria-hidden="true">
+ <div class="modal-dialog modal-dialog-centered" role="document"><div class="modal-content">
+  <div class="modal-header"><h5 id="restock_unfinished_title" class="modal-title"><lang class="lang_unfinished_purchase">Unfinished purchase</lang></h5><button type="button" class="close p-3" data-dismiss="modal" aria-label="Close" data-t-aria-label="lang_close_title"><span aria-hidden="true">&times;</span></button></div>
+  <div class="modal-body">
+   <p><lang class="lang_unfinished_purchase_choice_intro">A purchase with items is already open. Choose what to do with it. Your restock basket is kept in every choice except Cancel.</lang></p>
+   <div style="display:grid; gap:8px;">
+    <button type="button" class="btn btn-primary p-3" id="restock_unfinished_append"><lang class="lang_add_to_unfinished_purchase">Add these items to the unfinished purchase</lang></button>
+    <button type="button" class="btn btn-outline-danger p-3" id="restock_unfinished_discard"><lang class="lang_discard_and_start_new_purchase">Discard it and start a new purchase</lang></button>
+    <button type="button" class="btn btn-outline-primary p-3" id="restock_unfinished_open"><lang class="lang_open_unfinished_purchase">Open the unfinished purchase</lang></button>
+    <button type="button" class="btn btn-light p-3" data-dismiss="modal"><lang class="lang_cancel_title">Cancel</lang></button>
+   </div>
+  </div>
+ </div></div>
+</div>

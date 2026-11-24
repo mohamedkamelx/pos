@@ -1,0 +1,142 @@
+<div class="vertical-layout page_loader" id="receivingreport_new" style="display: none">
+    <!-- Start Containerbar -->
+    <div id="containerbar">
+        <!-- Start Breadcrumbbar -->
+        <div class="breadcrumbbar crumbbar_padding">
+
+            <!--  filter-->   
+            <div class="row align-items-center row_filter">
+                <div class="col-lg-2 col-xl-2">
+                    <h4 class="page-title break_title"><lang class="lang_receivereport">Purchase Reports</lang></h4>
+                </div>               
+                <div class="col-md-9 col-lg-9 show-button-action"></div>                  
+                <div class="col-lg-3 col-xl-2 hide-button-action tb_filter" style="display:none;">
+                    <div class="form-control pull-right daterange-timepicker-all report-period daterange-style date-align view_receiving_report_daterange" id="view_receiving_report_daterange">
+                        <i class="feather icon-calendarfeather icon-calendar"></i>&nbsp;
+                        <span></span>
+                    </div>
+                </div>
+                <div class="col-lg-5 col-xl-5 lf-legacy-primary tb_filter" style="display:none;">
+                    <select class="floating-input select2 load-branch display-current-branch receiving_branch_value" multiple="multiple"
+                            data-placeholder="Select Branch"  name="receiving_Select_graph_Branch_value[]">
+                        <option class="allbranch_name" value=''><lang class="lang_report_all">All</lang></option>
+                    </select>
+                </div>
+                <div id="purchase-report-search" class="lf-quick">
+
+                    <button type="button" aria-controls="purchase-report-filters"></button>
+                </div>
+                <dialog id="purchase-report-filters" class="lf-dialog lf-report-dialog" aria-label="Filter purchases" data-t-aria-label="lang_filter_purchases">
+                    <div class="lf-inline-query">
+                        <label for="purchase-report-supplier"><lang class="lang_newsupplier_title">Supplier</lang></label>
+                        <input type="search" id="purchase-report-supplier" placeholder="Choose supplier" data-t-placeholder="lang_choose_supplier" aria-label="Choose supplier" data-t-aria-label="lang_choose_supplier" class="lf-q form-control">
+                    </div>
+                    <div>
+                        <label for="purchase-report-sort"><lang class="lang_sort_purchases">Sort purchases</lang></label>
+                        <select id="purchase-report-sort" class="form-control"><option value="new"><lang class="lang_newest_first">Newest first</lang></option><option value="old"><lang class="lang_oldest_first">Oldest first</lang></option><option value="amount"><lang class="lang_highest_amount">Highest amount</lang></option></select>
+                    </div>
+                </dialog>
+                <button hidden type="button" id="change_receiving_view" data-id="tableView" onclick="PosnicPro.receivingroot.viewPage(this);"><span class="lang_filter_title"><lang class="lang_filter_title">Apply</lang></span></button>
+            </div>
+            <div class="row">
+                <div class="col-lg-2 col-xl-2"></div>
+                <div class="col-md-6 col-xl-10 mobile-hide tb_date_range">
+                    <p>
+                        <span class="badge badge-secondary-inverse hide_date_filetr" style="display:none;">
+                            <span class="view_purchasereport_date_filter_value"></span>
+                        </span>
+                        <span class="badge badge-secondary-inverse hide_value_filetr" style="display:none;">
+                            <span class="view_purchasereport_filter_value"></span>
+                        </span>
+                    </p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <div class="contentbar">
+        <!-- Start row -->
+        <div class="row"> 
+            <div class="col-md-12 col-lg-12 col-xl-12">
+                <div class="card m-b-30">
+                    <div class="card-body">
+                        <ul class="nav nav-tabs custom-tab-line mb-3" id="defaultTabLine" role="tablist">
+                            <li class="nav-item">
+                                <a class="nav-link active report_tab_font" id="receiving-tab-line" data-toggle="tab" href="#receiving-line" role="tab" aria-controls="receiving-line" aria-selected="true" onClick="PosnicPro.receivingreport.receivingTableTabClick();"><i class="feather icon-truck mr-1"></i><lang class="lang_purchase_details">Purchase Details</lang></a>
+                            </li>
+                            
+                        </ul>
+                        <div class="tab-content" id="defaultTabContentLine">
+                            <div id="receiving_upgrade" class="text-center mt-4">
+                                <p class="font-weight-bold"><lang class="lang_you_re_currently_on_the_free_plan_upgrade">You're currently on the Free Plan. Upgrade to Premium for full access to all features.</lang></p>
+                                <a href="javascript:void(0)" onclick="return PosnicPro.users.accountGoToWebsiteURL(this);" class="btn btn-primary"><lang class="lang_upgrade_to_premium">Upgrade to Premium</lang></a>
+                            </div>
+                            <div class="tab-pane fade show active" id="receiving-line" role="tabpanel" aria-labelledby="receiving-tab-line">
+                                <div id="purchase-report-summary" class="table-responsive" aria-live="polite" hidden>
+                                    <table class="table table-sm mb-2">
+                                        <thead><tr><th><lang class="lang_newsupplier_title">Supplier</lang></th><th><lang class="lang_po_title">Purchases</lang></th><th><lang class="lang_purchased">Purchased</lang></th><th><lang class="lang_recorded_paid">Recorded paid</lang></th><th><lang class="lang_po_outstanding">Outstanding</lang></th><th><lang class="lang_payment_unknown">Payment unknown</lang></th></tr></thead>
+                                        <tbody><tr></tr></tbody>
+                                    </table>
+                                </div>
+                                <!-- start table -->
+                                <div class="detailed-report-receiving">
+                                    <div class="loader-receiving-report">
+                                        <!-- Start table -->
+                                        <div class="table-responsive">
+                                            <table data-export-title="Purchase receipts" id="view_receivingreport" class="table table-borderless m-sticky-first" cellspacing="0"
+                                                   width="100%">
+                                                <div class="col-sm-6 col-md-12 col-lg-12" id="reportpurchase_img_hide" style="display:none;">
+                                                    <img src="static/images/general/nodata.svg" class="img-fluid" style="opacity: 0.6;width: 100%;height: 250px;" alt="" loading="lazy" decoding="async">
+                                                </div>
+                                                <div class="reportpurchase_norecord col-sm-6 col-md-12 col-lg-12" style="display:none;">
+                                                </div>
+                                                <thead class="report-thead-tfoot table-header reportpurchase_header"></thead>
+                                                <tbody class="report-thead-tfoot table-body reportpurchase_header"></tbody>
+                                            </table>
+                                        </div>
+                                        <!-- End table -->
+                                    </div>
+                                </div>
+                                <!-- start pagination -->
+                                <div class="card m-b-30 reportpurchase_header">
+                                    <div class="card-body ecommerce-pagination">
+                                        <div class="row align-items-center">
+                                            <div class="col-8 d-flex align-items-center flex-wrap">
+                                                
+                                                <div class="hint-text"><label class="d-inline-flex align-items-center mr-2 mb-0"><lang class="lang_rows">Rows</lang> <select class="form-control form-control-sm w-auto mr-2 select_page" id="view_receivingreport_per_page" data-id="receivingreport" onChange="PosnicPro.setPerPage(this, 'Table');" aria-label="View receivingreport per page">
+                                            <option value="5" selected>5</option>
+                                            <option value="10">10</option>
+                                            <option value="25">25</option>
+                                            <option value="50">50</option>
+                                            <option value="100">100</option>
+                                        </select></label>
+                                                    <lang class="lang_showing">Showing</lang> 
+                                                    <b><span id="view_receivingreport_page_total"></span></b> 
+                                                    <lang class="lang_to">to</lang> 
+                                                    <b><span id="view_receivingreport_page_perpage_total"></span></b> 
+                                                    <lang class="lang_of">of</lang> 
+                                                    <b><span id="view_receivingreport_total"></span></b>
+                                                    <lang class="lang_entries">entries</lang>
+                                                </div>
+                                            </div>
+                                            <div class="col-4">
+                                                <nav aria-label="Page navigation example" data-t-aria-label="lang_page_navigation_example">
+                                                    <ul class="pagination mb-0">
+                                                        <button class="btn previous page-item text-dark-gradient f-w-7" data-id="receivingreport" onclick="PosnicPro.previousPage(this, 'Table')" aria-label="Previous page" data-t-aria-label="lang_previous_page"> <i class="fa fa-angle-left font-20"></i> </button>
+                                                        <button class="btn next page-item text-dark-gradient f-w-7" data-id="receivingreport" onclick="PosnicPro.nextPage(this, 'Table')" aria-label="Next page" data-t-aria-label="lang_next_page"> <i class="fa fa-angle-right font-20"></i> </button>
+                                                    </ul>
+                                                </nav>
+                                            </div>
+                                        </div>                                
+                                    </div>
+                                </div>
+                            </div>
+                            
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <!-- End col -->
+        </div>
+    </div>
+</div>

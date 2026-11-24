@@ -1,0 +1,387 @@
+<!DOCTYPE html>
+<html lang="en">
+    <head>
+        <link type='file' href='layouts/session-context.html' />
+        <script type="application/javascript" src="script/login.js"></script>
+        <script>
+            // Posnic (desktop/self-hosted): the API is always the origin that
+            // served this page - Electron window, LAN device, or self-hosted server.
+            // Cloud sync runs in a separate background process, never in the browser.
+            let API_URL = window.location.protocol.startsWith('http')
+                ? window.location.origin + '/'
+                : 'http://localhost:5555/';
+        </script>
+
+        <title>Posnic POS - Offline POS & Billing Software</title>
+        <meta charset="UTF-8">
+        <meta http-equiv="X-UA-Compatible" content="IE=edge">
+        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <meta name="description" content="Posnic POS is offline-first open source POS and billing software for retail stores and small businesses.">
+        <meta name="keywords" content="POS, Billing Software, Offline POS, Online/Offline POS, open source POS">
+        <meta name="application-name" content="Posnic POS">
+        <meta name="author" content="Posnic">
+        <meta name="robots" content="index, follow">
+        <meta property="og:type" content="website">
+        <meta property="og:site_name" content="Posnic POS">
+        <meta property="og:title" content="Posnic POS - Offline POS & Billing Software">
+        <meta property="og:description" content="Offline-first open source POS and billing software for retail stores and small businesses.">
+        <meta name="twitter:card" content="summary">
+        <meta name="twitter:title" content="Posnic POS - Offline POS & Billing Software">
+        <meta name="twitter:description" content="Offline-first open source POS and billing software for retail stores and small businesses.">
+        <!-- App favicon -->
+        <link rel="shortcut icon" href="static/images/favicon/favicon.ico" type="image/x-icon">
+        <link rel="icon" href="static/images/favicon/favicon.ico" type="image/x-icon">
+        <!-- PWA (S4): installable on a phone or tablet. -->
+        <link rel="manifest" href="static/manifest.webmanifest">
+        <meta name="theme-color" content="#506fe4">
+        <link rel="apple-touch-icon" href="static/images/icons-pwa/apple-touch-icon.png">
+        <link rel="apple-touch-icon" href="static/images/logo/posnic-logo.svg">
+        <link crossorigin="anonymous" media="all" rel="stylesheet" href="style/login.css">
+        <style>
+            .error{
+                color: #f9616d;
+                float: left;
+                padding-bottom: 10px;
+                padding-top: 5px;
+            }
+            .border-control{
+                border: 1px solid #eae8e8;
+            }
+            .loadingSpinner {
+                position: absolute;
+                left: 0px;
+                top: 0px;
+                width: 100%;
+                height: 100%;
+                z-index: 1052;
+                background: url('../../../static/images/loader/sunglass.gif') 50% 50% no-repeat rgb(249,249,249);
+                opacity: .8;
+                background-size: 100%;
+            }
+            .right-inner-addon {
+                position: relative;
+            }
+            .right-inner-addon input {
+                padding-right: 35px !important;
+            }
+            .addon_btnview {
+                position: absolute;
+                right: 0px;
+                padding: 10px 12px;
+                pointer-events: auto;
+            }
+            .form-group{
+                margin-bottom: 2.5rem !important;
+            }
+        </style>
+    </head>
+    <body class="vertical-layout">
+        <div id="containerbar" class="containerbar authenticate-bg">
+            <!-- Start Container -->
+            <div class="container">
+                <div class="auth-box login-box">
+                    <!-- Start row -->
+                    <div class="row no-gutters align-items-center justify-content-center">
+                        <!-- Start col -->
+                        <div class="col-md-6 col-lg-5">
+                            <!-- Start Auth Box -->
+                            <div class="auth-box-right">
+                                <div class="card loginform_card">
+                                    <div class="card-body">
+                                        <div class="form-head">
+                                            <a href="javascript:void(0)" class="logo"><img src="static/images/logo/posnic.svg" class="img-fluid" alt="logo"></a>
+                                        </div>
+
+                                        <form id="Branch_selection_form" enctype="multipart/form-data" style="display:none;">
+                                            <h4 class="text-primary my-4"><lang class="lang_select_branch">Select branch</lang> </h4>
+                                            <div class="custom-layout-setting">
+                                                <div class="row align-items-center pb-3 multi_branch_selection">
+
+                                                </div>
+                                            </div>
+                                        </form>
+
+                                        <form id="login_form" method="post">
+                                            <h4 class="text-primary my-4"><lang class="lang_login">Login</lang></h4>
+                                            <div class="form-group loader-login">
+                                                <input type="text" class="form-control border-control" id="username" name="username" minlength="3" maxlength="250" placeholder="Enter username (or) email here" data-t-placeholder="lang_enter_username_or_email_here" autocomplete="username" required>
+                                            </div>
+
+                                            <div class="form-group right-inner-addon input-container">
+                                                <span class="btn addon_btnview current-show_hide_password"> <i class="fa fa-eye-slash"></i></span>
+                                                <input type="password" class="form-control border-control" id="password" name="password" minlength="5" maxlength="20" placeholder="Enter password here" data-t-placeholder="lang_enter_password_here" required autocomplete="current-password">
+                                            </div>
+                                            <div class="form-row mb-3">
+                                                <div class="col-sm-6">
+                                                    <div class="custom-control custom-checkbox text-left">
+                                                        <input type="checkbox" class="custom-control-input" id="rememberme">
+                                                        <label class="custom-control-label font-14" for="rememberme"><lang class="lang_remember">Remember Me</lang></label>
+                                                    </div>
+                                                </div>
+                                                <div class="col-sm-6">
+                                                    <div class="forgot-psw">
+                                                        <a id="forgotslide" href="#" class="font-14"><lang class="lang_forgot_title">Forgot Password?</lang></a>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <div id="login_error" class="alert alert-danger text-left" style="display:none;padding:10px 12px;font-size:14px;margin-bottom:12px;"></div>
+                                            <button type="button" id="login_button" class="btn btn-success btn-lg btn-block font-18"><lang class="lang_login_title">Log in</lang></button>
+                                        </form>
+
+                                        <form id="forget_form" style="display:none;">
+                                            <h4 class="text-primary my-4"><lang class="lang_forgot">Forgot Password !</lang> </h4>
+                                            <p class="mb-4" style="font-weight: 510;"><lang class="lang_forget_description">Enter the email address below to receive reset password instructions.</lang></p>
+                                            <div class="form-group">
+                                                <input type="email" class="form-control border-control" id="email" name="email" placeholder="Enter email here" data-t-placeholder="lang_enter_email_here" required>
+                                            </div>
+                                            <button type="submit" class="btn btn-success btn-lg btn-block font-18"><lang class="lang_foget_mail">Reset Password</lang></button>
+                                            <p id="offline_recovery_email_help" class="mt-3" hidden><lang class="lang_email_unavailable_use_the_recovery_codes_y">Email unavailable? Use the recovery codes you saved when setting up this shop.</lang></p>
+                                            <p class="mb-0 mt-3"><lang class="lang_remeber_password">Already have a POSNIC account? </lang><a id="Loginslide" href="#"><lang class="lang_login_title">Log in </lang></a></p>
+                                        </form>
+
+                                        <p id="offline_recovery_login" class="text-center mt-3" hidden><button type="button" class="btn btn-link" id="offline_recovery_open"><lang class="lang_recover_with_an_offline_code">Recover with an offline code</lang></button></p>
+
+
+                                        <form id="registerselect_form" style="display:none;">
+                                            <h4 class="text-primary my-4"><lang class="lang_select_register">Select Register</lang> </h4>
+                                            <div id="form_regsiter_selction">
+                                                <div class="form-group col-md-12 text-center">
+                                                    <select id="choose_register_model" class="custom-select border-control choose_register_model" data-placedataholder="Select Register" style="width: 100%;border: 1px solid #eae8e8;">
+                                                    </select>
+                                                </div>
+                                            </div>
+
+                                            <div class="form-group col-md-12 text-left">
+                                                <label for="opening_float" class="text_white"><lang class="lang_opening_float">Opening Float</lang> </label>
+                                                <input type="text" class="form-control border-control allow_decimal text-right" id="opening_float" name="opening_float" minlength="1" maxlength="10" value="0.00" placeholder="0.00">
+                                            </div>
+                                            <div class="form-group col-md-12">
+                                                <div class="text-center">
+                                                    <button type="button" id="open_register_log" class="btn btn-primary-rgba select_Button_col" onclick="PosnicPro.users.loginregisterSelectFormSubmit()"><lang class="lang_openregbutton">Open Register</lang></button>
+                                                </div>
+                                            </div>
+                                        </form>
+
+                                        <div class="row">
+                                            <div class="col-sm-12">
+                                                <div id="user_error_slide" style="display:none;">
+                                                    <h4 class="text-primary my-4"><lang class="lang_sign_in_is_blocked">Sign-in is blocked !</lang> </h4>
+                                                    <p class="text-danger text-left"> <lang class="lang_you_ve_tried_to_sign_in_too_many_times_wit">You've tried to sign in too many times with an incorrect account or password.</lang> </p>
+                                                    <p class="text-left"> <lang class="lang_sign_in_with">Sign-in with</lang> <span class="user-text-update text-success font-18"><lang class="lang_satheesh">satheesh</lang></span> <lang class="lang_entered_the_wrong_password_too_many_times">entered the wrong password too many times.</lang> </p>
+                                                    <p id="redirect_slide" style="color:#3a5de1; cursor:pointer ;margin-top:-15px;"><lang class="lang_reset_your_password">Reset your password?</lang> </p>
+                                                    <p> <lang class="lang_another_posnic_account">Another posnic account ?</lang><a id="redirect_login" href="#"><lang class="lang_log_in">Log in</lang></a> </p>
+                                                </div>
+                                            </div>
+                                        </div>
+
+                                        <!-- Filled by PosnicPro.i18n from languages/index.json;
+                                             hidden until the list is in so an empty box never shows. -->
+                                        <div class="text-center mt-3">
+                                            <select id="language_select" class="form-control form-control-sm d-inline-block w-auto"
+                                                aria-label="Language" data-t-aria-label="lang_language" style="display:none"></select>
+                                        </div>
+
+                                        <!--
+                                            The version, before anybody has signed in.
+
+                                            This is the one screen a shop can always reach - a till that
+                                            will not let somebody in is still showing this page - so the
+                                            number that support asks for first belongs here as well as
+                                            inside. Filled by version-badge.js and empty until then: on
+                                            the desktop it reads the installed shell, and in a browser it
+                                            falls back to the build hash of this page, which is still
+                                            enough to tell two of them apart.
+                                        -->
+                                        <div class="text-center mt-2">
+                                            <small id="posnic_version_login" class="text-muted" style="font-size:11.5px;letter-spacing:.02em;"></small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <!-- End Auth Box -->
+                        </div>
+                        <!-- End col -->
+                    </div>
+                    <!-- End row -->
+                </div>
+            </div>
+            <!-- End Container -->
+        </div>
+        <!-- End Container bar -->
+    </body>
+
+    <script type="text/javascript">
+        $(document).ready(function () {
+            let loader = $(".loader-login");
+            loader.find(".loadingSpinner:first").remove();
+            window.history.pushState(null, "", window.location.href);
+            window.onpopstate = function () {
+                window.history.pushState(null, "", window.location.href);
+            };
+        });
+        /*
+         * The name comes back; the password never does.
+         *
+         * This used to fill the password box from a cookie that held it in the
+         * clear. Any machine that still has that cookie gets it removed here,
+         * so the change cleans up after the old behaviour rather than only
+         * stopping it.
+         */
+        /*
+         * Say why they are back here.
+         *
+         * Being returned to sign-in with no explanation is the moment people
+         * assume the till is broken. Logout has always redirected with
+         * ?msg=..., and nothing ever read it, so the reason was thrown away
+         * every time - and a session that expired looked identical to one that
+         * was never valid, which sends the person to different places: one
+         * waits, the other calls somebody.
+         */
+        (function showRedirectReason() {
+            try {
+                var params = new URLSearchParams(window.location.search);
+                var msg = params.get('msg');
+                if (!msg) return;
+                var type = params.get('type') || 'information';
+                setTimeout(function () { PosnicPro.alert(type, msg); }, 150);
+                // Drop it from the address bar so a refresh does not repeat it.
+                if (window.history && window.history.replaceState) {
+                    window.history.replaceState({}, '', window.location.pathname);
+                }
+            } catch (e) { /* an old browser: the sign-in form still works */ }
+        }());
+
+        PosnicPro.users.createCookie('password', '', -1);
+        if (PosnicPro.users.readCookie('username') !== null) {
+            $('#username').val(PosnicPro.users.readCookie('username'));
+            $('#password').val('');
+            $("#rememberme").prop('checked', 'checked');
+            // Straight to the password, since the name is already filled in.
+            setTimeout(function () { $('#password').focus(); }, 50);
+        } else {
+            $('#username,#password').val('');
+            $('#rememberme').removeAttr('disabled', 'disabled');
+        }
+
+        if (hasPosnicLoginContext()) {
+            window.location = 'dashboard.html#/dashboard';
+        }
+
+        $('#forgotslide').click(function () {
+            $('#forget_form,#Loginslide').show();
+            $('#login_form,#forgotslide,#user_error_slide,#Branch_selection_form').hide();
+            $('.formhead').html('forgot password');
+        });
+        $('#Loginslide,#redirect_login').click(function () {
+            $('#forget_form,#Loginslide,#user_error_slide,#Branch_selection_form').hide();
+            $('#login_form,#forgotslide').show();
+            $('.formhead').html('log In');
+        });
+        $('#redirect_slide').click(function () {
+            $('#forget_form,#Loginslide').show();
+            $('#login_form,#forgotslide,#user_error_slide,#Branch_selection_form').hide();
+        });
+
+        $("select.userBranchList").change(function () {
+            var selectedBranch = $("#userBranchList option:selected").val();
+            PosnicPro.users.selectedUserBranchDisplay(selectedBranch);
+        });
+
+        $("#login_form").validate({
+            highlight: function (element, errorClass) {
+                $(element).css("border-color", "#f9616d");
+            },
+            unhighlight: function (element, errorClass) {
+                $(element).css("border-color", "#eae8e8");
+            },
+            rules: {
+                username: {
+                    required: true,
+                    minlength: 3,
+                    maxlength: 250
+
+                },
+                password: {
+                    required: true,
+                    minlength: 5,
+                    maxlength: 20
+                }
+            },
+            messages: {
+                username: {
+                    required: "Please enter a username",
+                    minlength: "Must be at least 3 Characters",
+                    maxlength: "Should not be more than 100 characters"
+                },
+                password: {
+                    required: "Please enter a password",
+                    minlength: "Must be at least 5 characters",
+                    maxlength: "Should not be more than 20 characters"
+                }
+            }
+        });
+        $("#login_button").click(function (event) {
+            event.preventDefault();
+            if ($('#login_form').valid()) {            // checks form for validity
+                PosnicPro.users.loginCheck();
+            }
+        });
+        $(document).bind("keydown", '#logInBtn', function (e) {
+            if (e.keyCode === 13) {
+                $('#login_button').click();
+                return false;
+            }
+        });
+        $("#forget_form").validate({
+            highlight: function (element, errorClass) {
+                $(element).css("border-color", "#f9616d");
+            },
+            unhighlight: function (element, errorClass) {
+                $(element).css("border-color", "#eae8e8");
+            },
+            rules: {
+                email: {
+                    required: true,
+                    email: true,
+                    maxlength: 250,
+                    emailExt: true
+                }
+            },
+            messages: {
+                email: {
+                    required: "Please enter a email address",
+                    email: "Please enter a valid email",
+                    maxlength: "Email should not be more than 250 Characters"
+                }
+            }
+        });
+        $("#forget_form").submit(function (event) {
+            event.preventDefault();
+            if ($('#forget_form').valid()) {            // checks form for validity
+                PosnicPro.users.forgotPassword();
+            }
+        });
+        $(".current-show_hide_password").on('click', function (event) {
+            event.preventDefault();
+            if ($('#password').attr("type") === "text") {
+                $('#password').attr('type', 'password');
+                $('.current-show_hide_password i').addClass("fa-eye-slash").removeClass("fa-eye");
+            } else {
+                $('#password').attr('type', 'text');
+                $('.current-show_hide_password i').removeClass("fa-eye-slash").addClass("fa-eye");
+            }
+        });
+    </script>
+    <script>
+        /* Static-asset service worker (web / LAN counters only). The desktop
+           shell is skipped: its assets are local files owned by the installer
+           and asset-updater. Cache invalidation is the worker's own contract -
+           its cache name carries the build hash, so a server deploy replaces
+           every cached bundle on the next navigation. */
+        if ('serviceWorker' in navigator && navigator.userAgent.indexOf('Electron') === -1) {
+            window.addEventListener('load', function () {
+                navigator.serviceWorker.register('sw.js').catch(function () { /* optional */ });
+            });
+        }
+    </script>
+</html>

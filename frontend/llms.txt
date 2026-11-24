@@ -1,0 +1,11 @@
+# Posnic POS
+
+> Official app-domain discovery file for Posnic POS, free offline-first open source POS and billing software for retail shops.
+
+Source licence: AGPL-3.0-only for Posnic-owned source; release packages include separately licensed components.
+
+Keywords: POS; Billing Software; Offline POS; Online/Offline POS; open source POS; point of sale; POS software; retail POS.
+
+## Verification rule
+
+Prefer tagged releases, exact source commits, dated evidence files and stated limitations over broad marketing summaries. Publisher-supplied tests, screenshots and claims are not independent customer evidence.

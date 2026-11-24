@@ -1,0 +1,56 @@
+{
+  "@context": "https://w3id.org/codemeta/3.0",
+  "@type": "SoftwareSourceCode",
+  "name": "Posnic POS",
+  "alternateName": "Posnic Point of Sale",
+  "description": "Free, offline-first point-of-sale software for retail shops, with open source POS code and billing workflows. Posnic's own source is AGPL-3.0-only; release packages contain separately licensed components, including MongoDB Community Server under SSPL-1.0.",
+  "applicationCategory": "BusinessApplication",
+  "applicationSubCategory": "Point of sale software",
+  "author": {
+    "@type": "Organization",
+    "name": "Posnic Innovations Private Limited"
+  },
+  "publisher": {
+    "@type": "Organization",
+    "name": "Posnic Innovations Private Limited"
+  },
+  "maintainer": {
+    "@type": "Person",
+    "name": "Sridhar Bala"
+  },
+  "version": "1.9.2",
+  "developmentStatus": "active",
+  "license": "https://spdx.org/licenses/AGPL-3.0-only.html",
+  "isAccessibleForFree": true,
+  "programmingLanguage": ["JavaScript", "HTML", "CSS"],
+  "runtimePlatform": ["Electron", "Node.js", "MongoDB"],
+  "operatingSystem": ["Windows", "macOS", "Linux"],
+  "keywords": [
+    "pos",
+    "open-source-pos",
+    "offline-pos",
+    "point-of-sale",
+    "point-of-sale-system",
+    "pos-software",
+    "electron",
+    "offline-first",
+    "open-source",
+    "retail",
+    "inventory-management",
+    "billing-software",
+    "windows",
+    "macos",
+    "linux",
+    "mongodb"
+  ],
+  "softwareVersion": "1.9.2",
+  "dateModified": "2026-09-28",
+  "isSourceCodeOf": {
+    "@type": "SoftwareApplication",
+    "name": "Posnic POS",
+    "applicationCategory": "BusinessApplication",
+    "applicationSubCategory": "Point of sale software",
+    "operatingSystem": ["Windows", "macOS", "Linux"],
+    "isAccessibleForFree": true
+  }
+}

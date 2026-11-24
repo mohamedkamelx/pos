@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <title><lang class="lang_customersearch_title">Catalog Display</lang> · Posnic</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Posnic product catalog display" />
+    <meta name="theme-color" content="#ffffff" />
+    <link rel="shortcut icon" href="static/images/favicon/favicon.ico" type="image/x-icon">
+    <link rel="icon" href="static/images/favicon/favicon.ico" type="image/x-icon">
+    <link crossorigin="anonymous" media="all" rel="stylesheet" href="style/customersearch.css" />
+    <script>
+        // Posnic (desktop/self-hosted): the API is always the origin that
+        // served this page - Electron window, LAN device, or self-hosted server.
+        // Cloud sync runs in a separate background process, never in the browser.
+        let API_URL = window.location.protocol.startsWith('http')
+            ? window.location.origin + '/'
+            : 'http://localhost:5555/';
+    </script>
+</head>
+
+<body class="catalog-page">
+    <div class="catalog-shell">
+        <header class="catalog-topbar">
+            <div class="catalog-brand">
+                <span class="catalog-brand-mark" aria-hidden="true">
+                    <img src="static/images/logo/posnic-logo.svg" alt="">
+                </span>
+                <div>
+                    <p class="catalog-eyebrow"><lang class="lang_posnic">Posnic</lang></p>
+                    <h1><lang class="lang_customersearch_title">Catalog Display</lang></h1>
+                </div>
+            </div>
+            <div class="catalog-topbar-actions">
+                <button type="button" class="catalog-button catalog-button-quiet" id="catalog_refresh" title="Refresh" data-t-title="lang_refresh">
+                    <i class="feather icon-refresh-cw" aria-hidden="true"></i>
+                    <span class="catalog-button-label"><lang class="lang_refresh">Refresh</lang></span>
+                </button>
+                <button type="button" class="catalog-button catalog-button-primary" id="catalog_pdf">
+                    <i class="feather icon-download" aria-hidden="true"></i>
+                    <span class="catalog-button-label"><lang class="lang_download_pdf">Download PDF</lang></span>
+                </button>
+            </div>
+        </header>
+
+        <section class="catalog-toolbar" aria-label="Catalog filters" data-t-aria-label="lang_catalog_filters">
+            <div class="catalog-search">
+                <i class="feather icon-search" aria-hidden="true"></i>
+                <input type="search" id="catalog_search" autocomplete="off" spellcheck="false"
+                    placeholder="Search products, barcodes or categories" data-t-placeholder="lang_search_products_placeholder"
+                    aria-label="Search products" data-t-aria-label="lang_search_products">
+                <button type="button" id="catalog_search_clear" class="catalog-search-clear" aria-label="Clear search"
+                    data-t-aria-label="lang_clear_search" hidden>
+                    <i class="feather icon-x" aria-hidden="true"></i>
+                </button>
+            </div>
+            <div class="catalog-toolbar-right">
+                <label class="catalog-sort">
+                    <span><lang class="lang_catalog_sort_by">Sort by</lang></span>
+                    <select id="filter_customer_search" aria-label="Sort products" data-t-aria-label="lang_sort_products">
+                        <option value="new"><lang class="lang_new_search">Newest</lang></option>
+                        <option value="low"><lang class="lang_low_search">Price - Low to High</lang></option>
+                        <option value="high"><lang class="lang_high_search">Price - High to Low</lang></option>
+                        <option value="name"><lang class="lang_name_title">Name</lang></option>
+                    </select>
+                </label>
+                <button type="button" class="catalog-button catalog-button-quiet" id="catalog_price_toggle"
+                    aria-expanded="true" aria-controls="catalog_price_panel">
+                    <i class="feather icon-sliders" aria-hidden="true"></i>
+                    <span class="catalog-button-label"><lang class="lang_price_range">Price range</lang></span>
+                </button>
+            </div>
+        </section>
+
+        <section class="catalog-price-panel" id="catalog_price_panel">
+            <div class="catalog-price-heading">
+                <span><lang class="lang_price_range">Price range</lang></span>
+                <output id="catalog_price_output"></output>
+            </div>
+            <input id="range-slider" aria-label="Price range" data-t-aria-label="lang_price_range">
+        </section>
+
+        <div class="catalog-summary" role="status" aria-live="polite">
+            <span id="catalog_count">0</span>
+            <span class="catalog-summary-sep">·</span>
+            <span id="catalog_page_label"></span>
+            <span class="catalog-summary-spacer"></span>
+            <span id="catalog_loading" class="catalog-loading" hidden>
+                <span class="catalog-spinner" aria-hidden="true"></span>
+                <lang class="lang_loading_4">Loading ...</lang>
+            </span>
+        </div>
+
+        <main id="list-item" class="catalog-grid" aria-label="Products" data-t-aria-label="lang_products"></main>
+
+        <div id="catalog_empty" class="catalog-empty" hidden>
+            <i class="feather icon-package" aria-hidden="true"></i>
+            <h2><lang class="lang_no_products_found">No products found</lang></h2>
+            <p><lang class="lang_no_products_found_hint">Try another search or widen the price range.</lang></p>
+            <button type="button" class="catalog-button catalog-button-primary" id="catalog_empty_reset">
+                <lang class="lang_clear_filters">Clear filters</lang>
+            </button>
+        </div>
+
+        <nav id="catalog_pager" class="catalog-pager" aria-label="Page navigation example" data-t-aria-label="lang_page_navigation_example"></nav>
+    </div>
+
+    <!-- Product detail -->
+    <div class="modal fade" id="view_item_details" tabindex="-1" role="dialog" aria-modal="true"
+        aria-labelledby="customer_item_name">
+        <div class="modal-dialog modal-xl modal-dialog-centered" role="document">
+            <div class="modal-content catalog-modal">
+                <button type="button" class="catalog-modal-close" data-dismiss="modal" aria-label="Close"
+                    data-t-aria-label="lang_close_title">
+                    <i class="feather icon-x" aria-hidden="true"></i>
+                </button>
+                <div class="catalog-modal-grid">
+                    <div class="catalog-gallery">
+                        <div class="catalog-gallery-main">
+                            <img id="catalog_main_image" src="static/images/default/item.svg" alt="" loading="eager">
+                        </div>
+                        <div id="catalog_thumbs" class="catalog-thumbs"></div>
+                    </div>
+                    <div class="catalog-detail">
+                        <span class="catalog-chip" id="item_view_category"></span>
+                        <h2 id="customer_item_name"></h2>
+                        <div class="catalog-detail-price">
+                            <span class="catalog-detail-final" id="item_view_sellingprice_discount"></span>
+                            <del class="catalog-detail-original" id="catalog_original_price_wrap">
+                                <span id="item_view_sellingprice"></span>
+                            </del>
+                        </div>
+                        <div id="catalog_stock" class="catalog-stock"></div>
+                        <p class="catalog-description" id="item_view_discriptions"></p>
+                        <div class="catalog-detail-section">
+                            <h3><lang class="lang_newbranch_title">Branch</lang></h3>
+                            <div id="catalog_branch_list" class="catalog-branch-list"></div>
+                            <div id="catalog_branch_details" class="catalog-branch-details"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Print sheet is built on demand and removed after the PDF is saved. -->
+    <script type="application/javascript" src="script/customersearch.js"></script>
+</body>
+
+</html>

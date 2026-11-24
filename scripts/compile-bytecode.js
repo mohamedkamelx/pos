@@ -1,0 +1,107 @@
+#!/usr/bin/env node
+'use strict';
+
+/*
+ * Compiles Node/Electron CommonJS files into V8 code caches.
+ *
+ * This script must run under the Electron runtime that will execute the app:
+ *   ELECTRON_RUN_AS_NODE=1 electron scripts/compile-bytecode.js --manifest ...
+ * System Node has a different V8 build and its caches are rejected.
+ */
+
+const crypto = require('crypto');
+const fs = require('fs');
+const path = require('path');
+const vm = require('vm');
+const v8 = require('v8');
+
+const MAGIC = Buffer.from('POSNICBC', 'ascii');
+const VERSION = 1;
+const FIXED_HEADER = 20;
+
+function stripSourceMapComments(source) {
+  return source
+    .replace(/^\/\/[#@]\s*sourceMappingURL=.*$/gm, '')
+    .replace(/\/\*[#@]\s*sourceMappingURL=[\s\S]*?\*\//g, '');
+}
+
+function cleanSource(source) {
+  let text = source.replace(/^\uFEFF/, '');
+  if (text.startsWith('#!')) {
+    text = text.replace(/^#![^\n]*(?:\n|$)/, '');
+  }
+  return stripSourceMapComments(text);
+}
+
+function compileOne(entry) {
+  const input = path.resolve(entry.input);
+  const output = path.resolve(entry.output);
+  const virtualFilename = entry.filename;
+  if (!virtualFilename || !virtualFilename.endsWith('.js')) {
+    throw new Error(`[bytecode] missing virtual .js filename for ${input}`);
+  }
+
+  const source = cleanSource(fs.readFileSync(input, 'utf8'));
+  const wrapped =
+    '(function (exports, require, module, __filename, __dirname) {' +
+    source +
+    '\n})';
+
+  v8.setFlagsFromString('--no-lazy');
+  let cachedData;
+  try {
+    const script = new vm.Script(wrapped, { filename: virtualFilename });
+    cachedData = script.createCachedData();
+  } finally {
+    v8.setFlagsFromString('--lazy');
+  }
+
+  const metadata = Buffer.from(
+    JSON.stringify({
+      source: virtualFilename,
+      length: wrapped.length,
+      v8: process.versions.v8,
+      node: process.versions.node,
+      electron: process.versions.electron || null,
+      arch: process.arch,
+      platform: process.platform,
+      cacheSha256: crypto.createHash('sha256').update(cachedData).digest('hex'),
+    }),
+    'utf8',
+  );
+  const header = Buffer.alloc(FIXED_HEADER);
+  MAGIC.copy(header, 0);
+  header.writeUInt32LE(VERSION, 8);
+  header.writeUInt32LE(wrapped.length, 12);
+  header.writeUInt32LE(metadata.length, 16);
+
+  fs.mkdirSync(path.dirname(output), { recursive: true });
+  const temporary = `${output}.tmp`;
+  fs.writeFileSync(temporary, Buffer.concat([header, metadata, cachedData]));
+  fs.renameSync(temporary, output);
+  fs.unlinkSync(input);
+  return { input, output, bytes: cachedData.length, sourceBytes: wrapped.length };
+}
+
+function main() {
+  const index = process.argv.indexOf('--manifest');
+  if (index < 0 || !process.argv[index + 1]) {
+    throw new Error('usage: compile-bytecode.js --manifest <file>');
+  }
+  const manifest = JSON.parse(fs.readFileSync(process.argv[index + 1], 'utf8'));
+  const files = Array.isArray(manifest.files) ? manifest.files : [];
+  let sourceBytes = 0;
+  let bytecodeBytes = 0;
+  for (const entry of files) {
+    const result = compileOne(entry);
+    sourceBytes += result.sourceBytes;
+    bytecodeBytes += result.bytes;
+  }
+  console.log(
+    `[bytecode] compiled ${files.length} modules (${(sourceBytes / 1024).toFixed(0)} KB source -> ${(bytecodeBytes / 1024).toFixed(0)} KB bytecode)`,
+  );
+}
+
+if (require.main === module) main();
+
+module.exports = { cleanSource, stripSourceMapComments };

@@ -1,0 +1,572 @@
+/* Party debts: the customer/supplier money screens. */
+.debts-kpis {
+    margin-bottom: 4px;
+}
+
+.debts-kpi {
+    border: 1px solid var(--border-color, #e6e9ef);
+    border-radius: 10px;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+    overflow: hidden;
+}
+
+.debts-kpi .card-body {
+    padding: 18px 20px;
+}
+
+.debts-kpi-label {
+    display: block;
+    color: var(--text-muted, #6b7280);
+    font-size: 13px;
+    margin-bottom: 4px;
+}
+
+.debts-kpi-value {
+    font-size: 26px;
+    font-weight: 700;
+    margin: 0 0 2px;
+    letter-spacing: -0.02em;
+}
+
+.debts-kpi-receivable {
+    border-left: 4px solid #2f80ed;
+}
+
+.debts-kpi-payable {
+    border-left: 4px solid #f2994a;
+}
+
+.debts-kpi-net {
+    border-left: 4px solid #27ae60;
+}
+
+.debts-table thead th {
+    border-top: 0;
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    color: var(--text-muted, #6b7280);
+    white-space: nowrap;
+}
+
+.debts-table td {
+    vertical-align: middle;
+}
+
+.debts-table .btn {
+    white-space: nowrap;
+}
+
+#debts_new .nav-pills .nav-link {
+    border-radius: 999px;
+    padding: 7px 18px;
+    font-weight: 600;
+}
+
+#debts_new .nav-pills .nav-link.active {
+    color: #fff;
+}
+
+#debts_new .debts-sort {
+    max-width: 190px;
+}
+
+#debts_new .debts-empty {
+    border: 1px dashed var(--border-color, #e6e9ef);
+    border-radius: 10px;
+}
+
+#debts_statement_body h6 {
+    margin-top: 16px;
+    font-weight: 700;
+}
+
+#debts_statement_body .table td,
+#debts_statement_body .table th {
+    padding: 6px 8px;
+}
+
+/* Statement: one quiet sheet, three columns, with the long lists folded. */
+.debts-statement-party {
+    margin-bottom: 12px;
+}
+
+.debts-statement-summary {
+    display: grid;
+    grid-template-columns: minmax(210px, 1.25fr) repeat(2, minmax(140px, 1fr));
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.debts-summary-primary,
+.debts-summary-item {
+    border: 1px solid var(--border-color, #e6e9ef);
+    border-radius: 10px;
+    padding: 11px 14px;
+    min-width: 0;
+}
+
+.debts-summary-primary {
+    background: rgba(47, 128, 237, 0.07);
+    border-color: rgba(47, 128, 237, 0.2);
+}
+
+.debts-summary-label {
+    display: block;
+    color: var(--text-muted, #6b7280);
+    font-size: 12px;
+    margin-bottom: 2px;
+}
+
+.debts-summary-value {
+    display: block;
+    font-size: 24px;
+    font-weight: 700;
+    line-height: 1.15;
+    letter-spacing: -0.02em;
+}
+
+.debts-summary-item strong {
+    display: block;
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.debts-summary-credit {
+    display: block;
+    margin-top: 2px;
+    color: var(--text-muted, #6b7280);
+    font-size: 12px;
+}
+
+.debts-statement-section {
+    border-top: 1px solid var(--border-color, #e6e9ef);
+    margin-top: 12px;
+    padding-top: 7px;
+}
+
+.debts-section-static {
+    padding: 7px 0;
+    font-weight: 700;
+}
+
+.debts-statement-toggle {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    border: 0;
+    background: transparent;
+    color: inherit;
+    padding: 7px 0;
+    text-align: start;
+}
+
+.debts-statement-toggle:hover {
+    color: #2f80ed;
+}
+
+.debts-statement-toggle:focus-visible {
+    outline: 2px solid rgba(47, 128, 237, 0.5);
+    outline-offset: 2px;
+    border-radius: 4px;
+}
+
+.debts-section-heading {
+    display: inline-flex;
+    align-items: center;
+    gap: 8px;
+    font-weight: 700;
+    min-width: 0;
+}
+
+.debts-section-chevron {
+    transition: transform 0.18s ease;
+}
+
+.debts-statement-toggle:not(.collapsed) .debts-section-chevron {
+    transform: rotate(180deg);
+}
+
+.debts-section-count {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 24px;
+    height: 21px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: rgba(127, 127, 127, 0.14);
+    color: inherit;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 1;
+}
+
+.debts-section-total {
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+}
+
+.debts-statement-table {
+    margin: 3px 0 0;
+}
+
+.debts-statement-table thead th {
+    border-top: 0;
+    border-bottom: 1px solid var(--border-color, #e6e9ef);
+    padding: 7px 8px;
+    color: var(--text-muted, #6b7280);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.debts-statement-table td {
+    padding: 9px 8px;
+    vertical-align: middle;
+}
+
+.debts-statement-table tbody tr:last-child td {
+    border-bottom: 0;
+}
+
+.debts-value-col {
+    width: 1%;
+    text-align: end;
+}
+
+.debts-nowrap {
+    white-space: nowrap;
+    color: var(--text-muted, #6b7280);
+    font-size: 12.5px;
+    font-variant-numeric: tabular-nums;
+}
+
+.debts-type-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 2px;
+    min-width: 0;
+}
+
+.debts-doc-link {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    color: #2f80ed;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.debts-doc-link:hover {
+    text-decoration: underline;
+}
+
+.debts-doc-link:focus-visible {
+    outline: 2px solid rgba(47, 128, 237, 0.5);
+    outline-offset: 2px;
+    border-radius: 3px;
+}
+
+.debts-type-ref {
+    display: inline-block;
+    max-width: 18ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    vertical-align: bottom;
+    padding: 0 5px;
+    border-radius: 4px;
+    background: rgba(127, 127, 127, 0.12);
+    font-size: 11.5px;
+    font-weight: 600;
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.debts-type-sub {
+    display: block;
+    max-width: 320px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-muted, #6b7280);
+    font-size: 12px;
+}
+
+.debts-value-cell {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 2px;
+    white-space: nowrap;
+}
+
+.debts-value-main {
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+}
+
+.debts-money {
+    unicode-bidi: isolate;
+    font-variant-numeric: tabular-nums;
+}
+
+.debts-value-sub {
+    color: var(--text-muted, #6b7280);
+    font-size: 12px;
+}
+
+.debts-flow {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 7px;
+}
+
+.debts-flow-part {
+    display: inline-flex;
+    flex-direction: column;
+    align-items: center;
+    min-width: 60px;
+}
+
+.debts-flow-part small {
+    color: var(--text-muted, #6b7280);
+    font-size: 10px;
+    line-height: 1.2;
+    white-space: nowrap;
+}
+
+.debts-flow-part b {
+    font-size: 13px;
+    font-weight: 700;
+    line-height: 1.35;
+    font-variant-numeric: tabular-nums;
+}
+
+.debts-flow-op {
+    color: var(--text-muted, #6b7280);
+    font-size: 14px;
+    line-height: 1.8;
+}
+
+.debts-flow-after b {
+    color: #c0392b;
+}
+
+.debts-payment-value {
+    display: inline-flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 7px;
+}
+
+.debts-icon-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 27px;
+    height: 27px;
+    padding: 0;
+    border: 1px solid rgba(192, 57, 43, 0.3);
+    border-radius: 50%;
+    background: transparent;
+    color: #c0392b;
+    line-height: 1;
+}
+
+.debts-icon-btn:hover {
+    background: rgba(192, 57, 43, 0.09);
+}
+
+.debts-statement-pager {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 29px;
+    padding: 6px 0 2px;
+    color: var(--text-muted, #6b7280);
+    font-size: 12px;
+}
+
+.debts-page-count {
+    flex: 1 1 auto;
+    min-width: 0;
+}
+
+.debts-page-position {
+    white-space: nowrap;
+    font-variant-numeric: tabular-nums;
+}
+
+.debts-page-actions {
+    display: inline-flex;
+    gap: 4px;
+}
+
+.debts-statement-page {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 27px;
+    height: 27px;
+    padding: 0;
+    border: 1px solid var(--border-color, #dfe3ea);
+    border-radius: 7px;
+    background: transparent;
+    color: inherit;
+    font-size: 18px;
+    line-height: 1;
+}
+
+.debts-statement-page:hover:not(:disabled) {
+    background: rgba(127, 127, 127, 0.1);
+}
+
+.debts-statement-page:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+.debts-statement-empty {
+    padding: 22px 8px !important;
+    color: var(--text-muted, #6b7280);
+    text-align: center;
+}
+
+@media (max-width: 767.98px) {
+    .debts-kpi {
+        margin-bottom: 12px;
+    }
+
+    #debts_new .lf-quick {
+        display: block !important;
+    }
+
+    #debts_new .lf-quick #debts_search {
+        margin: 0 0 8px !important;
+    }
+
+    #debts_new .debts-sort {
+        max-width: none;
+        width: 100%;
+    }
+
+    .debts-statement-summary {
+        grid-template-columns: 1fr 1fr;
+    }
+
+    .debts-summary-primary {
+        grid-column: 1 / -1;
+    }
+
+    .debts-statement-toggle {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 2px;
+    }
+
+    .debts-flow {
+        gap: 3px;
+    }
+
+    .debts-flow-part {
+        min-width: 52px;
+    }
+
+    .debts-flow-part b {
+        font-size: 12px;
+    }
+
+    .debts-type-sub {
+        max-width: 170px;
+    }
+}
+
+/*
+ * A three-column ledger on a phone still has to fit three columns. The account
+ * flow is the widest value, so on the narrowest screens it becomes a small
+ * vertical equation rather than forcing the table to scroll sideways.
+ */
+@media (max-width: 575.98px) {
+    .debts-statement-table {
+        table-layout: fixed;
+    }
+
+    .debts-statement-table th:nth-child(1),
+    .debts-statement-table td:nth-child(1) {
+        width: 30%;
+    }
+
+    .debts-statement-table th:nth-child(2),
+    .debts-statement-table td:nth-child(2) {
+        width: 32%;
+    }
+
+    .debts-statement-table th:nth-child(3),
+    .debts-statement-table td:nth-child(3) {
+        width: 38%;
+    }
+
+    .debts-statement-table td,
+    .debts-statement-table th {
+        padding-left: 5px;
+        padding-right: 5px;
+    }
+
+    .debts-nowrap {
+        font-size: 11.5px;
+    }
+
+    .debts-type-ref {
+        max-width: 10ch;
+    }
+
+    .debts-flow {
+        flex-direction: column;
+        align-items: stretch;
+        gap: 1px;
+    }
+
+    .debts-flow-op {
+        display: none;
+    }
+
+    .debts-flow-part {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: baseline;
+        gap: 4px;
+        min-width: 0;
+    }
+
+    .debts-flow-part small {
+        font-size: 10px;
+    }
+
+    .debts-flow-part b {
+        font-size: 12px;
+        text-align: end;
+    }
+
+    .debts-flow-part.debts-flow-paid small::before {
+        content: "− ";
+    }
+
+    .debts-flow-part.debts-flow-after small::before {
+        content: "= ";
+    }
+
+    .debts-payment-value {
+        gap: 4px;
+    }
+
+    .debts-icon-btn {
+        width: 24px;
+        height: 24px;
+    }
+}

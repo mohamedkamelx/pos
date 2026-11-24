@@ -1,0 +1,202 @@
+<div class="vertical-layout page_loader" id="debts_new" style="display: none">
+    <div id="containerbar">
+        <div class="breadcrumbbar crumbbar_padding">
+            <div class="row align-items-center row_filter">
+                <div class="col-lg-2 col-xl-2">
+                    <h4 class="page-title break_title"><lang class="lang_debts">Debts</lang></h4>
+                </div>
+                <div class="col-lg-6 col-xl-6 tb_filter">
+                    <div class="lf-quick d-flex align-items-center">
+                        <input type="search" id="debts_search" class="form-control mr-2"
+                               placeholder="Search name, phone, invoice number"
+                               data-t-placeholder="lang_search_debts"
+                               aria-label="Search" data-t-aria-label="lang_search">
+                        <select id="debts_sort" class="form-control debts-sort"
+                                aria-label="Sort debts" data-t-aria-label="lang_sort_by">
+                            <option value="outstanding"><lang class="lang_highest_amount_first">Highest amount first</lang></option>
+                            <option value="name"><lang class="lang_name_title">Name</lang></option>
+                            <option value="oldest"><lang class="lang_oldest_first">Oldest first</lang></option>
+                            <option value="newest"><lang class="lang_newest_first">Newest first</lang></option>
+                            <option value="last_payment"><lang class="lang_last_payment">Last payment</lang></option>
+                        </select>
+                    </div>
+                </div>
+                <div class="col-lg-4 col-xl-4 tb_filter">
+                    <select class="floating-input select2 load-branch display-current-branch debts_branch_value"
+                            multiple="multiple" data-placeholder="Select Branch" data-t-placeholder="lang_select_branch" name="debts_branch[]"
+                            id="debts_branch" aria-label="Branch" data-t-aria-label="lang_branch">
+                        <option class="allbranch_name" value=""><lang class="lang_report_all">All</lang></option>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <div id="contentbar">
+            <div class="row debts-kpis">
+                <div class="col-md-4 col-lg-4">
+                    <div class="card debts-kpi debts-kpi-receivable">
+                        <div class="card-body">
+                            <span class="debts-kpi-label"><lang class="lang_receivables">Customers owe</lang></span>
+                            <h3 class="debts-kpi-value"><span class="display-currency"></span> <span id="debts_receivables">0.00</span></h3>
+                            <small class="text-muted"><span id="debts_customer_count">0</span> <lang class="lang_customers">Customers</lang></small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-4">
+                    <div class="card debts-kpi debts-kpi-payable">
+                        <div class="card-body">
+                            <span class="debts-kpi-label"><lang class="lang_payables">We owe suppliers</lang></span>
+                            <h3 class="debts-kpi-value"><span class="display-currency"></span> <span id="debts_payables">0.00</span></h3>
+                            <small class="text-muted"><span id="debts_supplier_count">0</span> <lang class="lang_suppliers">Suppliers</lang></small>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-md-4 col-lg-4">
+                    <div class="card debts-kpi debts-kpi-net">
+                        <div class="card-body">
+                            <span class="debts-kpi-label"><lang class="lang_net_position">Net position</lang></span>
+                            <h3 class="debts-kpi-value"><span class="display-currency"></span> <span id="debts_net">0.00</span></h3>
+                            <small class="text-muted"><lang class="lang_receivables_minus_payables">Customers owe minus what we owe</lang></small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-body">
+                    <ul class="nav nav-pills mb-3" id="debts_tabs" role="tablist">
+                        <li class="nav-item">
+                            <a class="nav-link active" id="debts_customer_tab" data-toggle="pill"
+                               href="#debts_customer_pane" role="tab" aria-controls="debts_customer_pane"
+                               aria-selected="true"><lang class="lang_customers">Customers</lang></a>
+                        </li>
+                        <li class="nav-item">
+                            <a class="nav-link" id="debts_supplier_tab" data-toggle="pill"
+                               href="#debts_supplier_pane" role="tab" aria-controls="debts_supplier_pane"
+                               aria-selected="false"><lang class="lang_suppliers">Suppliers</lang></a>
+                        </li>
+                    </ul>
+
+                    <div class="tab-content" id="debts_tab_content">
+                        <div class="tab-pane fade show active" id="debts_customer_pane" role="tabpanel"
+                             aria-labelledby="debts_customer_tab">
+                            <div class="table-responsive">
+                                <table class="table table-hover debts-table" id="debts_customer_table">
+                                    <thead>
+                                        <tr>
+                                            <th>#</th>
+                                            <th><lang class="lang_name_title">Name</lang></th>
+                                            <th><lang class="lang_phone_title">Phone</lang></th>
+                                            <th class="text-right"><lang class="lang_outstanding_amount">Outstanding Amount</lang></th>
+                                            <th class="text-center"><lang class="lang_invoices">Invoices</lang></th>
+                                            <th><lang class="lang_oldest_due">Oldest due</lang></th>
+                                            <th><lang class="lang_last_payment">Last payment</lang></th>
+                                            <th class="text-right"><lang class="lang_action">Action</lang></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                            <div class="debts-empty text-center text-muted py-4" id="debts_customer_empty" style="display:none;">
+                                <lang class="lang_no_customer_debts">No customer debts. Everyone is settled.</lang>
+                            </div>
+                            <div class="d-flex align-items-center justify-content-between mt-3">
+                                <small class="text-muted"><span id="debts_customer_total">0</span> <lang class="lang_customers">Customers</lang></small>
+                                <div class="btn-group" id="debts_customer_pager" role="group" aria-label="Customers" data-t-aria-label="lang_customers"></div>
+                            </div>
+                        </div>
+
+                        <div class="tab-pane fade" id="debts_supplier_pane" role="tabpanel"
+                             aria-labelledby="debts_supplier_tab">
+                            <div class="table-responsive">
+                                <table class="table table-hover debts-table" id="debts_supplier_table">
+                                    <thead>
+                                        <tr>
+                                            <th>#</th>
+                                            <th><lang class="lang_name_title">Name</lang></th>
+                                            <th><lang class="lang_phone_title">Phone</lang></th>
+                                            <th class="text-right"><lang class="lang_outstanding_amount">Outstanding Amount</lang></th>
+                                            <th class="text-center"><lang class="lang_purchases">Purchases</lang></th>
+                                            <th><lang class="lang_oldest_due">Oldest due</lang></th>
+                                            <th><lang class="lang_last_payment">Last payment</lang></th>
+                                            <th class="text-right"><lang class="lang_action">Action</lang></th>
+                                        </tr>
+                                    </thead>
+                                    <tbody></tbody>
+                                </table>
+                            </div>
+                            <div class="debts-empty text-center text-muted py-4" id="debts_supplier_empty" style="display:none;">
+                                <lang class="lang_no_supplier_debts">No supplier debts. Every purchase is settled.</lang>
+                            </div>
+                            <div class="d-flex align-items-center justify-content-between mt-3">
+                                <small class="text-muted"><span id="debts_supplier_total">0</span> <lang class="lang_suppliers">Suppliers</lang></small>
+                                <div class="btn-group" id="debts_supplier_pager" role="group" aria-label="Suppliers" data-t-aria-label="lang_suppliers"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+    <div class="modal fade" id="debts_payment_modal" tabindex="-1" role="dialog" aria-labelledby="debts_payment_title" aria-hidden="true">
+        <div class="modal-dialog" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="debts_payment_title"><lang class="lang_record_payment">Record payment</lang></h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close" data-t-aria-label="lang_close_title"><span aria-hidden="true">&times;</span></button>
+                </div>
+                <form id="debts_payment_form">
+                    <div class="modal-body">
+                        <input type="hidden" id="debts_payment_party_type">
+                        <input type="hidden" id="debts_payment_party_id">
+                        <input type="hidden" id="debts_payment_request_id">
+                        <div class="form-group">
+                            <label for="debts_payment_party_name"><lang class="lang_name_title">Name</lang></label>
+                            <input type="text" class="form-control" id="debts_payment_party_name" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label for="debts_payment_outstanding"><lang class="lang_outstanding_amount">Outstanding Amount</lang></label>
+                            <input type="text" class="form-control" id="debts_payment_outstanding" readonly>
+                        </div>
+                        <div class="form-group">
+                            <label for="debts_payment_amount"><lang class="lang_amount_title">Amount</lang> <span class="text-danger">*</span></label>
+                            <input type="number" class="form-control" id="debts_payment_amount" min="0.01" step="0.01" required>
+                        </div>
+                        <div class="form-group">
+                            <label for="debts_payment_date"><lang class="lang_date_title">Date</lang></label>
+                            <input type="datetime-local" class="form-control" id="debts_payment_date" step="60">
+                        </div>
+                        <div class="form-group">
+                            <label for="debts_payment_note"><lang class="lang_notes">Notes</lang></label>
+                            <textarea class="form-control" id="debts_payment_note" rows="2" maxlength="500"></textarea>
+                        </div>
+                        <div class="alert alert-danger d-none" id="debts_payment_error" role="alert"></div>
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-outline-secondary" data-dismiss="modal"><lang class="lang_close_title">Close</lang></button>
+                        <button type="submit" class="btn btn-primary" id="debts_payment_save"><lang class="lang_save_title">Save</lang></button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal fade" id="debts_statement_modal" tabindex="-1" role="dialog" aria-labelledby="debts_statement_title" aria-hidden="true">
+        <div class="modal-dialog modal-xl modal-dialog-scrollable" role="document">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="debts_statement_title"><lang class="lang_statement">Statement</lang></h5>
+                    <button type="button" class="close" data-dismiss="modal" aria-label="Close" data-t-aria-label="lang_close_title"><span aria-hidden="true">&times;</span></button>
+                </div>
+                <div class="modal-body" id="debts_statement_body">
+                    <div class="text-center py-4"><div class="loadingSpinner"></div></div>
+                </div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-outline-secondary" data-dismiss="modal"><lang class="lang_close_title">Close</lang></button>
+                </div>
+            </div>
+        </div>
+    </div>
