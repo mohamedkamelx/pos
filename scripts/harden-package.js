@@ -263,7 +263,7 @@ async function harden(context) {
     });
     asar.uncacheAll();
 
-    const listed = asar.listPackage(asarPath);
+    const listed = asar.listPackage(asarPath).map((name) => name.replace(/\\/g, '/'));
     if (!listed.includes('/src/bytecode-bootstrap.js')) {
       throw new Error('[bytecode] bootstrap missing from repacked app.asar');
     }

@@ -53,6 +53,7 @@ test('built API runtime contains hoisted production dependencies', {
     maxBuffer: 64 * 1024 * 1024,
   });
   assert.equal(listing.status, 0, listing.stderr || listing.error?.message);
+  const entries = listing.stdout.replace(/\\/g, '/');
   for (const name of [
     'mongodb-connection-string-url',
     '@mongodb-js/saslprep',
@@ -61,7 +62,7 @@ test('built API runtime contains hoisted production dependencies', {
     'express',
   ]) {
     assert.ok(
-      listing.stdout.includes(`${name}/`),
+      entries.includes(`${name}/`),
       `${name} is missing from the shipped API runtime`
     );
   }
