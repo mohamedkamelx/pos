@@ -525,6 +525,9 @@
       "gatekeeperAssess": false,
       "entitlements": "builds/entitlements.mac.plist",
       "entitlementsInherit": "builds/entitlements.mac.plist",
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "Posnic uses the microphone only while you are dictating, and only after voice input is turned on."
+      },
       "target": [
         {
           "target": "dmg",

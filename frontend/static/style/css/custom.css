@@ -2506,6 +2506,117 @@ input:checked + .slider:before {
     color: var(--theme-text-muted, #5b6577);
     border-top: 1px solid rgba(127, 127, 127, 0.18);
 }
+#cmdk-box #cmdk-voice {
+    display: grid;
+    place-items: center;
+    flex: 0 0 44px;
+    height: 44px;
+    padding: 0;
+    border-radius: 50%;
+    background: rgba(127, 127, 127, 0.12);
+    color: inherit;
+    font-size: 19px;
+    line-height: 1;
+}
+#cmdk-box #cmdk-voice:hover {background: rgba(127, 127, 127, 0.22);}
+#cmdk-box #cmdk-voice.is-listening {
+    color: #fff;
+    background: var(--theme-danger-color, #f04438);
+    animation: posnic-voice-button-pulse 1.3s ease-in-out infinite;
+}
+#cmdk-voice:focus-visible {outline: 2px solid var(--theme-primary-color, #506fe4);}
+
+/* The dictation bar: fixed above a normal form field, inline in the search
+   dialog and in Settings so it never covers the thing being dictated into. */
+.posnic-voice-host {margin-top: 8px;}
+.posnic-voice-bar {
+    position: fixed;
+    left: 50%;
+    bottom: 24px;
+    z-index: 2147483000;
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    max-width: calc(100vw - 24px);
+    padding: 9px 11px;
+    border-radius: 14px;
+    color: var(--theme-text-primary, #16203a);
+    background: var(--theme-card-bg, #fff);
+    box-shadow: 0 10px 32px rgba(20, 31, 56, 0.24), 0 0 0 1px rgba(127, 127, 127, 0.16);
+    transform: translateX(-50%);
+    direction: inherit;
+}
+.posnic-voice-bar--inline {
+    position: static;
+    width: 100%;
+    margin-top: 8px;
+    box-shadow: none;
+    border: 1px solid rgba(127, 127, 127, 0.18);
+    transform: none;
+}
+.posnic-voice-pulse {
+    flex: 0 0 10px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--theme-danger-color, #f04438);
+    animation: posnic-voice-pulse 1.2s ease-in-out infinite;
+}
+.posnic-voice-bar.is-busy .posnic-voice-pulse {
+    background: var(--theme-primary-color, #506fe4);
+    animation-duration: 1.6s;
+}
+.posnic-voice-bar.is-error .posnic-voice-pulse {animation: none;}
+.posnic-voice-text {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: 13px;
+    font-weight: 600;
+}
+.posnic-voice-time {
+    flex: 0 0 auto;
+    color: var(--theme-text-muted, #5b6577);
+    font-size: 12px;
+    font-variant-numeric: tabular-nums;
+}
+.posnic-voice-bar button {
+    display: grid;
+    place-items: center;
+    flex: 0 0 30px;
+    width: 30px;
+    height: 30px;
+    padding: 0;
+    border: 0;
+    border-radius: 50%;
+    color: inherit;
+    background: rgba(127, 127, 127, 0.12);
+    cursor: pointer;
+}
+.posnic-voice-bar button:hover {background: rgba(127, 127, 127, 0.22);}
+.posnic-voice-bar button:focus-visible {outline: 2px solid var(--theme-primary-color, #506fe4); outline-offset: 2px;}
+.posnic-voice-bar .posnic-voice-stop {color: #fff; background: var(--theme-danger-color, #f04438);}
+.posnic-voice-bar .posnic-voice-stop:hover {filter: brightness(0.94);}
+.posnic-voice-bar .posnic-voice-stop i {font-size: 12px;}
+.posnic-voice-bar.is-busy .posnic-voice-stop,
+.posnic-voice-bar.is-error .posnic-voice-stop,
+.posnic-voice-bar.is-busy .posnic-voice-time {display: none;}
+.posnic-voice-progress {height: 6px; margin-top: 10px; border-radius: 999px;}
+.posnic-voice-progress .progress-bar {border-radius: 999px;}
+@keyframes posnic-voice-pulse {
+    0%, 100% {opacity: 1; transform: scale(1);}
+    50% {opacity: 0.45; transform: scale(0.78);}
+}
+@keyframes posnic-voice-button-pulse {
+    0%, 100% {box-shadow: 0 0 0 0 rgba(240, 68, 56, 0.35);}
+    50% {box-shadow: 0 0 0 7px rgba(240, 68, 56, 0);}
+}
+@media (max-width: 575.98px) {
+    .posnic-voice-bar {bottom: 12px; gap: 7px; padding: 8px 9px;}
+    .posnic-voice-text {font-size: 12px;}
+    .posnic-voice-time {font-size: 11px;}
+}
 
 /*
  * Shop-activity feed (S2; fed by the realtime channel, PosnicPro.bellFeed).

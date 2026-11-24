@@ -25,7 +25,13 @@ const path = require('path');
 const ROOT = path.join(__dirname, '..');
 const read = (f) => fs.readFileSync(path.join(ROOT, f), 'utf8');
 
-const IPC_FILES = ['src/main.js', 'src/hardware-ipc.js', 'src/pin-lock-ipc.js', 'src/update-integration.js'];
+const IPC_FILES = [
+  'src/main.js',
+  'src/hardware-ipc.js',
+  'src/pin-lock-ipc.js',
+  'src/update-integration.js',
+  'src/voice-ipc.js',
+];
 
 test('no file registers an IPC handler on the raw ipcMain', () => {
   /* The guard works by shadowing the binding: each file destructures

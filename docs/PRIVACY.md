@@ -67,6 +67,8 @@ policy refuses Google's domains outright.
 
 | Feature                    | Off by default | What it sends                                                                     | To whom                                                                    | Turn it off by                                                 |
 | -------------------------- | -------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| Voice input - local        | Yes            | Nothing containing shop or customer data. On first use, a read-only request downloads the public Whisper model. The recording stays on this computer. | Hugging Face, for the model files only                                     | Switching voice input off, or clearing the browser's cached model |
+| Voice input - Groq         | Yes            | The recorded audio clip, so it can be transcribed                                 | Groq, using the free API key this shop creates and stores                  | Switching voice input off, or removing the key                  |
 | Email receipts and reports | Yes            | Customer email, invoice PDF, sale total, payment mode                             | The SMTP or email API provider you configure                               | Clearing the email settings                                    |
 | Google Analytics           | Yes            | Page views and usage events from this shop's pages, under Google's own collection | Google, into the Analytics account whose measurement id you enter          | Switching the toggle off (Settings → Integrations → Analytics) |
 | S3 file storage            | Yes            | Item and user images you upload                                                   | The S3 bucket you own                                                      | Leaving storage set to local                                   |
@@ -77,6 +79,33 @@ policy refuses Google's domains outright.
 If none of these is configured — which is how the app installs — then apart from
 the database download above, nothing your shop does reaches the network at all.
 Pull the cable and keep selling; that is the design.
+
+### Voice input
+
+Voice dictation is off until a shop turns it on in **Settings → Voice input**.
+The microphone permission is refused by the desktop application while it is off.
+Audio is recorded only while the on-screen dictation bar is listening, and the
+clip is discarded by Posnic after it has been transcribed.
+
+There are two engines, and the shop chooses which one to use:
+
+- **On this computer (Whisper).** The recording never leaves the till. The
+  first use downloads a public Whisper model from Hugging Face, which is a
+  read-only request for model files and does not include any shop or customer
+  data. The model is cached on the till and the engine then works offline.
+- **Groq.** The recording is sent to Groq for transcription. Groq receives the
+  audio clip and returns text. Each shop creates its own free Groq account and
+  API key; the key is the shop's, not Posnic's, and Groq's terms and privacy
+  policy apply to the audio it receives. In the desktop application the key is
+  encrypted with the operating system's keystore and is never synced or placed
+  in the shop database. On a system without a secure keystore the key is held
+  only in the main process for that run and is never written to disk.
+
+Neither engine stores dictation in Posnic's database, and neither syncs audio
+between installations. A transcript is inserted as ordinary text in the field
+the shop was using, so it is then governed by that field's normal storage and
+sync rules. A shop that enables Groq should disclose this to staff and, where
+their circumstances require it, to customers whose speech may be recorded.
 
 **Your customers did not choose these providers, you did.** If you switch one
 on, telling your customers about it is your job, not ours. See [your customers'

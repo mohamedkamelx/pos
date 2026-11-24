@@ -717,6 +717,9 @@
     }, 145);
   }
   function close() {
+    /* Closing the palette must also release the microphone: the status bar
+       lives in the dialog and the search field it would type into is gone. */
+    if (PosnicPro.voice) PosnicPro.voice.cancel();
     node('cmdk-overlay')?.classList.remove('cmdk-closing');
     opened = false;
     itemMenu = false;
@@ -731,7 +734,7 @@
     dialog.id = 'cmdk-overlay';
     dialog.setAttribute('aria-label', 'Search POSNIC');
     dialog.innerHTML =
-      '<div id="cmdk-box"><div class="cmdk-field"><input id="cmdk-input" type="search" maxlength="96" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="cmdk-list" aria-label="Search anything in POSNIC" data-t-aria-label="lang_search_posnic" placeholder="Search anything" data-t-placeholder="lang_search_anything"><button type="button" id="cmdk-close" aria-label="Close search" data-t-aria-label="lang_close_search" title="Close search" data-t-title="lang_close_search"><i class="feather icon-x" aria-hidden="true"></i></button></div><div id="cmdk-tabs"></div><div id="cmdk-list" role="listbox"></div><div id="cmdk-status" role="status"></div><div id="cmdk-hint">↑ ↓ Select · Enter Open · Esc Close <button type="button" id="cmdk-clear"><lang class="lang_clear_history">Clear history</lang></button></div></div>';
+      '<div id="cmdk-box"><div class="cmdk-field"><input id="cmdk-input" type="search" maxlength="96" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="cmdk-list" aria-label="Search anything in POSNIC" data-t-aria-label="lang_search_posnic" placeholder="Search anything" data-t-placeholder="lang_search_anything"><button type="button" id="cmdk-voice" aria-label="Dictate" data-t-aria-label="lang_voice_mic" aria-pressed="false" title="Dictate" data-t-title="lang_voice_mic"><i class="feather icon-mic" aria-hidden="true"></i></button><button type="button" id="cmdk-close" aria-label="Close search" data-t-aria-label="lang_close_search" title="Close search" data-t-title="lang_close_search"><i class="feather icon-x" aria-hidden="true"></i></button></div><div id="cmdk-tabs"></div><div id="cmdk-list" role="listbox"></div><div id="cmdk-status" role="status"></div><div id="cmdk-hint">↑ ↓ Select · Enter Open · Esc Close <button type="button" id="cmdk-clear"><lang class="lang_clear_history">Clear history</lang></button></div></div>';
     document.body.append(dialog);
     for (const name of groupNames) {
       if (name === 'Employees' && !aclCan('user', 'read')) continue;
@@ -756,6 +759,11 @@
       if (e.target === dialog) dismiss();
     });
     node('cmdk-close').onclick = dismiss;
+    node('cmdk-voice').onclick = (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      if (PosnicPro.voice) PosnicPro.voice.togglePalette(node('cmdk-input'));
+    };
     node('cmdk-clear').onclick = () => {
       const owner = searchScope;
       PosnicPro.delete({ url: 'search/history' }, (r) => {

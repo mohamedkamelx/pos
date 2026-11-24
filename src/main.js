@@ -16,7 +16,10 @@ const {
      password. Available here because this is the main process of a real
      Electron application - a script run under ELECTRON_RUN_AS_NODE cannot even
      require('electron'), which is why scheduled work runs as the app. */
-  safeStorage
+  safeStorage,
+  /* macOS gates the microphone behind TCC as well as Chromium's permission
+     layer, so voice setup asks the OS at the moment the shop turns it on. */
+  systemPreferences
 } = electron;
 
 /*
@@ -140,6 +143,7 @@ try {
 
 const { HardwareManager } = require('./hardware-manager');
 const { setupHardwareIPC } = require('./hardware-ipc');
+const { setupVoiceIPC, voiceInputState } = require('./voice-ipc');
 const MongoDBManager = require('./mongodb-manager');
 const { AssetUpdater } = require('./asset-updater');
 
@@ -1801,8 +1805,11 @@ function createWindow(showStartupLoader = !isWarmStartup()) {
    * notifications or clipboard-read and get them - and the pages loaded here
    * include a legacy frontend served with 'unsafe-eval' in its CSP.
    *
-   * A point of sale needs none of them. Printing goes through IPC to the main
-   * process; it is not a browser permission.
+   * A point of sale needs almost none of them. Printing goes through IPC to
+   * the main process; it is not a browser permission. The one conditional
+   * exception is the microphone for voice dictation: it is off by default,
+   * the renderer sets voiceInputState.enabled only after the shop opts in,
+   * and even then only an audio-only request is granted. Video stays denied.
    */
   const ALLOWED_PERMISSIONS = new Set([
     /* Fullscreen: the customer display uses it, and it grants no access to
@@ -1818,7 +1825,7 @@ function createWindow(showStartupLoader = !isWarmStartup()) {
   ]);
 
   /*
-   * What is deliberately NOT on that list: camera, microphone, geolocation,
+   * What is deliberately NOT on that list: camera, geolocation,
    * display-capture, serial, usb, hid, midi and idle-detection. The scale and
    * printer are driven from the main process through IPC rather than through
    * the Web Serial API - denying 'serial' here does not touch them.
@@ -1828,8 +1835,16 @@ function createWindow(showStartupLoader = !isWarmStartup()) {
    */
 
   mainWindow.webContents.session.setPermissionRequestHandler(
-    (webContents, permission, callback) => {
-      const allowed = ALLOWED_PERMISSIONS.has(permission);
+    (webContents, permission, callback, details) => {
+      const mediaTypes = details && Array.isArray(details.mediaTypes) ? details.mediaTypes : [];
+      const audioOnly = mediaTypes.length === 0 || mediaTypes.every((type) => type === 'audio');
+      /* Only the main POS window may use the microphone. The customer display
+         and print windows share this session; neither has any reason to
+         record, and neither may borrow the till's permission. */
+      const fromMainWindow = !!mainWindow && webContents === mainWindow.webContents;
+      const voiceMicrophone =
+        fromMainWindow && permission === 'media' && voiceInputState.enabled && audioOnly;
+      const allowed = ALLOWED_PERMISSIONS.has(permission) || voiceMicrophone;
       if (!allowed) {
         console.log(`[Security] denied permission request: ${permission}`);
       }
@@ -1841,7 +1856,13 @@ function createWindow(showStartupLoader = !isWarmStartup()) {
      requested, and a handler that only covers the asynchronous path leaves
      those at Chromium's default. */
   mainWindow.webContents.session.setPermissionCheckHandler(
-    (webContents, permission) => ALLOWED_PERMISSIONS.has(permission)
+    (webContents, permission, requestingOrigin, details) => {
+      if (ALLOWED_PERMISSIONS.has(permission)) return true;
+      if (!mainWindow || webContents !== mainWindow.webContents) return false;
+      if (permission !== 'media' || !voiceInputState.enabled) return false;
+      const mediaType = details && details.mediaType;
+      return !mediaType || mediaType === 'audio';
+    }
   );
 
   /*
@@ -3823,6 +3844,11 @@ app.whenReady().then(async () => {
     await runScheduledTaskAndExit(scheduledArg.split('=')[1]);
     return;
   }
+
+  /* The renderer may call voice:set-enabled as soon as it loads, so the
+     handlers must exist before the window does. */
+  setupVoiceIPC({ app, safeStorage, systemPreferences });
+  console.log('Voice IPC handlers registered');
 
   // Show UI immediately while MongoDB and the API initialize.
   createWindow();

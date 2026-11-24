@@ -200,6 +200,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     get: (key) => ipcRenderer.invoke('preferences:get', key),
     set: (key, value) => ipcRenderer.invoke('preferences:set', key, value)
   },
+  /*
+   * Voice dictation. The key and the Groq request stay in the main process;
+   * the renderer only gets a status, a save/clear result, and a transcript.
+   */
+  voice: {
+    setEnabled: (enabled) => ipcRenderer.invoke('voice:set-enabled', !!enabled),
+    keyStatus: () => ipcRenderer.invoke('voice:key-status'),
+    validateKey: (key) => ipcRenderer.invoke('voice:validate-key', key),
+    saveKey: (key) => ipcRenderer.invoke('voice:save-key', key),
+    clearKey: () => ipcRenderer.invoke('voice:clear-key'),
+    transcribe: (payload) => ipcRenderer.invoke('voice:transcribe', payload)
+  },
   connectors: {
     status:  () => ipcRenderer.invoke('connectors:status'),
     enable:  (name, token, settings) => ipcRenderer.invoke('connectors:enable', { name, token, settings }),

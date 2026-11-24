@@ -28,5 +28,10 @@
   <true/>
   <key>com.apple.security.files.user-selected.read-write</key>
   <true/>
+  <!-- Voice dictation records only after the shop turns it on, but macOS
+       TCC will not hand the microphone to a hardened-runtime app without
+       this entitlement, even when the page has Chromium permission. -->
+  <key>com.apple.security.device.audio-input</key>
+  <true/>
 </dict>
 </plist>

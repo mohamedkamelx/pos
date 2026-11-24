@@ -72,6 +72,10 @@ const cspDirectives = {
     "'self'",
     "'unsafe-inline'", // Allow existing inline scripts in legacy Frontend (login handlers, config)
     "'unsafe-eval'", // Required for ACL functionality in frontend
+    /* Local Whisper runs ONNX Runtime's WebAssembly build in a Worker. This
+       permits compiling that shipped module; it does not permit loading a
+       script or a WASM file from another host. */
+    "'wasm-unsafe-eval'",
     /* cdnjs is no longer allowed. print.js used to be loaded from it into
        dashboard.html - which is the main application window, with a preload
        and the whole IPC surface behind it - with no integrity hash, so a bad
@@ -81,7 +85,26 @@ const cspDirectives = {
        frontend/public/script/vendor/print-js/ under its MIT licence. */
   ],
   'script-src-attr': ["'self'", "'unsafe-inline'"],
-  'connect-src': ["'self'"],
+  'connect-src': [
+    "'self'",
+    /*
+     * The optional voice feature has two outbound destinations, and both are
+     * reached only after the shop turns it on:
+     *
+     *   - Hugging Face, for the public local Whisper weights. A read-only GET,
+     *     cached on the till after the first download.
+     *   - Groq, only when the Groq engine is selected. The desktop app sends
+     *     that request through the main process (the key never enters the
+     *     renderer); the browser preview talks to Groq directly, which is why
+     *     the origin has to be named here.
+     *
+     * No voice request is made while the feature is off.
+     */
+    'https://api.groq.com',
+    'https://huggingface.co',
+    'https://*.huggingface.co',
+    'https://*.hf.co',
+  ],
   'img-src': [
     'blob:', // Authenticated receipt previews.
     "'self'",
@@ -146,7 +169,10 @@ const cspDirectives = {
    * data: only, and media only. A data: URL cannot reach the network and
    * cannot execute; the worst a bad one does is make a noise.
    */
-  'media-src': ["'self'", 'data:'],
+  /* Voice Lab plays back the clip it just recorded from a blob: URL. A blob
+     URL is same-origin and cannot reach the network; it is media, nothing
+     more, so it belongs beside the generated tones. */
+  'media-src': ["'self'", 'data:', 'blob:'],
 };
 
 /*
