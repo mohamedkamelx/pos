@@ -143,7 +143,7 @@ Var POSNIC_POWERSHELL
     FileClose $0
   setup_review_done:
   
-  ; ── Close any running instance of Posnic before installing ──
+  ; -- Close any running instance of Posnic before installing --
   DetailPrint "[TIME CHECK] Step 1 START: Process termination"
   
   ; Kill all possible process names (fast mode)
