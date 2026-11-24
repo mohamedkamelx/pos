@@ -59,6 +59,7 @@ test('built API runtime contains hoisted production dependencies', {
     'whatwg-url',
     'mongoose',
     'express',
+    'etag',
   ]) {
     assert.ok(
       listing.stdout.includes(`${name}/`),
