@@ -1,0 +1,161 @@
+name: Beta
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: beta-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build ${{ matrix.name }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            platform: mac
+            artifact: macos
+          - name: Linux
+            os: ubuntu-latest
+            platform: linux
+            artifact: linux
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm ci --prefix api --no-audit --no-fund
+          npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Prepare the bundled runtime
+        run: npm run prepare:bundle
+
+      - name: Build the test installer
+        run: |
+          npx electron-builder --${{ matrix.platform }} --publish never \
+            -c.win.verifyUpdateCodeSignature=false
+
+      - name: Start the packaged application
+        if: matrix.name == 'Linux'
+        run: node scripts/check-app-boots.js dist/linux-unpacked/posnic
+
+      - name: Generate artifact SBOMs
+        run: node scripts/generate-release-sboms.js --dist dist
+
+      - name: Upload installers
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: posnic-beta-${{ matrix.artifact }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.snap
+            dist/*.blockmap
+            dist/latest*.yml
+            dist/*.cdx.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  publish:
+    name: Publish the pre-release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download the installers
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Compose the beta notes
+        run: |
+          set -euo pipefail
+          mkdir -p release
+          cat > release/NOTES.md <<EOF
+          ## Posnic test build
+
+          This is an early public build from main. It is published as a
+          pre-release and stable installations do not see it.
+
+          macOS packages are signed and notarized. On Linux, install the
+          `.deb` or AppImage.
+          EOF
+
+      - name: Collect and checksum
+        run: |
+          set -euo pipefail
+          # builder-debug.yml is build diagnostics, not updater input
+          shopt -s nullglob
+          latest_manifests=(dist/latest*.yml)
+          if (( ${#latest_manifests[@]} == 0 )); then
+            echo "No dist/latest*.yml update manifest found; refusing to publish"
+            exit 1
+          fi
+          find dist -maxdepth 1 -type f \
+            \( -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.snap' \
+               -o -name '*.blockmap' -o -name '*.cdx.json' -o -name 'latest*.yml' \) \
+            -exec cp {} release/ \;
+          node scripts/release-manifest.js release/release-manifest.json
+          find release -maxdepth 1 -type f \
+            \( -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.snap' \
+               -o -name '*.blockmap' -o -name '*.cdx.json' -o -name 'latest*.yml' -o -name 'release-manifest.json' \) \
+            -print0 | sort -z | xargs -0 sha256sum > release/SHA256SUMS.all
+          grep -vE 'latest.*\.yml|blockmap' release/SHA256SUMS.all > release/SHA256SUMS.txt
+          rm -f release/SHA256SUMS.all
+
+      # Publishing: the test build is forced to a pre-release.
+      - name: Attest release checksums
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: release/SHA256SUMS.txt
+
+      - name: Publish pre-release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: beta-${{ github.run_number }}
+          name: Posnic test build ${{ github.run_number }}
+          prerelease: true
+          body_path: release/NOTES.md
+          files: |
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+            release/*.snap
+            release/*.blockmap
+            release/latest*.yml
+            release/*.cdx.json
+            release/SHA256SUMS.txt
+            release/release-manifest.json

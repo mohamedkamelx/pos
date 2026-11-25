@@ -1,0 +1,238 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Existing vX.Y.Z tag to publish
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify
+    uses: ./.github/workflows/ci.yml
+
+  gate:
+    name: Release gate
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Check the tag names the package version
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          node - <<'NODE'
+          const pkg = require('./package.json');
+          const expected = `v${pkg.version}`;
+          if (process.env.RELEASE_TAG !== expected) {
+            console.error(`Release tag ${process.env.RELEASE_TAG} does not name package version ${pkg.version}`);
+            process.exit(1);
+          }
+          if (!/^\d+\.\d+\.\d+$/.test(pkg.version)) {
+            console.error(`Package version ${pkg.version} is not plain semver`);
+            process.exit(1);
+          }
+          NODE
+
+  # WINDOWS IS NOT BUILT HERE. Its signing key is on a Certum card, and a
+  # hosted runner has no card reader. Windows is built, signed, verified and
+  # attached from the maintainer's desk by scripts/release-windows.js.
+  build:
+    name: Build ${{ matrix.name }}
+    needs: [verify, gate]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: macOS
+            os: macos-latest
+            platform: mac
+            artifact: macos
+          - name: Linux
+            os: ubuntu-latest
+            platform: linux
+            artifact: linux
+    runs-on: ${{ matrix.os }}
+    env:
+      HAVE_MAC_CERT: ${{ secrets.MAC_CERT_P12 != '' }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Set up Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .nvmrc
+          cache: npm
+
+      - name: Install dependencies
+        run: |
+          npm ci --no-audit --no-fund
+          npm ci --prefix api --no-audit --no-fund
+          npm ci --prefix frontend --no-audit --no-fund
+
+      - name: Prepare the bundled runtime
+        run: npm run prepare:bundle
+
+      - name: Correct the legacy macOS keychain password
+        if: matrix.name == 'macOS' && env.HAVE_MAC_CERT == 'true'
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const file = require.resolve('app-builder-lib/out/codeSign/macCodeSign.js');
+          const original = fs.readFileSync(file, 'utf8');
+          if (!original.includes('async function importCerts(')) {
+            throw new Error('app-builder-lib implementation changed; refusing to patch an unfamiliar macCodeSign.js');
+          }
+
+          let source = original;
+          source = source.replace(
+            /async function importCerts\(([^)]*)\) \{/,
+            (match, args) => args.includes('keychainPassword')
+              ? match
+              : `async function importCerts(${args}, keychainPassword) {`,
+          );
+
+          const oldPartition = '["set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", password, keychainFile]';
+          const newPartition = '["set-key-partition-list", "-S", "apple-tool:,apple:", "-s", "-k", keychainPassword, keychainFile]';
+          if (source.includes(oldPartition)) {
+            source = source.replace(oldPartition, newPartition);
+          } else if (!source.includes(newPartition)) {
+            throw new Error('app-builder-lib implementation changed; keychain partition call not found');
+          }
+
+          const oldCall = 'return await importCerts(keychainFile, certPaths, cscPasswords);';
+          const newCall = 'return await importCerts(keychainFile, certPaths, cscPasswords, keychainPassword);';
+          if (source.includes(oldCall)) {
+            source = source.replace(oldCall, newCall);
+          } else if (!source.includes(newCall)) {
+            throw new Error('app-builder-lib implementation changed; createKeychain call not found');
+          }
+
+          if (source !== original) fs.writeFileSync(file, source);
+          console.log('macOS keychain password patch is in place');
+          NODE
+
+      - name: Build
+        env:
+          CSC_LINK: ${{ secrets.MAC_CERT_P12 }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CERT_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: npx electron-builder --${{ matrix.platform }} --publish never
+
+      - name: Generate artifact SBOMs
+        run: node scripts/generate-release-sboms.js --dist dist
+
+      - name: Upload installers
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: posnic-${{ matrix.artifact }}
+          path: |
+            dist/*.dmg
+            dist/*.zip
+            dist/*.AppImage
+            dist/*.deb
+            dist/*.snap
+            dist/*.blockmap
+            dist/latest*.yml
+            dist/*.cdx.json
+          if-no-files-found: warn
+          retention-days: 7
+
+  publish:
+    name: Publish the draft release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Download the installers
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          path: release
+          merge-multiple: true
+
+      - name: Compose the release notes
+        env:
+          TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+        run: |
+          set -euo pipefail
+          cat > release/NOTES.md <<EOF
+          ## Posnic ${TAG}
+
+          This draft carries the macOS and Linux packages. Windows is built,
+          signed, verified and attached from the maintainer's desk before the
+          draft is published.
+
+          macOS packages are signed and notarized. On Linux, install the
+          `.deb` or AppImage; the snap is attached for store publication.
+
+          Check every download against SHA256SUMS.txt and the release
+          verification guide.
+          EOF
+          case "$TAG" in
+            *beta*|*alpha*|*rc*)
+              cat >> release/NOTES.md <<EOF
+
+          This is an early public build. Stable installations do not see
+          pre-releases.
+          EOF
+              ;;
+          esac
+
+      - name: Collect and checksum
+        run: |
+          set -euo pipefail
+          node scripts/release-manifest.js release/release-manifest.json
+          find release -maxdepth 1 -type f \
+            \( -name '*.dmg' -o -name '*.zip' -o -name '*.AppImage' -o -name '*.deb' -o -name '*.snap' \
+               -o -name '*.blockmap' -o -name '*.cdx.json' -o -name 'latest*.yml' -o -name 'release-manifest.json' \) \
+            -print0 | sort -z | xargs -0 sha256sum > release/SHA256SUMS.all
+          grep -vE 'latest.*\.yml|blockmap' release/SHA256SUMS.all > release/SHA256SUMS.txt
+          rm -f release/SHA256SUMS.all
+
+      # Publishing: only after the checksums, SBOMs and release manifest exist.
+      - name: Attest release checksums
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: release/SHA256SUMS.txt
+
+      - name: Publish draft release
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          name: Posnic ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
+          draft: true
+          prerelease: ${{ vars.POSNIC_PRERELEASE != 'no' }}
+          body_path: release/NOTES.md
+          files: |
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+            release/*.snap
+            release/*.blockmap
+            release/latest*.yml
+            release/*.cdx.json
+            release/SHA256SUMS.txt
+            release/release-manifest.json

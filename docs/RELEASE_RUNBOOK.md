@@ -53,8 +53,10 @@ stops automatic updates for everyone, with no error anywhere.
    git push origin v1.4.0
    ```
 
-5. **`release.yml` takes over.** It re-runs CI, builds Windows, macOS and Linux,
-   checksums everything, and creates the release **as a draft**.
+5. **`release.yml` takes over.** It re-runs CI, builds macOS and Linux,
+   checksums everything, and creates the release **as a draft**. Windows is
+   built, signed, verified and attached from the maintainer's desk before the
+   draft is published.
 
 6. **Check the draft before publishing.**
    - The installers are all there and the sizes look sane

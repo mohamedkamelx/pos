@@ -1,0 +1,35 @@
+name: CLA
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: read
+  pull-requests: write
+
+jobs:
+  signed:
+    name: Check the contributor agreement
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out the signature branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          # Signature records live on branch: cla-signatures
+          ref: cla-signatures
+          path: cla-signatures
+
+      - name: Require a signature from the pull request author
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          AUTHOR: ${{ github.event.pull_request.user.login }}
+          NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          set -euo pipefail
+          if [ -f "cla-signatures/${AUTHOR}.md" ]; then
+            echo "CLA signature found for ${AUTHOR}"
+            exit 0
+          fi
+          gh pr comment "$NUMBER" --body "Before this pull request can be merged, the contributor agreement in .github/CLA.md needs a signature. A maintainer records signatures on the cla-signatures branch. Ask for one in this pull request; do not paste private contact details here."
+          exit 1

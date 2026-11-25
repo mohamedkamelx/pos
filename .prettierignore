@@ -81,3 +81,8 @@ frontend/static/style/
 menu/i18n.js
 # Byte-identical to the canonical item text resolver bundled into the API/UI.
 menu/item-localization.js
+
+# GitHub policy, issue form and workflow files. The workflows carry pinned
+# action comments and exact YAML spelling that the release tests read; letting
+# Prettier re-quote them turns a one-line release change into a test failure.
+.github/

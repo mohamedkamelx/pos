@@ -1,0 +1,143 @@
+name: Deployment evidence
+description: Report a real deployment, pilot, evaluation, stopped trial, or retired installation, including failures and limits.
+title: "Deployment evidence: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This form is for a public account of what happened in a real deployment.
+        It is not a bug report, a support request, or a place for a vulnerability.
+
+        A submitted report is not automatically a testimonial, case study, certification, endorsement, or customer proof. Do not use this as marketing; keep it as a public issue only unless separate written approval is still required for a named business, quotation, logo, or private evidence.
+
+        Do not include customer records, card or bank data, credentials, tax
+        identifiers, production database files, or the exact shop address.
+        Prefer aggregate ranges, fictional transactions, and redacted
+        screenshots.
+
+  - type: dropdown
+    id: reporter_relationship
+    attributes:
+      label: Your relationship to this deployment
+      description: Choose the closest description. Material connections must be disclosed.
+      options:
+        - I run the business
+        - I work at the business
+        - I am a distributor or implementer
+        - I am an independent observer
+        - Other (explain below)
+    validations:
+      required: true
+
+  - type: textarea
+    id: relationship_details
+    attributes:
+      label: Relationship details and material connections
+      description: Describe any employment, contract, referral, discount, investment, or other connection to Posnic.
+      placeholder: State "none" if there is no material connection.
+    validations:
+      required: true
+
+  - type: input
+    id: product_identity
+    attributes:
+      label: Product identity
+      description: Release version, source commit, package identity, and hash when available.
+      placeholder: Posnic 1.9.2, Windows x64 installer
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment_status
+    attributes:
+      label: Deployment status
+      options:
+        - Live
+        - Pilot
+        - Evaluation
+        - Stopped trial
+        - Retired
+    validations:
+      required: true
+
+  - type: input
+    id: observation_window
+    attributes:
+      label: Observation window
+      description: The bounded period covered by this report.
+      placeholder: 2026-01-10 to 2026-02-20
+    validations:
+      required: true
+
+  - type: input
+    id: market_scope
+    attributes:
+      label: Market and approximate size
+      description: Country, business type, and an approximate deployment size. Do not give the exact shop address.
+      placeholder: Country, retail category, approximate number of tills or staff
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, hardware, network shape, printer or scanner models, and anything relevant to the result.
+    validations:
+      required: true
+
+  - type: textarea
+    id: workflows_observed
+    attributes:
+      label: Workflows observed
+      description: List the workflows you actually saw in use, and the ones you did not test.
+      placeholder: Sales, returns, stock counts, purchasing, reports, sync
+    validations:
+      required: true
+
+  - type: textarea
+    id: observed_results
+    attributes:
+      label: Expected and observed results
+      description: Failures, workarounds, stopped trials, and the outcome. Include unfavorable details.
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence_and_method
+    attributes:
+      label: Evidence and method
+      description: Explain how any number or result was obtained. Link to public material rather than private records.
+    validations:
+      required: true
+
+  - type: textarea
+    id: limitations
+    attributes:
+      label: Limitations
+      description: Untested paths, missing data, possible confounders, and what this report cannot establish.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: citation_permission
+    attributes:
+      label: Citation permission
+      description: This choice controls whether the project may refer to this report outside the issue.
+      options:
+        - Public issue only
+        - May link to this issue without naming the business
+        - May quote with separate written approval
+        - Withdrawn
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: public_data_confirmation
+    attributes:
+      label: Public-data confirmation
+      options:
+        - label: I confirm this report contains no customer records, card or bank data, credentials, tax identifiers, production database files, or exact shop address.
+          required: true
+        - label: I understand this is a public issue and does not by itself grant permission to use a business name, logo, quotation, or private evidence.
+          required: true
