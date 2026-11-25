@@ -9,9 +9,7 @@
       "url": "https://www.gnu.org/licenses/agpl-3.0.html"
     },
     "contact": {
-      "name": "Posnic",
-      "url": "http://localhost:3000",
-      "email": "support@localhost"
+      "name": "Posnic"
     }
   },
   "servers": [

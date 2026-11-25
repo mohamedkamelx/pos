@@ -129,7 +129,11 @@ function createApiClient({ baseUrl, token, branchId, fetchImpl, timeoutMs } = {}
     return call('PUT', pathname, query, body === undefined ? {} : body);
   }
 
-  return { get, post, put };
+  async function remove(pathname, body, query) {
+    return call('DELETE', pathname, query, body === undefined ? {} : body);
+  }
+
+  return { get, post, put, delete: remove };
 }
 
 module.exports = { DEFAULT_TIMEOUT_MS, apiError, createApiClient };

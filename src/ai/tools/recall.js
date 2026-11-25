@@ -65,8 +65,6 @@ function formatForModel(result) {
         const parts = [product.name, product.id ? `id ${product.id}` : ''];
         if (Number.isFinite(Number(product.price))) parts.push(`price ${product.price}`);
         if (Number.isFinite(Number(product.stock))) parts.push(`stock ${product.stock}`);
-        if (product.barcode) parts.push(`barcode ${product.barcode}`);
-        if (product.sku) parts.push(`sku ${product.sku}`);
         lines.push(`- ${parts.filter(Boolean).join(' | ')}`);
       }
     }

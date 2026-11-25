@@ -13,18 +13,14 @@ async function runCreate(body) {
 }
 
 describe('category name validation with Arabic and other Unicode letters', () => {
-  test.each([
-    'احذية',
-    'الأحذية',
-    'أَحْذِيَة',
-    'أحذية الأطفال',
-    'Café',
-    'Pantalón niño',
-  ])('accepts %s', async (name) => {
-    const result = await runCreate({ name });
+  test.each(['احذية', 'الأحذية', 'أَحْذِيَة', 'أحذية الأطفال', 'Café', 'Pantalón niño'])(
+    'accepts %s',
+    async (name) => {
+      const result = await runCreate({ name });
 
-    expect(result.isEmpty()).toBe(true);
-  });
+      expect(result.isEmpty()).toBe(true);
+    }
+  );
 
   test('still rejects markup and other punctuation', async () => {
     const result = await runCreate({ name: 'shoes<script>' });

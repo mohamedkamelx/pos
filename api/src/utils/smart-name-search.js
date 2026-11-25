@@ -125,7 +125,10 @@ function rankNameMatches(query, items, getName, options = {}) {
     .map((item) => ({
       item,
       name: String((typeof getName === 'function' ? getName(item) : item && item.name) || ''),
-      score: scoreNameMatch(wanted, typeof getName === 'function' ? getName(item) : item && item.name),
+      score: scoreNameMatch(
+        wanted,
+        typeof getName === 'function' ? getName(item) : item && item.name
+      ),
     }))
     .filter((entry) => {
       if (!entry.name || entry.score < minimum) return false;

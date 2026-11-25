@@ -135,7 +135,10 @@ function createPosnicToolPlugin({
     const pending = conversationId && memory && typeof memory.pendingRequest === 'function'
       ? memory.pendingRequest(conversationId)
       : null;
-    const result = askUser(input, { pendingText: pending && pending.text });
+    const result = askUser(input, {
+      pendingText: pending && pending.text,
+      pendingNote: pending && pending.note,
+    });
     return textResult(result, formatAsk);
   }
 
@@ -154,14 +157,8 @@ function createPosnicToolPlugin({
       return `The change could not be prepared: ${result.message} (code: ${result.code}).`;
     }
     const plan = result.plan;
-    const lines = plan.steps.map((step, index) => {
-      const name = step.fields && step.fields.name ? `: ${step.fields.name}` : '';
-      const before = step.before && step.before.name ? ` (currently ${step.before.name})` : '';
-      return `${index + 1}. ${step.label}${name}${before}`;
-    });
     return [
       'A change preview is now visible to the user. Nothing has been saved.',
-      ...lines,
       ...(plan.warnings.length ? ['Review notes:', ...plan.warnings.map((warning) => `- ${warning}`)] : []),
       'Tell the user in one short sentence to review the preview and press Confirm. Do not say the change is done, and do not repeat every field.',
     ].join('\n');
@@ -263,9 +260,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_search_products',
           description:
-            'Search this shop\'s products in the signed-in branch by name, SKU, barcode or partial text. ' +
-            'Use this before answering any question about a product, its price, its stock or whether it exists. ' +
-            'Returns up to 20 matches. Do not use it for sales, purchases, customers or reports.',
+            'Search this branch by product name, SKU, barcode or partial text. Use it for a specific product, price or stock question. Returns up to 20 matches.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -291,8 +286,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_list_products',
           description:
-            'List the current branch\'s products without requiring a keyword. Use this when the user asks for all products, "what do I have", everything in a category, or the next page of a list. ' +
-            'Do not ask the user to choose a category when they asked for all products. Do not use it for a specific product question; use posnic_search_products for that.',
+            'List this branch\'s products without a keyword. Use for all products, a whole category or another page. Do not use it for a specific product; use posnic_search_products.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -331,10 +325,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_list_categories',
           description:
-            'List this shop\'s categories in the signed-in branch, with how many items each contains. ' +
-            'Use this when the user asks which categories exist, what belongs to a category, or before proposing a new product. ' +
-            'The lookup tolerates Arabic and Latin spelling variants, so a close existing name is a match. ' +
-            'Returns up to 50 categories. Do not use it for sales, purchases, customers or reports.',
+            'List this branch\'s categories with item counts. Use before adding a product. If no category matches, ask once whether to create a suitable named category or leave it uncategorized. Tolerates spelling variants. Returns up to 50.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -361,9 +352,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_help',
           description:
-            'Search Posnic\'s built-in reference for how to use a screen, where a control is, or what a feature does. ' +
-            'Use this for any "how do I", "where is", "what does this do" or "which page" question. ' +
-            'Returns exact menu paths, control labels and routes. Never guess a screen name without calling it.',
+            'Search Posnic help for a how-to, screen, control or feature. Returns exact menu paths and routes. Call it instead of guessing.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -389,8 +378,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_recall',
           description:
-            'Search this conversation\'s earlier topics and confirmed details. Use it when the user refers to something from earlier, when you need an exact product/category/plan detail from a previous topic, or when you are unsure whether a point was already settled. ' +
-            'It returns topic summaries, confirmed points, corrections, records and plan previews without loading the whole conversation. Do not use it for shop data you can read with the product or category tools.',
+            'Search this conversation\'s earlier topics, points, records and plans. Use when the user refers back or you need an exact earlier detail. Do not use for shop data.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -417,12 +405,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_ask_user',
           description:
-            'Ask the user one short clarification question and, when there is a finite choice, give 1-4 short clickable options. ' +
-            'Use this only when a missing or ambiguous detail changes the action and the read tools cannot resolve it. ' +
-            'Do not use it when the request is already clear. For example, if the user asks for all products, list them instead of asking which category. ' +
-            'When the question is about an unfinished create or update request, pass a pending note and the missing field names so the next answer continues that same request. ' +
-            'Ask once for all missing required values, not one value at a time. ' +
-            'After calling it, do not repeat the question or the options in your reply; the page shows them and the user can click one.',
+            'Ask once, in one short question, for every missing required value plus the optional product image and category choice together. For a new product with no matching category, the category part must offer exactly: create a named category (suggest one from the product type) or leave it uncategorized. Omit options when the answer needs free text; use 1-4 short options only for one finite choice. Do not repeat the question in prose; end your turn after the call.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -458,13 +441,13 @@ function createPosnicToolPlugin({
                 type: 'string',
                 maxLength: 500,
                 description:
-                  'For a create/update request, a compact note naming the product or category, the values already given, and what is still missing. Example: "Create product حزمة زرقاء in category احذية; given: quantity 1; missing: selling price, cost price, description (user said not important)." This note survives a session reset and is shown to you on the next turn.',
+                  'Compact note naming the record, known values and missing values. It survives a session reset and continues the same request next turn.',
               },
               missing: {
                 type: 'array',
                 maxItems: 8,
                 items: { type: 'string', maxLength: 60 },
-                description: 'Names of the required values still missing, such as "selling price", "cost price" or "opening stock".',
+                description: 'Required values still missing, for example "selling price".',
               },
             },
             required: ['question'],
@@ -477,8 +460,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_user_profile',
           description:
-            'Read this user\'s local notes about how they like to work and what they ask for repeatedly. ' +
-            'Call it once at the start of a new conversation. The notes are not shop data: never treat them as prices, stock, categories or permissions.',
+            'Read this user\'s local notes once at the start of a new conversation. They are not shop data; never treat them as prices, stock or permissions.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -493,9 +475,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_update_user_profile',
           description:
-            'Save one short, durable note about this user\'s preferences, recurring requests or wording in their local notes on this computer. ' +
-            'Use it only when the user states a lasting preference or repeats the same kind of request. ' +
-            'Never record names, phone numbers, emails, prices, stock, tokens, credentials, customer data or one-off requests. This is not a shop record and is never synced.',
+            'Save one durable preference or recurring request to local notes. Never record names, phone numbers, emails, prices, stock, tokens or customer data. Not synced.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -522,14 +502,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_propose_plan',
           description:
-            'Prepare a preview of shop changes for the user to review. This does NOT save anything. The page shows a preview card with Confirm and Cancel, and the main process performs the writes only after the user confirms. ' +
-            'Use it for: create or update a product, create or update a category, or adjust stock. Never use it for sales, purchases, refunds, customers, stock counts or deletes. ' +
-            'Always search first and reuse an existing product or category instead of creating a duplicate, including a close spelling variant. If several new products need the same new category, create the category once as an earlier step and reference its id in the product steps. ' +
-            'A new product needs name, selling price, cost price and opening stock. If any is missing, ask for all missing values in one short question with posnic_ask_user; do not default them to zero. ' +
-            'Selling price and retail price (mrp_price) are the same price unless the user explicitly gave a different retail price: when the user gives one price, set both to that value. ' +
-            'Ask once whether the user has an optional product image before proposing. ' +
-            'Include only fields the user actually gave or that the tool results support. Leave optional fields at their defaults. Ask a short question with posnic_ask_user only when a required detail is genuinely missing. ' +
-            'Images must use attachment ids from the attachment notice; never invent an id. After calling this tool, tell the user in one short sentence to review the preview and press Confirm, and do not claim the change is done.',
+            'Prepare a preview of shop changes; nothing is saved. Use for create/update product or category, or adjust stock. Search and reuse existing records first. A new product needs name, selling price, cost price and opening stock; ask once for missing values, the optional image and whether to create a named category or leave it uncategorized. Never choose an unrelated category. Images need attachment ids. After the call, tell the user in one short sentence to review and press Confirm; do not claim the change is done.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -537,24 +510,23 @@ function createPosnicToolPlugin({
               title: {
                 type: 'string',
                 maxLength: 120,
-                description: 'A short title such as "Add three drinks".',
+                description: 'Short title.',
               },
               summary: {
                 type: 'string',
                 maxLength: 400,
-                description: 'One sentence describing the whole change.',
+                description: 'One-sentence summary.',
               },
               shared: {
                 type: 'object',
                 additionalProperties: true,
-                description:
-                  'Optional product fields applied to every product step when that step does not set them, for example {"inventory":true,"unit":"qty"}.',
+                description: 'Optional fields shared by product steps.',
               },
               steps: {
                 type: 'array',
                 minItems: 1,
                 maxItems: 20,
-                description: 'Ordered steps. A later step can reference an earlier step by id.',
+                description: 'Ordered steps; later steps may reference earlier ids.',
                 items: {
                   type: 'object',
                   additionalProperties: false,
@@ -563,7 +535,7 @@ function createPosnicToolPlugin({
                       type: 'string',
                       pattern: '^[a-zA-Z0-9_-]+$',
                       maxLength: 40,
-                      description: 'Short id used by later steps, for example "cat1" or "p1".',
+                      description: 'Short id for references.',
                     },
                     action: {
                       type: 'string',
@@ -574,7 +546,7 @@ function createPosnicToolPlugin({
                         'update_product',
                         'adjust_stock',
                       ],
-                      description: 'The kind of change.',
+                      description: 'Change type.',
                     },
                     target: {
                       anyOf: [
@@ -590,27 +562,24 @@ function createPosnicToolPlugin({
                         },
                       ],
                       description:
-                        'For update_product, update_category and adjust_stock: the existing record id from a search result, or the exact product/category name, barcode or SKU. The main process resolves the name in the current branch. Can reference an earlier step.',
+                        'Existing id, exact name, barcode or SKU for update/adjust; may reference an earlier step.',
                     },
                     dependsOn: {
                       type: 'array',
                       items: { type: 'string' },
                       maxItems: 10,
-                      description: 'Optional earlier step ids that must finish first.',
+                      description: 'Earlier step ids that must finish first.',
                     },
                     fields: {
                       type: 'object',
                       additionalProperties: true,
                       description:
-                        'Action fields. create_category: name, description. update_category: name, description, is_active. create_product: name, selling_price, cost_price and opening_stock are required (ask for any missing value; zero is allowed only when the user gave zero), plus mrp_price, inventory, negative_stock, item_kind, category_id, category_name, barcode, sku, description, unit. update_product: the same fields except opening_stock. adjust_stock: stock_mode (set/add/subtract), stock_quantity, reason, note. ' +
-                        'Selling price and retail price (mrp_price) must be equal unless the user explicitly gave a different retail price; when only one price is given, send it as both selling_price and mrp_price. ' +
-                        'A category_id may be a real id or a reference such as {"step":"cat1","field":"id"}.',
+                        'Action fields. create_product needs name, selling_price, cost_price, opening_stock; create_category needs name; update_* may include name, prices, stock or category; adjust_stock uses stock_mode (set/add/subtract), stock_quantity, reason. Send one price as both selling_price and mrp_price unless a different retail price was given. category_id may be an id or {"step":"cat1","field":"id"}.',
                     },
                     images: {
                       type: 'array',
                       maxItems: 8,
-                      description:
-                        'Product images from the attachment notice. Set cover true on at most one image. Existing images are preserved on update.',
+                      description: 'Attachment ids; cover at most one. Existing images are kept.',
                       items: {
                         type: 'object',
                         additionalProperties: false,

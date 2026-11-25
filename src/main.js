@@ -3858,6 +3858,12 @@ app.whenReady().then(async () => {
     /* Keep assistant timing and recovery lines in the app log. They contain
        no prompts, keys or shop records, only stage names and tool counts. */
     logger: (line) => console.log(line),
+    /* Node/undici is the primary transport. A connection reset or DNS failure
+       gets one retry on Chromium's stack, which follows the desktop proxy and
+       system certificate store; a 90-second timeout is not retried. */
+    fallbackFetchImpl: electron.net && typeof electron.net.fetch === 'function'
+      ? (url, init) => electron.net.fetch(url, init)
+      : undefined,
   });
   console.log('AI IPC handlers registered');
 

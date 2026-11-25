@@ -29,10 +29,15 @@
 
 [dir="rtl"] .rightbar {
     margin-left: 0;
-    margin-right: 256px;
+    /* The page must clear the sidebar, not run underneath its edge. The
+       fallback matches the LTR frame in _custom-general.scss; the variable
+       keeps the two directions on one value. */
+    margin-right: var(--posnic-sidebar-width, 280px);
     transition: margin-right 0.3s ease;
 }
 
+/* The bar starts 30px before the sidebar edge on purpose: its own 30px
+   padding puts the controls exactly at the edge. */
 [dir="rtl"] .topbar {
     left: 0;
     right: 250px;
@@ -45,18 +50,18 @@
 
 [dir="rtl"] .toggle-menu .rightbar {
     margin-left: 0;
-    margin-right: 60px;
+    margin-right: var(--posnic-sidebar-rail-width, 60px);
 }
 
 [dir="rtl"] .toggle-menu .rightbar .topbar {
     left: 0;
-    right: 60px;
+    right: var(--posnic-sidebar-rail-width, 60px);
 }
 
-@media (min-width: 1025px) {
+@media (min-width: 768px) {
     [dir="rtl"] .vertical-layout.toggle-menu .leftbar:hover~.rightbar .topbar {
         left: 0;
-        right: 250px;
+        right: var(--posnic-sidebar-hover-width, 285px);
     }
 }
 

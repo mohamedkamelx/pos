@@ -666,6 +666,13 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
         category_name: '',
         ...provided,
       };
+      if (typeof fields.description === 'string') {
+        const correctedDescription = correctCommonSpelling(fields.description);
+        if (correctedDescription !== fields.description) {
+          warnings.push('Corrected the spelling in the product description.');
+          fields.description = correctedDescription;
+        }
+      }
       /* A new product is a purchase decision, not a placeholder. Require the
          four values a shopkeeper needs before the preview. Zero is accepted
          when the user explicitly gave zero; a missing value is not. */
@@ -803,6 +810,13 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
           step.warnings.push(`Corrected the product name "${fields.name}" to "${correctedName}".`);
           textCorrections.set(fields.name, correctedName);
           fields.name = correctedName;
+        }
+      }
+      if (typeof fields.description === 'string') {
+        const correctedDescription = correctCommonSpelling(fields.description);
+        if (correctedDescription !== fields.description) {
+          step.warnings.push('Corrected the spelling in the product description.');
+          fields.description = correctedDescription;
         }
       }
       if (fields.mrp_price === undefined && fields.selling_price !== undefined &&

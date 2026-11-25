@@ -55,6 +55,26 @@ function shortError(detail) {
   return typeof message === 'string' ? message.slice(0, 300) : '';
 }
 
+/* Fetch errors carry the useful part in cause.code/cause.message: ENOTFOUND,
+   ECONNRESET, UND_ERR_CONNECT_TIMEOUT. Keep that for the app log so a real
+   transport failure can be told apart from a bad key or a rejected upload.
+   It never contains the Authorization header or the audio. */
+function errorDetail(error) {
+  if (!error) return '';
+  const bits = [];
+  if (error.name) bits.push(String(error.name));
+  if (error.code) bits.push(String(error.code));
+  const cause = error.cause;
+  if (cause) {
+    if (cause.code) bits.push(String(cause.code));
+    else if (cause.name) bits.push(String(cause.name));
+    if (cause.message) bits.push(String(cause.message));
+  } else if (error.message) {
+    bits.push(String(error.message));
+  }
+  return bits.join(': ').slice(0, 240);
+}
+
 function groqFailure(status, detail) {
   const code = status === 401 ? 'key_invalid'
     : status === 404 ? 'model_unavailable'
@@ -108,8 +128,38 @@ function audioBuffer(audio) {
   return null;
 }
 
-async function transcribe({ key, audio, mimeType, language, fetchImpl } = {}) {
-  const fetch = fetchImpl || global.fetch;
+async function requestTranscription(fetch, { key, form }) {
+  try {
+    const response = await fetch(GROQ_TRANSCRIBE, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${key}` },
+      body: form,
+      signal: timeoutSignal(90000),
+    });
+    if (!response.ok) return groqFailure(response.status, await readJson(response));
+    const data = await readJson(response);
+    const text = String((data && data.text) || '').trim();
+    if (!text) {
+      return { success: false, code: 'empty_transcript', error: 'No speech was recognised.' };
+    }
+    return { success: true, text, model: TRANSCRIBE_MODEL };
+  } catch (error) {
+    const aborted = error && (error.name === 'AbortError' || error.code === 'ABORT_ERR');
+    return {
+      success: false,
+      code: 'network_error',
+      error: aborted
+        ? 'Groq took too long to answer.'
+        : 'Could not reach Groq. Check the internet connection.',
+      retryable: !aborted,
+      detail: errorDetail(error),
+    };
+  }
+}
+
+async function transcribe({
+  key, audio, mimeType, language, fetchImpl, fallbackFetchImpl,
+} = {}) {
   if (!validKeyShape(key)) {
     return { success: false, code: 'key_missing', error: 'Add your Groq Whisper key first.' };
   }
@@ -134,27 +184,22 @@ async function transcribe({ key, audio, mimeType, language, fetchImpl } = {}) {
   form.append('response_format', 'json');
   form.append('temperature', '0');
 
-  try {
-    const response = await fetch(GROQ_TRANSCRIBE, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${key}` },
-      body: form,
-      signal: timeoutSignal(90000),
-    });
-    if (!response.ok) return groqFailure(response.status, await readJson(response));
-    const data = await readJson(response);
-    const text = String((data && data.text) || '').trim();
-    if (!text) {
-      return { success: false, code: 'empty_transcript', error: 'No speech was recognised.' };
-    }
-    return { success: true, text, model: TRANSCRIBE_MODEL };
-  } catch (error) {
-    if (error && error.name === 'AbortError') {
-      return { success: false, code: 'network_error', error: 'Groq took too long to answer.' };
-    }
-    return { success: false, code: 'network_error',
-      error: 'Could not reach Groq. Check the internet connection.' };
+  const request = { key, form };
+  const primary = await requestTranscription(fetchImpl || global.fetch, request);
+  /* A reset or DNS failure is not the same as a timeout: retry the former on
+     Chromium's network stack, which follows the desktop proxy and system CA
+     store. A timeout already spent its 90 seconds; do not double it. */
+  if (!primary.success && primary.code === 'network_error' && primary.retryable &&
+      typeof fallbackFetchImpl === 'function') {
+    const fallback = await requestTranscription(fallbackFetchImpl, request);
+    if (fallback.success) return { ...fallback, usedFallback: true };
+    return {
+      ...fallback,
+      usedFallback: true,
+      detail: [primary.detail, fallback.detail].filter(Boolean).join(' | ').slice(0, 300),
+    };
   }
+  return primary;
 }
 
 module.exports = {

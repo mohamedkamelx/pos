@@ -12,10 +12,7 @@
  * leaves the processed documents at version 1, and the next run skips them.
  */
 
-const {
-  SEARCH_INDEX_VERSION,
-  buildSearchIndex,
-} = require('../../utils/item-search-index');
+const { SEARCH_INDEX_VERSION, buildSearchIndex } = require('../../utils/item-search-index');
 
 const BATCH_SIZE = 500;
 

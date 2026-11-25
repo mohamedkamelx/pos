@@ -91,6 +91,9 @@ const BRANDS = new Set([
   'Swiggy', 'Zomato', 'ONDC', 'magicpin', 'OpenCart', 'WooCommerce', 'Shopify',
   'Posnic', 'POSNIC', 'Razorpay', 'PhonePe', 'Google', 'Windows', 'Android',
   'Groq', 'NVIDIA',
+  /* Model names, not labels: they are shown exactly as the provider prints
+     them and must not enter a translator's queue. */
+  'GPT-OSS 120B', 'GPT-OSS 20B', 'Qwen3.8 27B',
 ]);
 
 const TAGS = 'th|td|label|h[1-6]|small|strong|b|em|span|button|a|p|li|legend|div';

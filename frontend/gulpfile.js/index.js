@@ -364,17 +364,8 @@ function buildLangPacks(cb) {
 exports.langPacks = buildLangPacks;
 
 exports.build = series(
-  parallel(
-    copyRootPublicFiles,
-    copyStatic,
-    copyVendorScripts,
-    copyLazyScripts,
-    buildLazyReports,
-    buildLangPacks,
-    buildCss,
-    buildJs,
-    buildHtml,
-  ),
+  parallel(copyRootPublicFiles, copyStatic, copyVendorScripts, copyLazyScripts,
+    buildLazyReports, buildLangPacks, buildCss, buildJs, buildHtml),
   fingerprintAssets,
   buildServiceWorker,
 );

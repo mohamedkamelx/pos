@@ -6402,7 +6402,7 @@ td.payable-total, td.pay_amount_total, td.discount-percentage-line-heigth { padd
 .s-doc-grid .q-block { font-size: 14px; }
 .s-doc-description { margin-top: 18px; }
 .s-doc-description .q-label { margin-bottom: 4px; }
-.s-doc-description-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--theme-text-secondary, #3a4459); }
+.s-doc-description-text { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--theme-text-primary, #1a202c); font-size: 15px; line-height: 1.7; }
 .s-doc-record .q-muted { font-size: 11.5px; line-height: 1.45; }
 .s-doc-purchases-table { width: 100%; }
 .s-doc-purchases-table td { font-size: 14px; padding: 12px 10px; font-variant-numeric: tabular-nums; }

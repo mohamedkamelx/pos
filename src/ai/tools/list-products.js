@@ -101,8 +101,6 @@ function formatForModel(result) {
       `price: ${item.sellingPrice}`,
       `stock: ${item.stock}`,
       item.unit ? `unit: ${item.unit}` : '',
-      item.barcode ? `barcode: ${item.barcode}` : '',
-      item.sku ? `sku: ${item.sku}` : '',
     ].filter(Boolean);
     return parts.join(' | ');
   });

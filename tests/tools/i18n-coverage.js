@@ -190,6 +190,14 @@ function keysUsed() {
       remember(m[2], en ? en[1] : '', file);
     }
   }
+  /* The wording-profile catalogue is translated too: it is the English a
+     shopkeeper sees in the wording editor. It lives outside frontend/, so
+     the scanner above would drop labels no template uses directly. */
+  const wordingFile = path.join(__dirname, '..', '..', 'api', 'src', 'catalogs', 'wording-core.json');
+  if (fs.existsSync(wordingFile)) {
+    const labels = JSON.parse(fs.readFileSync(wordingFile, 'utf8')).labels || {};
+    for (const [key, english] of Object.entries(labels)) remember(key, english, wordingFile);
+  }
   return { used, tags, calls, context };
 }
 

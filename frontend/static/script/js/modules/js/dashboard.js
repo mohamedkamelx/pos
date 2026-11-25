@@ -441,29 +441,10 @@ PosnicPro.dashboard = {
         var params = { url: 'dashboard/getProfitSummary', data: { filter: filter } };
         PosnicPro.get(params, function (response) {
             if (response.type !== 'success') { return; }
-            var d = response.data || {};
-            var cur = PosnicPro.local.get('currencySign') || '';
-            var money = function (v) {
-                return cur + ' ' + (Number(v) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-            };
-            var period = filter || 'month';
-
-            $('#profit_revenue').text(money(d.revenue));
-            $('#profit_cogs').text(money(d.cogs));
-            $('#profit_gross').text(money(d.gross_profit));
-            $('#profit_expenses').text(money(d.expenses));
-
-            var net = Number(d.net_profit) || 0;
-            $('#profit_net').text(money(net))
-                .removeClass('text-success text-danger')
-                .addClass(net >= 0 ? 'text-success' : 'text-danger');
-            $('#profit_margin').text((Number(d.margin_percent) || 0) + '% margin');
-            $('#profit_period_label').text('(' + period + ')');
-            $('#profit_sales_count').text((d.sales_count || 0) + ' sale' + (d.sales_count === 1 ? '' : 's'));
-            $('#profit_cashflow_note').text(
-                ' Stock bought this ' + period + ': ' + money(d.purchases) +
-                '. Cash in minus out: ' + money(d.cash_flow) + '.'
-            );
+            // One rendering path for both the dashboard overview and this
+            // legacy endpoint: cost of goods, margin and profit must agree
+            // when cost data is unreliable.
+            PosnicPro.dashboard.renderProfit(response.data || {}, filter);
         }, function () { });
     },
 
@@ -606,10 +587,7 @@ PosnicPro.dashboard = {
         if (!profit) { return; }
         var money = PosnicPro.dashboard.money;
         $('#profit_revenue').html(money(profit.revenue));
-        $('#profit_cogs').html(money(profit.cogs));
-        $('#profit_gross').html(money(profit.gross_profit));
         $('#profit_expenses').html(money(profit.expenses));
-        $('#profit_margin').text((Number(profit.margin_percent) || 0) + '% margin');
         $('#profit_period_label').text('(' + PosnicPro.dashboard.periodLabel(filter) + ')');
         $('#profit_sales_count').text((profit.sales_count || 0) + ' sale' + (profit.sales_count === 1 ? '' : 's'));
 
@@ -617,11 +595,17 @@ PosnicPro.dashboard = {
         // are missing or implausible (cost above sales), show the figure as an
         // estimate - not a confident green profit or an alarming red loss - and
         // say plainly what to fix, so a data gap never reads as a real loss.
+        // Cost of goods and margin are part of that same answer: showing
+        // "$0.00 cost" and "100% margin" beside N/A profit is a contradiction.
         var reliable = profit.cost_reliable !== false;
         var netEl = $('#profit_net').removeClass('text-success text-danger text-muted');
+        var cogsEl = $('#profit_cogs').removeClass('text-muted');
+        var marginEl = $('#profit_margin').removeClass('text-muted');
         if (reliable) {
             var net = Number(profit.net_profit) || 0;
             netEl.attr('title', '').html(money(net)).addClass(net >= 0 ? 'text-success' : 'text-danger');
+            cogsEl.attr('title', '').html(money(profit.cogs));
+            marginEl.attr('title', '').text((Number(profit.margin_percent) || 0) + '% margin');
             $('#profit_gross').attr('title', '').html(money(profit.gross_profit));
             $('#profit_cashflow_note').text(' Stock bought this ' + (filter || 'period') + ': ' + money(profit.purchases) + '. Cash in minus out: ' + money(profit.cash_flow) + '.');
         } else {
@@ -632,6 +616,8 @@ PosnicPro.dashboard = {
                 ? profit.cost_missing_sales + ' of ' + (profit.sales_count || 0) + " sales include items with no purchase price recorded, so profit can't be worked out yet."
                 : "The recorded cost is higher than sales - check the items' cost (company) prices.";
             netEl.attr('title', why).html('N/A').addClass('text-muted');
+            cogsEl.attr('title', why).html('N/A').addClass('text-muted');
+            marginEl.attr('title', why).text('N/A').addClass('text-muted');
             $('#profit_gross').attr('title', why).html('N/A');
             $('#profit_cashflow_note').text('⚠ ' + why);
         }

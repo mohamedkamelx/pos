@@ -80,7 +80,6 @@ function formatForModel(result) {
       `${index + 1}. ${category.name}`,
       category.itemCount == null ? '' : `${category.itemCount} items`,
       category.active ? '' : 'inactive',
-      category.description || '',
     ].filter(Boolean);
     return parts.join(' | ');
   });

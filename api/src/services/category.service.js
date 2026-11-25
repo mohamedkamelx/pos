@@ -461,7 +461,7 @@ class CategoryService {
         return this.getAllCategories({}, options);
       }
 
-      let result = await this.repository.search(searchTerm, options);
+      const result = await this.repository.search(searchTerm, options);
 
       /* Autocomplete uses the same spelling tolerance as the category list. */
       if (result && Number(result.total) === 0) {

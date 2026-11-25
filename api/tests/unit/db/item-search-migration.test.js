@@ -14,9 +14,8 @@ function fakeDatabase(documents) {
   const indexes = [];
   const collection = {
     find(filter) {
-      const excluded = filter && filter.search_index_version
-        ? filter.search_index_version.$ne
-        : undefined;
+      const excluded =
+        filter && filter.search_index_version ? filter.search_index_version.$ne : undefined;
       const rows = documents.filter(
         (doc) => excluded === undefined || doc.search_index_version !== excluded
       );
@@ -29,9 +28,7 @@ function fakeDatabase(documents) {
     async bulkWrite(operations) {
       updates.push(...operations);
       for (const operation of operations) {
-        const target = documents.find(
-          (doc) => doc._id === operation.updateOne.filter._id
-        );
+        const target = documents.find((doc) => doc._id === operation.updateOne.filter._id);
         if (target) Object.assign(target, operation.updateOne.update.$set);
       }
     },
@@ -57,9 +54,7 @@ describe('item search migration', () => {
 
     expect(result.processed).toBe(2);
     expect(updates).toHaveLength(2);
-    expect(updates[0].updateOne.update.$set.search_index_version).toBe(
-      SEARCH_INDEX_VERSION
-    );
+    expect(updates[0].updateOne.update.$set.search_index_version).toBe(SEARCH_INDEX_VERSION);
     expect(updates[0].updateOne.update.$set.search_tokens).toContain('pepsi');
     expect(updates[1].updateOne.update.$set.search_tokens).toContain('بيبسي');
     expect(indexes.map((entry) => entry.options.name)).toEqual([

@@ -76,6 +76,7 @@ jest.mock('../../../src/models/base.model', () => {
 });
 
 const ItemRepository = require('../../../src/repositories/item.repository');
+const StockLogsRepository = require('../../../src/repositories/stock-log.repository');
 const { buildSearchIndex } = require('../../../src/utils/item-search-index');
 const BaseModel = require('../../../src/models/base.model');
 const { ObjectId } = require('mongodb');
@@ -479,9 +480,7 @@ describe('ItemRepository', () => {
         licenseId: FAKE_LICENSE,
       });
 
-      expect(r).toEqual([
-        { _id: 'item-1', name: 'Pepsi 1L', category_name: 'Cold Drinks' },
-      ]);
+      expect(r).toEqual([{ _id: 'item-1', name: 'Pepsi 1L', category_name: 'Cold Drinks' }]);
       const filterText = JSON.stringify(col.find.mock.calls[0][0]);
       expect(filterText).toContain('branch_access.branch_id');
       expect(filterText).toContain('license');
@@ -926,6 +925,63 @@ describe('ItemRepository', () => {
       );
       expect(r.data.updated).toBe(0);
       expect(col.updateOne).not.toHaveBeenCalled();
+    });
+
+    test('a failed stock log restores the item before reporting failure', async () => {
+      col.findOne.mockResolvedValue(tracked);
+      const logSpy = jest
+        .spyOn(StockLogsRepository.prototype, 'createStockLog')
+        .mockResolvedValue({ status: false, message: 'log unavailable' });
+
+      const r = await repo.stockAdjustment(
+        { reason: 'Inventory count', rows: [{ item_id: FAKE_ID, qty: 7 }] },
+        ctx
+      );
+
+      expect(r.status).toBe(false);
+      expect(r.data.updated).toBe(0);
+      expect(col.updateOne).toHaveBeenCalledTimes(2);
+      expect(col.updateOne.mock.calls[0][1].$set.available_quantity).toBe(7);
+      expect(col.updateOne.mock.calls[1][1].$set.available_quantity).toBe(10);
+      logSpy.mockRestore();
+    });
+
+    test('a later log failure removes earlier logs and restores every item', async () => {
+      const secondId = '64f9a1c2e3b4d5e6f7000010';
+      const second = {
+        _id: secondId,
+        name: 'Soap',
+        barcode_id: 'B2',
+        available_quantity: 20,
+        track_inventory: true,
+      };
+      col.findOne
+        .mockResolvedValueOnce(null) // branch doc
+        .mockResolvedValueOnce(tracked)
+        .mockResolvedValueOnce(second);
+      const logSpy = jest
+        .spyOn(StockLogsRepository.prototype, 'createStockLog')
+        .mockResolvedValueOnce({ status: true, data: { _id: 'log-1' } })
+        .mockResolvedValueOnce({ status: false, message: 'log unavailable' });
+
+      const r = await repo.stockAdjustment(
+        {
+          reason: 'Inventory count',
+          rows: [
+            { item_id: FAKE_ID, qty: 7 },
+            { item_id: secondId, qty: 15 },
+          ],
+        },
+        ctx
+      );
+
+      expect(r.status).toBe(false);
+      expect(r.data.updated).toBe(0);
+      expect(col.updateOne).toHaveBeenCalledTimes(4);
+      expect(col.updateOne.mock.calls[2][1].$set.available_quantity).toBe(20);
+      expect(col.updateOne.mock.calls[3][1].$set.available_quantity).toBe(10);
+      expect(col.deleteMany).toHaveBeenCalledWith({ _id: { $in: ['log-1'] } });
+      logSpy.mockRestore();
     });
   });
 

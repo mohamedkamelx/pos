@@ -38,11 +38,11 @@
     &.toggle-menu {
       .leftbar {
           position: fixed;
-          width: 60px;
+          width: var(--posnic-sidebar-rail-width);
           margin-left: 0;
           transition: all 0.3s ease;
           &:hover {
-            width: 285px; 
+            width: var(--posnic-sidebar-hover-width);
             .vertical-menu > li > a > span {
                 display: inline-block;
             }
@@ -81,7 +81,7 @@
             }
             ~ .rightbar {
               .topbar {
-                  left: 285px;
+                  left: var(--posnic-sidebar-hover-width);
               }
             }
           }

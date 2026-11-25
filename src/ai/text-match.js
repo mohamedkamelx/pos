@@ -48,7 +48,13 @@ const SPELLING_VARIANTS = new Map([
 
 function correctCommonSpelling(value) {
   const source = String(value == null ? '' : value);
-  return source.replace(/[\p{L}\p{N}]+/gu, (token) => {
+  /* "14 أدم" is a common slip for "14 قدم" (feet). Only correct it after a
+     number so a product or brand actually named Adam is left untouched. */
+  const sized = source.replace(
+    /([0-9٠-٩]+)\s*(?:أدم|ادم|آدم)(?![\p{L}\p{N}])/gu,
+    '$1 قدم',
+  );
+  return sized.replace(/[\p{L}\p{N}]+/gu, (token) => {
     const key = normalizeName(token);
     return SPELLING_VARIANTS.get(key) || token;
   });

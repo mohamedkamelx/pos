@@ -100,7 +100,10 @@ for (const exporting of [false, true]) {
 }
 
 
-for(const file of ['items','categories','customers','customer_categories']) {
+/* items.html moved to the master-detail standard 2026-08-27 and no longer
+   carries a sales-activity table; its stock-movement rows have their own
+   tests. The remaining detail pages still render this history. */
+for(const file of ['categories','customers','customer_categories']) {
   test(file+' activity rows preserve per-bill precision with bounded legacy fallback',()=>{
     const source=fs.readFileSync(path.join(__dirname,'../frontend/static/script/js/modules/js/'+file+'.js'),'utf8');
     const line=source.split('\n').find(line=>line.includes("let trow =")&&line.includes('data-label="Return total"'));
@@ -142,7 +145,7 @@ test('staff activity preserves bill precision and keeps different currencies sep
 });
 
 
-for (const file of ['items', 'categories', 'customers', 'customer_categories']) {
+for (const file of ['categories', 'customers', 'customer_categories']) {
   test(file + ' activity CSV preserves numeric amounts and their currency', () => {
     const source = fs.readFileSync(path.join(__dirname, '../frontend/static/script/js/modules/js/' + file + '.js'), 'utf8');
     const line = source.split('\n').find(line => line.includes('salesreport.push('));
@@ -162,7 +165,7 @@ for (const file of ['items', 'categories', 'customers', 'customer_categories']) 
 }
 
 
-for (const [file, prefix] of [['customers.js','customer'],['customer_categories.js','customercategory'],['items.js','item'],['categories.js','category']]) {
+for (const [file, prefix] of [['customers.js','customer'],['customer_categories.js','customercategory'],['categories.js','category']]) {
     test(file + ' shows complete currency groups safely and restores legacy labels', () => {
         const script = fs.readFileSync(path.join(__dirname, '../frontend/static/script/js/modules/js', file), 'utf8');
         const start = script.indexOf('                    // Complete totals grouped by saved bill currency.');

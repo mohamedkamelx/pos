@@ -323,10 +323,7 @@ describe('CategoryService', () => {
           totalPages: 1,
         });
 
-      const result = await service.getAllCategories(
-        { search: 'الاحزايا' },
-        { page: 1, limit: 10 }
-      );
+      const result = await service.getAllCategories({ search: 'الاحزايا' }, { page: 1, limit: 10 });
 
       expect(result.status).toBe(true);
       expect(result.data.data.map((row) => row.name)).toEqual(['احذية']);
@@ -344,10 +341,7 @@ describe('CategoryService', () => {
         totalPages: 1,
       });
 
-      const result = await service.getAllCategories(
-        { search: 'احذية' },
-        { page: 1, limit: 10 }
-      );
+      const result = await service.getAllCategories({ search: 'احذية' }, { page: 1, limit: 10 });
 
       expect(result.data.data).toEqual([shoes]);
       expect(repo.findAll).toHaveBeenCalledTimes(1);

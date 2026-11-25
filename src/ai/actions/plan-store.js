@@ -63,6 +63,13 @@ function createPlanStore({ ttlMs = DEFAULT_TTL_MS, now = Date.now } = {}) {
     if (plan.status === 'completed') {
       return { ok: true, plan, already: true };
     }
+    if (plan.status === 'partial' && plan.retryable === false) {
+      return {
+        ok: false,
+        code: 'plan_review_required',
+        message: 'Some changes could not be undone. Review the affected records before trying again.',
+      };
+    }
     plan.status = 'running';
     plan.runningAt = now();
     plan.confirmCount = (plan.confirmCount || 0) + 1;

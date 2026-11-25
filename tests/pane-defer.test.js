@@ -25,7 +25,7 @@ const core = fs.readFileSync(
 function deferSet() {
   const m = htmlJs.match(/PHONE_DEFER = new Set\(\[([\s\S]*?)\]\)/);
   assert.ok(m, 'PHONE_DEFER set missing from the build');
-  return [...m[1].matchAll(/'([^']+)'/g)].map((x) => x[1]);
+  return [...m[1].matchAll(/'([^']+)'|"([^"]+)"/g)].map((x) => x[1] || x[2]);
 }
 
 test('the defer set names real, script-free module panes', () => {

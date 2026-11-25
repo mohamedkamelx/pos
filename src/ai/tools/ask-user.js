@@ -19,6 +19,29 @@ const MAX_PENDING_CHARS = 500;
 const MAX_MISSING = 8;
 
 const CATEGORY_PHRASE_RE = /(?:^|\s)(?:في|فى|داخل|ضمن|in|under)\s+(?:فئة|قسم|category)\s+([^\s،,.!?]+(?:\s+[^\s،,.!?]+){0,2})/i;
+const CATEGORY_WORD_RE = /(?:فئة|تصنيف|قسم|category)/i;
+const CATEGORY_CHOICE_RE = /(?:أنشئ|إنشاء|انشئ|انشاء|أترك|اترك|بدون\s+(?:تصنيف|فئة)|من\s+غير\s+(?:تصنيف|فئة)|leave\s+(?:it\s+)?uncategorized|create\s+(?:a\s+)?(?:suitable\s+)?category|without\s+(?:a\s+)?category)/i;
+const IMAGE_WORD_RE = /(?:صورة|صور|image|photo|picture)/i;
+const PRODUCT_DRAFT_RE = /(?:selling[_ ]?price|cost[_ ]?price|opening[_ ]?stock|سعر\s+البيع|سعر\s+التكلفة|الكمية\s+(?:المبدئية|المتوفرة))/i;
+const CREATE_DRAFT_RE = /(?:أضيف|اضيف|أضف|اضف|ضيف|إضافة|اضافة|إنشاء|انشاء|new product|add product|create product|add item|new item)/i;
+const PRODUCT_CONTEXT_RE = /(?:منتج|صنف|برودكت|product|item)/i;
+const CREATE_CATEGORY_EN_RE = /^create\s+(?:a\s+)?(?:new\s+)?category\s*[:\-]?\s*(.*)$/i;
+const LEAVE_UNCATEGORIZED_EN_RE = /^leave\s+(?:it\s+)?uncategorized\.?$/i;
+const ARABIC_RE = /[\u0600-\u06FF]/;
+
+function localizeCategoryOption(option) {
+  const create = String(option.label || '').match(CREATE_CATEGORY_EN_RE);
+  if (create) {
+    const name = String(create[1] || '').trim();
+    const label = name ? `إنشاء فئة ${name}` : 'إنشاء فئة';
+    return { label, value: label };
+  }
+  if (LEAVE_UNCATEGORIZED_EN_RE.test(String(option.label || ''))) {
+    const label = 'ترك غير مصنفة';
+    return { label, value: label };
+  }
+  return option;
+}
 const CATEGORY_STOP_WORDS = new Set([
   'و', 'أو', 'او', 'ثم', 'بس', 'بسعر', 'سعر', 'السعر', 'وكمية', 'كمية',
   'الكمية', 'وتكلفة', 'تكلفة', 'التكلفة', 'ووصف', 'وصف', 'الوصف', 'وخلي',
@@ -45,7 +68,7 @@ function namedCategory(value) {
   return kept.join(' ').trim();
 }
 
-function askUser(input, { pendingText = '' } = {}) {
+function askUser(input, { pendingText = '', pendingNote = '' } = {}) {
   const question = text(input && input.question, MAX_QUESTION_CHARS);
   if (!question) {
     return {
@@ -54,6 +77,7 @@ function askUser(input, { pendingText = '' } = {}) {
       message: 'A clarification question needs text.',
     };
   }
+  const arabic = ARABIC_RE.test(question);
 
   const rawOptions = Array.isArray(input && input.options) ? input.options : [];
   if (rawOptions.length > MAX_OPTIONS) {
@@ -71,15 +95,19 @@ function askUser(input, { pendingText = '' } = {}) {
     const value = text(typeof raw === 'string' ? raw : raw && raw.value, MAX_VALUE_CHARS) || label;
     options.push({ label, value });
   }
+  if (arabic) {
+    for (let index = 0; index < options.length; index += 1) {
+      options[index] = localizeCategoryOption(options[index]);
+    }
+  }
 
   const missing = (Array.isArray(input && input.missing) ? input.missing : [])
     .map((item) => text(item, 60))
     .filter(Boolean)
     .slice(0, MAX_MISSING);
 
-  const asksForCategory = missing.includes('category') ||
-    (/(?:فئة|قسم|category)/i.test(question) &&
-      options.some((option) => /(?:فئة|قسم|category)/i.test(option.label)));
+  const mentionsCategory = CATEGORY_WORD_RE.test(question);
+  const asksForCategory = missing.includes('category') || mentionsCategory;
   const category = namedCategory(pendingText);
   if (asksForCategory && category) {
     const remaining = missing.filter((item) => !/(?:category|فئة|قسم)/i.test(item));
@@ -94,11 +122,54 @@ function askUser(input, { pendingText = '' } = {}) {
     };
   }
 
+  const suffixes = [];
+  const notes = [];
+  const draftText = `${pendingText} ${(input && input.pending) || ''}`;
+  const productContext =
+    (CREATE_DRAFT_RE.test(draftText) && PRODUCT_CONTEXT_RE.test(draftText)) ||
+    missing.some((item) => /opening[_ ]?stock|الكمية\s+المبدئية/i.test(item));
+  const productDraft = productContext &&
+    (missing.some((item) => PRODUCT_DRAFT_RE.test(item)) || missing.includes('category'));
+  const hasCategoryOption = options.some((option) => CATEGORY_WORD_RE.test(option.label));
+  /* A product question must offer the category decision, not only ask
+     whether the user wants a category. The model sometimes omits the
+     create-or-leave choice; make the question actionable without another
+     model round trip. */
+  if (productDraft && mentionsCategory && !hasCategoryOption && !CATEGORY_CHOICE_RE.test(question)) {
+    suffixes.push(arabic
+      ? ' وبالنسبة للفئة: أنشئ تصنيفًا مناسبًا أم اترك المنتج بدون تصنيف؟'
+      : ' For the category: create a suitable category or leave the product uncategorized?');
+    notes.push(arabic
+      ? 'اسأل أيضًا: أنشئ تصنيفًا مناسبًا أم اترك المنتج بدون تصنيف؟'
+      : 'Also ask: create a suitable category or leave the product uncategorized?');
+  }
+  /* The optional image belongs to the same question. Asking it in a later
+     turn annoys the user and hides that it was never required. */
+  const imageMentioned = IMAGE_WORD_RE.test(question) || IMAGE_WORD_RE.test(pendingText);
+  const imageAlreadyAsked = /(?:optional image|صورة اختيارية)/i.test(pendingNote);
+  if (productDraft && !imageMentioned && !imageAlreadyAsked) {
+    suffixes.push(arabic
+      ? ' أرفق صورة إن وجدت.'
+      : ' Attach an image if you have one.');
+    notes.push(arabic
+      ? 'صورة اختيارية: اسأل عنها الآن ولا تسأل مرة أخرى إذا لم تُرفق.'
+      : 'Optional image: ask now; do not ask again if it is not attached.');
+  }
+
+  let finalQuestion = question;
+  let pending = text(input && input.pending, MAX_PENDING_CHARS);
+  if (suffixes.length) {
+    const suffix = suffixes.join('');
+    const room = Math.max(0, MAX_QUESTION_CHARS - suffix.length);
+    finalQuestion = `${question.slice(0, room).trim()}${suffix}`;
+    pending = text(`${pending} ${notes.join(' ')}`.trim(), MAX_PENDING_CHARS);
+  }
+
   return {
     kind: 'clarify',
-    question,
+    question: finalQuestion,
     options,
-    pending: text(input && input.pending, MAX_PENDING_CHARS),
+    pending,
     missing,
   };
 }
@@ -108,22 +179,9 @@ function formatForModel(result) {
   if (result.kind === 'error') {
     return `The clarification question could not be shown: ${result.message}`;
   }
-  const choices = result.options.length
-    ? result.options.map((option) => `- ${option.label}`).join('\n')
-    : 'The user will type the missing detail.';
-  const lines = [
-    'The question below is already visible to the user. Do not repeat it or list the choices again.',
-    result.question,
-    choices,
-    'End your turn and wait for the user to choose.',
-  ];
-  if (result.pending) {
-    lines.push(`The unfinished request is recorded as: ${result.pending}. Continue it after the answer; do not start a search.`);
-  }
-  if (result.missing && result.missing.length) {
-    lines.push(`Still missing: ${result.missing.join(', ')}. Ask once for all missing values, then continue the same request.`);
-  }
-  return lines.join('\n');
+  /* The tool call arguments and the page card already hold the question and
+     choices. Repeating them in the result wastes context on every step. */
+  return 'The clarification question is already visible to the user. End your turn and wait for the answer; do not repeat it, list choices or start a new search. The next answer continues the same unfinished request.';
 }
 
 module.exports = {

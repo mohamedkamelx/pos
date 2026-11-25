@@ -553,6 +553,8 @@ test('the RTL stylesheet rides the pages a shopkeeper sees, and loads last', () 
   const rtl = fs.readFileSync(path.join(FRONTEND, 'static', 'style', 'css', 'rtl.css'), 'utf8');
   assert.match(rtl, /\[dir="rtl"\] \.leftbar/, 'the sidebar is not mirrored');
   assert.match(rtl, /\[dir="rtl"\] \.topbar/, 'the top bar is not mirrored');
+  assert.match(rtl, /\[dir="rtl"\] \.rightbar \{[^}]*margin-right:\s*var\(--posnic-sidebar-width, 280px\)/, 'the RTL page runs underneath the sidebar');
+  assert.match(rtl, /leftbar:hover~\.rightbar \.topbar \{[^}]*right:\s*var\(--posnic-sidebar-hover-width, 285px\)/, 'the RTL top bar does not clear the open rail');
   /* Every rule is scoped: an LTR page must pay nothing for this sheet. */
   const unscoped = rtl.split('\n').filter((l) => /^[.#a-z]/.test(l) && !/^\[dir/.test(l));
   assert.deepEqual(unscoped, [], 'rules not scoped under [dir="rtl"]: ' + unscoped.join(' | '));

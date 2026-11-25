@@ -11,9 +11,9 @@
     transition: all 0.3s ease;    
   }
   .rightbar {
-    margin-left: 60px;
+    margin-left: var(--posnic-sidebar-rail-width);
     .topbar {
-      left: 60px;
+      left: var(--posnic-sidebar-rail-width);
     }
   }
 }

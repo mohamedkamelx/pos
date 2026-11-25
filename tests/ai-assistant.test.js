@@ -99,7 +99,7 @@ function fakeRuntime() {
   };
 }
 
-function fakeOpenCodeSdk({ promptHook, tokenHook } = {}) {
+function fakeOpenCodeSdk({ promptHook, tokenHook, waitHook } = {}) {
   const state = {
     sessions: new Map(),
     sessionCount: 0,
@@ -130,6 +130,17 @@ function fakeOpenCodeSdk({ promptHook, tokenHook } = {}) {
         state.prompts.push({ sessionID, text });
         const hook = promptHook && promptHook({ sessionID, text, index });
         if (hook && hook.throw) throw new Error(hook.throw);
+        if (hook && hook.error) {
+          state.clock += 10;
+          const created = state.clock;
+          state.sessions.get(sessionID).push({
+            type: 'assistant',
+            time: { created: created + 1 },
+            content: [],
+            error: hook.error,
+          });
+          return { time: { created } };
+        }
         const reply = (hook && hook.reply) || `Reply ${index + 1}`;
         const parts = [{ type: 'text', text: reply }];
         if (hook && Array.isArray(hook.tools)) {
@@ -160,7 +171,9 @@ function fakeOpenCodeSdk({ promptHook, tokenHook } = {}) {
         state.sessions.get(sessionID).push(message);
         return { time: { created } };
       },
-      wait: async () => {},
+      wait: async (args) => {
+        if (waitHook) await waitHook(args);
+      },
       compact: async () => {
         state.compactCalls += 1;
         return {};
@@ -196,16 +209,18 @@ async function createRuntimeHarness(t, options = {}) {
   };
   delete require.cache[runtimePath];
   const { createOpenCodeRuntime } = require(runtimePath);
+  const providerKeys = options.providerKeys || { 'provider:groq': 'test-provider-key' };
   const runtime = createOpenCodeRuntime({
     baseDir: dir,
     keyStore: {
       getSettings: () => settings,
-      read: () => ({ key: 'test-provider-key' }),
+      read: (slot) => ({ key: providerKeys[slot] || '' }),
       setSettings: (next) => { settings = next; return settings; },
     },
     logger: (line) => logs.push(line),
     fetchImpl: async () => response(200, { data: [] }),
     apiBaseUrl: 'http://127.0.0.1:5555',
+    chatTimeoutMs: options.chatTimeoutMs,
   });
   t.after(async () => {
     await runtime.close();
@@ -233,6 +248,7 @@ function setup(t, options = {}) {
       calls.push({ url, init });
       return fetchImpl(url, init);
     },
+    fallbackFetchImpl: options.fallbackFetchImpl,
     runtimeFactory: () => runtime,
   });
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -246,6 +262,77 @@ function setup(t, options = {}) {
     state: aiIpc.aiInputState,
   };
 }
+
+test('a category question offers create or leave uncategorized', () => {
+  const { askUser } = require(path.join(ROOT, 'src/ai/tools/ask-user'));
+  const arabic = askUser({
+    question: 'ما هو سعر البيع، سعر التكلفة، الكمية المبدئية، وهل تريد إضافة صورة أو فئة؟',
+    pending: 'Add product "تلاجة بنسونيك 16 قدم" - missing selling price, cost price, opening stock, optional image, optional category',
+    missing: ['selling price', 'cost price', 'opening stock'],
+  }, { pendingText: 'أريد أن أضيف تلاجة بنسونيك 16 قدم' });
+  assert.equal(arabic.kind, 'clarify');
+  assert.match(arabic.question, /أنشئ تصنيفًا مناسبًا/);
+  assert.match(arabic.question, /بدون تصنيف/);
+  assert.match(arabic.pending, /أنشئ تصنيفًا مناسبًا/);
+  assert.doesNotMatch(arabic.question, /أرفق صورة/);
+  assert.ok(arabic.question.length <= 300);
+
+  const noImage = askUser({
+    question: 'ما هو سعر البيع وسعر التكلفة والكمية المتوفرة؟ هل تريد إنشاء فئة «تلاجات» أم تركها غير مصنفة؟',
+    pending: 'New product: تلاجة بنسونيك 16 قدم. Missing: selling price, cost price, opening stock.',
+    missing: ['selling_price', 'cost_price', 'opening_stock'],
+  }, { pendingText: 'أريد أن أضيف تلاجة بنسونيك 16 قدم' });
+  assert.equal(noImage.kind, 'clarify');
+  assert.match(noImage.question, /أرفق صورة إن وجدت/);
+  assert.match(noImage.pending, /صورة اختيارية/);
+  assert.equal(noImage.question.match(/أرفق صورة/g).length, 1);
+
+  const firstImageAsk = askUser({
+    question: 'ما هو سعر البيع؟',
+    missing: ['selling_price', 'opening_stock'],
+  }, { pendingText: 'أريد أن أضيف تلاجة بنسونيك 16 قدم' });
+  assert.match(firstImageAsk.question, /أرفق صورة إن وجدت/);
+  assert.match(firstImageAsk.pending, /صورة اختيارية/);
+
+  const secondImageAsk = askUser({
+    question: 'ما هو سعر البيع؟',
+    missing: ['selling_price', 'opening_stock'],
+  }, {
+    pendingText: 'أريد أن أضيف تلاجة بنسونيك 16 قدم',
+    pendingNote: firstImageAsk.pending,
+  });
+  assert.doesNotMatch(secondImageAsk.question, /أرفق صورة/);
+
+  const named = askUser({
+    question: 'أي فئة تريد للمنتج؟',
+    options: [{ label: 'إنشاء فئة جديدة', value: 'new' }],
+    missing: ['category'],
+  }, { pendingText: 'ضيف برودكت جزمة' });
+  assert.equal(named.kind, 'clarify');
+  assert.match(named.question, /^أي فئة تريد للمنتج؟/);
+  assert.doesNotMatch(named.question, /وبالنسبة للفئة/);
+  assert.match(named.question, /أرفق صورة إن وجدت/);
+
+  const english = askUser({
+    question: 'What are the price, cost and stock, and do you want an image or category?',
+    missing: ['selling price', 'cost price', 'opening stock'],
+  }, { pendingText: 'Add product fridge' });
+  assert.match(english.question, /create a suitable category/);
+  assert.match(english.question, /uncategorized/);
+
+  const localized = askUser({
+    question: 'ما هو سعر البيع؟ وهل تريد إنشاء فئة "تلاجات" أم تركها غير مصنفة؟',
+    options: [
+      { label: 'Create category "تلاجات"', value: 'create_category' },
+      { label: 'Leave uncategorized', value: 'no_category' },
+    ],
+    missing: ['selling_price'],
+  }, { pendingText: 'أضف منتج تلاجة' });
+  assert.equal(localized.options[0].label, 'إنشاء فئة "تلاجات"');
+  assert.equal(localized.options[0].value, 'إنشاء فئة "تلاجات"');
+  assert.equal(localized.options[1].label, 'ترك غير مصنفة');
+  assert.equal(localized.options[1].value, 'ترك غير مصنفة');
+});
 
 test('both credentials are validated, encrypted and kept out of the page', async (t) => {
   const h = setup(t, {
@@ -303,6 +390,8 @@ test('both credentials are validated, encrypted and kept out of the page', async
     ['groq', 'nvidia'],
   );
   assert.ok(status.providers[0].models.some((model) => model.id === 'openai/gpt-oss-120b'));
+  assert.ok(status.providers[0].models.some((model) => model.id === 'openai/gpt-oss-20b'));
+  assert.ok(status.providers[0].models.some((model) => model.id === 'qwen/qwen3.8-27b'));
 
   /* An empty field means check the saved key; it must use the stored copy. */
   assert.equal((await h.handlers.get('ai:validate-key')({}, '')).success, true);
@@ -355,6 +444,41 @@ test('the provider token and model selection are separate from transcription', a
   })).success, true);
   assert.equal(fs.existsSync(nvidiaPath), false);
   assert.equal((await h.handlers.get('ai:key-status')({})).chat.configured, false);
+});
+
+test('a backup provider token is stored separately from the primary token', async (t) => {
+  const h = setup(t, {
+    fetchImpl: async () => response(200, { data: [] }),
+  });
+
+  assert.equal((await h.handlers.get('ai:save-provider-key')({}, {
+    provider: 'groq', key: PROVIDER_KEY,
+  })).success, true);
+  const backupKey = 'gsk_backup_test_0987654321';
+  const backup = await h.handlers.get('ai:save-provider-key')({}, {
+    provider: 'groq', key: backupKey, backup: true,
+  });
+  assert.equal(backup.success, true);
+  assert.equal(backup.backup, true);
+  assert.equal(backup.backupConfigured, true);
+
+  const backupPath = path.join(h.dir, 'ai-provider-groq2.json');
+  assert.equal(fs.existsSync(h.providerKeyPath), true);
+  assert.equal(fs.existsSync(backupPath), true);
+  assert.ok(!fs.readFileSync(backupPath, 'utf8').includes(backupKey));
+
+  const status = await h.handlers.get('ai:key-status')({});
+  assert.equal(status.chat.configured, true);
+  assert.equal(status.chat.backupConfigured, true);
+  assert.equal(status.chat.activeToken, 'primary');
+
+  const removed = await h.handlers.get('ai:clear-provider-key')({}, {
+    provider: 'groq', backup: true,
+  });
+  assert.equal(removed.success, true);
+  assert.equal(removed.backupConfigured, false);
+  assert.equal(fs.existsSync(backupPath), false);
+  assert.equal(fs.existsSync(h.providerKeyPath), true);
 });
 
 test('the assistant needs both credentials, then transcribes and chats', async (t) => {
@@ -447,6 +571,77 @@ test('provider and transcription failures keep their meaning', async (t) => {
   assert.equal(result.status, 429);
 });
 
+test('a transient transcription reset is retried on the fallback transport', async (t) => {
+  let primaryAttempts = 0;
+  let fallbackAttempts = 0;
+  const h = setup(t, {
+    fetchImpl: async (url) => {
+      if (url.endsWith('/models')) return response(200, { data: [] });
+      primaryAttempts += 1;
+      const error = new TypeError('fetch failed');
+      error.cause = { code: 'ECONNRESET', message: 'read ECONNRESET' };
+      throw error;
+    },
+    fallbackFetchImpl: async (url) => {
+      if (!url.endsWith('/audio/transcriptions')) throw new Error('unexpected fallback URL ' + url);
+      fallbackAttempts += 1;
+      return response(200, { text: 'مرحبا' });
+    },
+  });
+  await h.handlers.get('ai:save-key')({}, KEY);
+  await h.handlers.get('ai:save-provider-key')({}, { provider: 'groq', key: PROVIDER_KEY });
+  await h.handlers.get('ai:set-enabled')({}, true);
+  const result = await h.handlers.get('ai:transcribe')({}, {
+    audio: new Uint8Array([1, 2, 3]),
+    mimeType: 'audio/webm',
+  });
+  assert.equal(result.success, true);
+  assert.equal(result.text, 'مرحبا');
+  assert.equal(result.usedFallback, true);
+  assert.equal(primaryAttempts, 1);
+  assert.equal(fallbackAttempts, 1);
+});
+
+test('a transcription timeout is reported, not retried on the fallback', async (t) => {
+  let fallbackAttempts = 0;
+  const h = setup(t, {
+    fetchImpl: async (url) => {
+      if (url.endsWith('/models')) return response(200, { data: [] });
+      const error = new Error('The operation was aborted');
+      error.name = 'AbortError';
+      throw error;
+    },
+    fallbackFetchImpl: async () => {
+      fallbackAttempts += 1;
+      return response(200, { text: 'unexpected' });
+    },
+  });
+  await h.handlers.get('ai:save-key')({}, KEY);
+  await h.handlers.get('ai:save-provider-key')({}, { provider: 'groq', key: PROVIDER_KEY });
+  await h.handlers.get('ai:set-enabled')({}, true);
+  const result = await h.handlers.get('ai:transcribe')({}, {
+    audio: new Uint8Array([1, 2, 3]),
+    mimeType: 'audio/webm',
+  });
+  assert.equal(result.success, false);
+  assert.equal(result.code, 'network_error');
+  assert.equal(result.retryable, false);
+  assert.equal(result.error, 'Groq took too long to answer.');
+  assert.equal(fallbackAttempts, 0);
+});
+
+test('a chat rate limit keeps its retry time for the page', () => {
+  const { runtimeFailure } = freshAiIpc();
+  const error = new Error('Rate limit reached. Please try again in 11m53s.');
+  error.code = 'rate_limited';
+  error.retryAfterMs = 713000;
+  const result = runtimeFailure(error);
+  assert.equal(result.success, false);
+  assert.equal(result.code, 'rate_limited');
+  assert.equal(result.retryAfterMs, 713000);
+  assert.match(result.error, /Rate limit reached/);
+});
+
 test('an offline check stores nothing', async (t) => {
   const h = setup(t, {
     fetchImpl: async () => { throw new Error('offline'); },
@@ -525,7 +720,13 @@ test('the microphone, bridge, page, search and package are wired to AI, not Voic
   assert.match(transcriber, /language.*ar/);
 
   const registry = read('src', 'ai', 'provider-registry.js');
-  for (const model of ['openai/gpt-oss-120b', 'moonshotai/kimi-k3.1-pro', 'mistralai/mistral-large-4-1t-a52b']) {
+  for (const model of [
+    'openai/gpt-oss-120b',
+    'openai/gpt-oss-20b',
+    'qwen/qwen3.8-27b',
+    'moonshotai/kimi-k3.1-pro',
+    'mistralai/mistral-large-4-1t-a52b',
+  ]) {
     assert.match(registry, new RegExp(model.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')));
   }
   assert.match(registry, /action: '\*', resource: '\*', effect: 'deny'/);
@@ -891,6 +1092,80 @@ test('the assistant page renders clickable clarification, product list and plan 
   assert.equal(confirmCalls[0].authToken, 'jwt-session');
   assert.equal(confirmCalls[0].branchId, 'branch-1');
   assert.match(d.body.textContent, /Completed/);
+});
+
+test('a rate-limited chat tells the user when to retry', async () => {
+  const frontend = (...parts) => read('frontend', ...parts);
+  const dom = new JSDOM(
+    '<!doctype html><html><body>' + frontend('modules', 'ai.html') + '</body></html>',
+    { runScripts: 'outside-only', url: 'http://localhost/dashboard.html' },
+  );
+  const w = dom.window;
+  const d = w.document;
+
+  w.PosnicPro = {
+    local: {
+      get: (key) => {
+        if (key === 'ai_assistant_settings') return JSON.stringify({ enabled: true });
+        if (key === 'branch_id_set') return 'branch-1';
+        if (key === 'username') return 'admin';
+        return null;
+      },
+      set: () => {},
+    },
+    i18n: { t: (_, fallback) => fallback },
+    userACL: { branch: { write: true } },
+    HideSideBarModal: () => {},
+  };
+  w.hasher = { setHash: () => {} };
+  w.$ = () => ({
+    removeClass() { return this; },
+    addClass() { return this; },
+    hide() { return this; },
+    show() { return this; },
+  });
+  w.localStorage.setItem('posnic_jwt_token', 'jwt-session');
+  w.electronAPI = {
+    ai: {
+      keyStatus: async () => ({
+        success: true,
+        enabled: true,
+        transcription: { configured: true },
+        chat: { configured: true, provider: 'groq', model: 'openai/gpt-oss-120b' },
+        providers: [],
+      }),
+      setEnabled: async () => ({ success: true, enabled: true }),
+      chat: async () => ({
+        success: false,
+        code: 'rate_limited',
+        error: 'Rate limit reached. Please try again in 11m53s.',
+        retryAfterMs: 713000,
+      }),
+      onPlanProgress: () => () => {},
+      attach: async () => ({ success: true, attachments: [] }),
+      removeAttachment: async () => ({ success: true }),
+      resetChat: async () => ({ success: true }),
+      transcribe: async () => ({ success: true, text: '' }),
+      confirmPlan: async () => ({ success: true }),
+      cancelPlan: async () => ({ success: true }),
+    },
+  };
+
+  w.eval(frontend('static', 'script', 'js', 'core', 'ai.js'));
+  w.PosnicPro.ai.init();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(d.getElementById('ai_chat_card').hidden, false);
+  assert.deepEqual(
+    [...d.querySelectorAll('#ai_model option')].map((option) => option.value),
+    ['openai/gpt-oss-120b', 'openai/gpt-oss-20b', 'qwen/qwen3.8-27b'],
+  );
+
+  d.getElementById('ai_prompt').value = 'أريد أن أضيف تلاجة';
+  d.getElementById('ai_send').click();
+  await new Promise((resolve) => setTimeout(resolve, 120));
+
+  assert.match(d.getElementById('ai_status').textContent, /12 minutes/);
+  assert.equal(d.getElementById('ai_retry').hidden, false);
 });
 
 test('a typed confirmation confirms the pending plan without asking the model again', async () => {
@@ -1707,6 +1982,122 @@ test('an update without new images keeps the existing product cover', async () =
   assert.equal(putBody.body.cover_image, '/uploads/item_images/a.png');
 });
 
+test('a failed later step undoes earlier writes and leaves a retryable plan', async () => {
+  const { executePlan } = require(path.join(ROOT, 'src/ai/actions/plan-executor'));
+
+  const calls = [];
+  const category = { _id: 'cat-atomic', name: 'Drinks' };
+  const api = {
+    async get(pathname) {
+      calls.push({ method: 'GET', pathname });
+      if (pathname === 'categories/cat-atomic') return { data: category };
+      throw new Error(`unexpected GET ${pathname}`);
+    },
+    async post(pathname) {
+      calls.push({ method: 'POST', pathname });
+      if (pathname === 'categories') return { data: category };
+      if (pathname === 'items') throw new Error('The product could not be saved.');
+      throw new Error(`unexpected POST ${pathname}`);
+    },
+    async put() {
+      throw new Error('unexpected PUT');
+    },
+    async delete(pathname, body) {
+      calls.push({ method: 'DELETE', pathname, body });
+      return { type: 'success' };
+    },
+  };
+  const plan = {
+    id: 'plan_atomic',
+    status: 'pending',
+    warnings: [],
+    steps: [
+      { id: 'c1', action: 'create_category', fields: { name: 'Drinks' }, dependsOn: [] },
+      {
+        id: 'p1',
+        action: 'create_product',
+        fields: { name: 'Pepsi', selling_price: 10, cost_price: 5, opening_stock: 3 },
+        dependsOn: [],
+      },
+    ],
+  };
+
+  const executed = await executePlan(plan, {
+    api,
+    sessionID: 'conv-atomic',
+    attachments: { describe: () => ({ ok: true, attachments: [] }) },
+  });
+
+  assert.equal(executed.status, 'failed');
+  assert.equal(executed.retryable, true);
+  assert.equal(executed.steps[0].status, 'pending');
+  assert.equal(executed.steps[0].result, undefined);
+  assert.equal(executed.steps[1].status, 'failed');
+  assert.equal(executed.summaryStatus.success, 0);
+  assert.deepEqual(
+    calls.filter((call) => call.method === 'DELETE'),
+    [{ method: 'DELETE', pathname: 'categories/cat-atomic', body: undefined }]
+  );
+  assert.ok(executed.warnings.includes('No changes were kept. You can retry this plan.'));
+});
+
+test('an incomplete rollback keeps the surviving step visible and blocks retry', async () => {
+  const { executePlan } = require(path.join(ROOT, 'src/ai/actions/plan-executor'));
+  const { createPlanStore } = require(path.join(ROOT, 'src/ai/actions/plan-store'));
+
+  const category = { _id: 'cat-atomic', name: 'Drinks' };
+  const api = {
+    async get(pathname) {
+      if (pathname === 'categories/cat-atomic') return { data: category };
+      throw new Error(`unexpected GET ${pathname}`);
+    },
+    async post(pathname) {
+      if (pathname === 'categories') return { data: category };
+      if (pathname === 'items') throw new Error('The product could not be saved.');
+      throw new Error(`unexpected POST ${pathname}`);
+    },
+    async put() {
+      throw new Error('unexpected PUT');
+    },
+    async delete() {
+      throw new Error('The category could not be removed.');
+    },
+  };
+  const plan = {
+    id: 'plan_atomic_partial',
+    status: 'pending',
+    warnings: [],
+    steps: [
+      { id: 'c1', action: 'create_category', fields: { name: 'Drinks' }, dependsOn: [] },
+      {
+        id: 'p1',
+        action: 'create_product',
+        fields: { name: 'Pepsi', selling_price: 10, cost_price: 5, opening_stock: 3 },
+        dependsOn: [],
+      },
+    ],
+  };
+
+  const executed = await executePlan(plan, {
+    api,
+    sessionID: 'conv-atomic',
+    attachments: { describe: () => ({ ok: true, attachments: [] }) },
+  });
+
+  assert.equal(executed.status, 'partial');
+  assert.equal(executed.retryable, false);
+  assert.equal(executed.steps[0].status, 'success');
+  assert.match(executed.steps[0].warning, /could not be undone/);
+  assert.equal(executed.steps[1].status, 'failed');
+  assert.match(executed.warnings.join(' '), /could not be undone/);
+
+  const store = createPlanStore();
+  store.add(executed);
+  const begun = store.begin(executed.id);
+  assert.equal(begun.ok, false);
+  assert.equal(begun.code, 'plan_review_required');
+});
+
 test('an update plan finds the product by its exact name instead of asking for an id', async () => {
   const { validatePlan } = require(path.join(ROOT, 'src/ai/actions/plan-schema'));
   const { executePlan } = require(path.join(ROOT, 'src/ai/actions/plan-executor'));
@@ -2061,12 +2452,14 @@ test('an unstated zero price is rejected but a free price is allowed', async () 
   assert.equal(free.plan.steps[0].fields.mrp_price, 0);
 });
 
-test('common Arabic colour spellings are corrected in product names', () => {
+test('common Arabic colour and size spellings are corrected in product names', () => {
   const { correctCommonSpelling } = require(path.join(ROOT, 'src/ai/text-match'));
   assert.equal(correctCommonSpelling('جزمة حمرى'), 'جزمة حمراء');
   assert.equal(correctCommonSpelling('Bag زرقى'), 'Bag زرقاء');
   assert.equal(correctCommonSpelling('حمراء'), 'حمراء');
   assert.equal(correctCommonSpelling('Nike حمرى'), 'Nike حمراء');
+  assert.equal(correctCommonSpelling('تلاجة بنسونيك 14 أدم'), 'تلاجة بنسونيك 14 قدم');
+  assert.equal(correctCommonSpelling('آدم'), 'آدم');
 });
 
 test('the plan title and summary use the corrected product name', async () => {
@@ -2085,6 +2478,7 @@ test('the plan title and summary use the corrected product name', async () => {
       action: 'create_product',
       fields: {
         name: 'جزمة حمرى',
+        description: 'جزمة جلد حمرى',
         selling_price: 500,
         cost_price: 100,
         opening_stock: 50,
@@ -2094,6 +2488,7 @@ test('the plan title and summary use the corrected product name', async () => {
 
   assert.equal(result.ok, true, result.message);
   assert.equal(result.plan.steps[0].fields.name, 'جزمة حمراء');
+  assert.equal(result.plan.steps[0].fields.description, 'جزمة جلد حمراء');
   assert.match(result.plan.title, /جزمة حمراء/);
   assert.match(result.plan.summary, /جزمة حمراء/);
   assert.doesNotMatch(result.plan.title, /حمرى/);
@@ -2752,6 +3147,196 @@ test('the runtime separates topics, keeps memory and recovers from a provider er
   assert.match(h.state.prompts[3].text, /Earlier topics/);
 });
 
+test('a provider rate limit keeps its retry time and does not restart the session', async (t) => {
+  const h = await createRuntimeHarness(t, {
+    promptHook: ({ index }) => ({
+      error: {
+        type: 'provider.rate-limit',
+        message: 'Rate limit reached for model. Please try again in 11m1.392s.',
+        status: 429,
+        ...(index === 0 ? { retryAfterMs: 662000 } : {}),
+      },
+    }),
+  });
+  const base = {
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+  };
+
+  await assert.rejects(
+    () => h.runtime.chat({
+      ...base,
+      conversationId: 'conv-rate-limit',
+      message: 'أريد أن أضيف تلاجة',
+    }),
+    (error) => {
+      assert.equal(error.code, 'rate_limited');
+      assert.equal(error.retryAfterMs, 662000);
+      return true;
+    },
+  );
+  assert.equal(h.state.sessionCount, 1);
+  assert.equal(h.state.removeCalls, 0);
+
+  await assert.rejects(
+    () => h.runtime.chat({
+      ...base,
+      conversationId: 'conv-rate-limit',
+      message: 'أريد أن أضيف تلاجة',
+    }),
+    (error) => {
+      assert.equal(error.code, 'rate_limited');
+      assert.equal(error.retryAfterMs, 661392);
+      return true;
+    },
+  );
+  assert.equal(h.state.sessionCount, 1);
+  assert.equal(h.state.removeCalls, 0);
+  assert.equal(
+    h.logs.filter((line) => /\[AI provider\] rate_limited status=429/.test(line)).length,
+    2,
+  );
+});
+
+test('a quota failure retries once with the backup provider token', async (t) => {
+  const h = await createRuntimeHarness(t, {
+    providerKeys: {
+      'provider:groq': 'primary-token',
+      'provider:groq:2': 'backup-token',
+    },
+    promptHook: ({ index }) => {
+      if (index === 0) {
+        return { error: {
+          type: 'provider.rate-limit',
+          message: 'Rate limit reached. Please try again in 60s.',
+          status: 429,
+          retryAfterMs: 60000,
+        } };
+      }
+      return { reply: '', tools: [{
+        name: 'posnic_ask_user',
+        metadata: { posnic: {
+          kind: 'clarify',
+          question: 'ما سعر البيع؟',
+          options: [],
+          pending: 'إنشاء منتج تلاجة بنسونيك 14 قدم; missing: selling price',
+          missing: ['selling price'],
+        } },
+      }] };
+    },
+  });
+
+  const result = await h.runtime.chat({
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-token-rotation',
+    message: 'أريد أن أضيف تلاجة بنسونيك 14 أدم',
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(h.runtime.activeToken('groq'), 'backup');
+  assert.equal(h.state.sessionCount, 2);
+  assert.equal(h.state.removeCalls, 1);
+  assert.equal(h.state.prompts.length, 2);
+  assert.match(h.state.prompts[1].text, /\[Conversation memory\]/);
+  assert.match(h.state.prompts[1].text, /تلاجة بنسونيك/);
+  assert.ok(h.logs.some((line) =>
+    /\[AI auth\] rate limited; retrying with the backup provider token/.test(line)));
+});
+
+test('a quota failure on the backup token stops instead of looping', async (t) => {
+  const h = await createRuntimeHarness(t, {
+    providerKeys: {
+      'provider:groq': 'primary-token',
+      'provider:groq:2': 'backup-token',
+    },
+    promptHook: ({ index }) => ({
+      error: {
+        type: 'provider.rate-limit',
+        message: 'Rate limit reached. Please try again in 60s.',
+        status: 429,
+        ...(index === 0 ? { retryAfterMs: 60000 } : {}),
+      },
+    }),
+  });
+
+  await assert.rejects(
+    () => h.runtime.chat({
+      authToken: 'jwt-session',
+      branchId: 'branch-1',
+      username: 'admin',
+      conversationId: 'conv-token-rotation-fails',
+      message: 'أريد أن أضيف تلاجة',
+    }),
+    (error) => {
+      assert.equal(error.code, 'rate_limited');
+      assert.equal(error.retryAfterMs, 60000);
+      return true;
+    },
+  );
+
+  assert.equal(h.runtime.activeToken('groq'), 'backup');
+  assert.equal(h.state.sessionCount, 2);
+  assert.equal(h.state.removeCalls, 1);
+  assert.equal(h.state.prompts.length, 2);
+});
+
+test('an exact product duplicate becomes an update question without another model call', async (t) => {
+  const name = 'تلاجة بنسونيك 14 أدم';
+  const h = await createRuntimeHarness(t, {
+    promptHook: () => ({
+      reply: 'المنتج موجود بالفعل. هل تريد تعديل السعر أو المخزون؟',
+      tools: [{
+        name: 'posnic_search_products',
+        input: { query: name, limit: 8 },
+        metadata: { posnic: {
+          kind: 'product_search',
+          query: name,
+          count: 1,
+          results: [{
+            id: 'item-duplicate',
+            name,
+            category: '',
+            sellingPrice: 22000,
+            costPrice: 19000,
+            stock: 2,
+            trackInventory: true,
+            unit: 'pcs',
+          }],
+        } },
+      }],
+    }),
+  });
+
+  const result = await h.runtime.chat({
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-duplicate',
+    message: 'أريد أن أضيف تلاجة بنسونيك 14 أدم',
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(h.state.prompts.length, 1);
+  assert.equal(h.state.sessionCount, 1);
+  assert.equal(result.text, '');
+
+  const clarify = result.toolCalls.find((call) => call.name === 'posnic_ask_user');
+  assert.ok(clarify, 'a clarification card is returned');
+  const payload = clarify.metadata.posnic;
+  assert.equal(payload.kind, 'clarify');
+  assert.match(payload.question, /موجود بالفعل/);
+  assert.match(payload.question, /تعديل السعر/);
+  assert.match(payload.question, /٢٢٠٠٠/);
+  assert.match(payload.pending, /٢٢٠٠٠/);
+  assert.deepEqual(
+    payload.options.map((option) => option.value),
+    ['تعديل السعر', 'تعديل التكلفة', 'تعديل المخزون', 'إلغاء'],
+  );
+});
+
 test('a provider or model change is applied to the runtime before it restarts', async (t) => {
   const h = await createRuntimeHarness(t);
   await h.runtime.start();
@@ -2973,6 +3558,52 @@ test('the runtime keeps a pending create request across a restart and a short an
   assert.match(h.state.prompts[2].text, /Original request: ضيف برودكت/);
   assert.match(h.state.prompts[2].text, /The user answered: مش مهم/);
   assert.match(h.state.prompts[2].text, /Never use 0 for a price or cost/);
+});
+
+test('a slow model still delivers a plan it already prepared', async (t) => {
+  const h = await createRuntimeHarness(t, {
+    chatTimeoutMs: 60,
+    waitHook: () => new Promise(() => {}),
+    promptHook: () => ({
+      reply: '',
+      tools: [{
+        name: 'posnic_propose_plan',
+        metadata: {
+          posnic: {
+            kind: 'write_plan',
+            plan: {
+              id: 'plan_slow',
+              status: 'pending',
+              steps: [{
+                id: 'p1',
+                action: 'create_product',
+                label: 'Create product',
+                fields: {
+                  name: 'جزمة حمراء',
+                  selling_price: 500,
+                  cost_price: 100,
+                  opening_stock: 50,
+                },
+              }],
+            },
+          },
+        },
+      }],
+    }),
+  });
+
+  const started = Date.now();
+  const result = await h.runtime.chat({
+    message: 'ضيف جزمة حمراء',
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-slow-plan',
+  });
+
+  assert.equal(result.success, true);
+  assert.ok(result.toolCalls.some((call) => call.name === 'posnic_propose_plan'));
+  assert.ok(Date.now() - started < 2000);
 });
 
 test('assistant replies use the requested currency wording, never the rupee sign', async (t) => {

@@ -96,8 +96,16 @@ code {
     }
   }
 }
+/* The sidebar frame. The page, the top bar's mirrored offsets and the RTL
+   sheet all read these same values, so a width change cannot leave the page
+   running underneath the menu. */
+:root {
+  --posnic-sidebar-width: 280px;
+  --posnic-sidebar-rail-width: 60px;
+  --posnic-sidebar-hover-width: 285px;
+}
 .leftbar {
-  width: 280px;
+  width: var(--posnic-sidebar-width);
   height: 100%;
   position: fixed;
   background: $white;  
@@ -105,7 +113,7 @@ code {
   transition: all 0.3s ease;
 }
 .rightbar {
-  margin-left: 280px;
+  margin-left: var(--posnic-sidebar-width);
   overflow: hidden;
   min-height: 500px;
   transition: all 0.3s ease;
@@ -118,7 +126,7 @@ code {
   position: absolute;
   bottom: 0;
   right: 0;
-  left: 280px;
+  left: var(--posnic-sidebar-width);
   padding: 20px 30px;
   text-align: center;
   background-color: $white;

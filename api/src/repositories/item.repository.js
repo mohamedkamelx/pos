@@ -1955,9 +1955,7 @@ class ItemRepository extends BaseModel {
 
     const requestedLimit = parseInt(context.limit, 10);
     const limit =
-      Number.isFinite(requestedLimit) && requestedLimit > 0
-        ? Math.min(requestedLimit, 100)
-        : 20;
+      Number.isFinite(requestedLimit) && requestedLimit > 0 ? Math.min(requestedLimit, 100) : 20;
 
     const { branchId, licenseId } = context;
     const scope = [];
@@ -2049,9 +2047,7 @@ class ItemRepository extends BaseModel {
       return scored
         .map((entry) => byId.get(String(entry.doc._id)))
         .filter(Boolean)
-        .map((doc) =>
-          stripRemovedItemFields(stripSearchIndex(BaseModel.simplifyFields(doc)))
-        );
+        .map((doc) => stripRemovedItemFields(stripSearchIndex(BaseModel.simplifyFields(doc))));
     }
 
     /* Legacy fallback: a database that has not run the backfill yet still
@@ -3179,6 +3175,56 @@ class ItemRepository extends BaseModel {
    */
   async stockAdjustment(params = {}, context = {}) {
     const { reason, note, rows } = params;
+    /* The item row and its audit log are one change. If the log cannot be
+       written, or a later row throws, every row already written by this call
+       is restored and its fresh log is removed. The bundled MongoDB runs as a
+       standalone server, so this is an all-or-compensate write rather than a
+       server transaction. */
+    const applied = [];
+    const createdLogIds = [];
+    let collection = null;
+    let stockLogsCollection = null;
+    let now = null;
+    let updated = 0;
+    let skipped = 0;
+
+    const rollbackApplied = async () => {
+      let failures = 0;
+      for (let index = applied.length - 1; index >= 0; index -= 1) {
+        const change = applied[index];
+        try {
+          const restored = await collection.updateOne(
+            {
+              _id: change.itemId,
+              $or: [
+                { available_quantity: change.newV },
+                { available_quantity: String(change.newV) },
+              ],
+            },
+            {
+              $set: {
+                available_quantity: change.oldV,
+                updated_date: now,
+                updated_by: context.userName || '',
+                updated_by_id: context.userId || null,
+              },
+            }
+          );
+          if (!restored || restored.modifiedCount !== 1) failures += 1;
+        } catch (error) {
+          failures += 1;
+        }
+      }
+      if (createdLogIds.length) {
+        try {
+          await stockLogsCollection.deleteMany({ _id: { $in: createdLogIds.slice() } });
+        } catch (error) {
+          failures += 1;
+        }
+      }
+      return failures;
+    };
+
     try {
       /*
        * LS1: reasons are configurable text now, each with an explicit
@@ -3220,7 +3266,8 @@ class ItemRepository extends BaseModel {
           ? new ObjectId(String(context.licenseId))
           : null;
 
-      const collection = await this.getCollection(this.collectionName);
+      collection = await this.getCollection(this.collectionName);
+      stockLogsCollection = await this.getCollection('stocklogs');
       const branchesCollection = await this.getCollection('branches');
       const branchDoc = await branchesCollection.findOne({ _id: branchObjectId });
       const stockLogStatus = branchDoc?.stock_management_log !== false;
@@ -3228,11 +3275,9 @@ class ItemRepository extends BaseModel {
       const cleanNote = String(note || '')
         .trim()
         .slice(0, 500);
-      const now = new Date();
+      now = new Date();
 
       const updatedItemIds = [];
-      let updated = 0;
-      let skipped = 0;
       for (const row of rows) {
         const qty = Number(row && row.qty);
         if (!row || !ObjectId.isValid(String(row.item_id)) || !Number.isFinite(qty) || qty < 0) {
@@ -3263,8 +3308,13 @@ class ItemRepository extends BaseModel {
           skipped += 1;
           continue;
         }
-        await collection.updateOne(
-          { _id: item._id },
+        /* Compare-and-set: a concurrent sale that moved this item between the
+           read and the write must not be overwritten by a stale count. */
+        const write = await collection.updateOne(
+          {
+            _id: item._id,
+            $or: [{ available_quantity: oldV }, { available_quantity: String(oldV) }],
+          },
           {
             $set: {
               available_quantity: newV,
@@ -3274,6 +3324,11 @@ class ItemRepository extends BaseModel {
             },
           }
         );
+        if (!write || write.modifiedCount !== 1) {
+          skipped += 1;
+          continue;
+        }
+        applied.push({ itemId: item._id, oldV, newV });
         updated += 1;
         updatedItemIds.push(String(item._id));
 
@@ -3282,26 +3337,42 @@ class ItemRepository extends BaseModel {
           // negated when stock went up.
           const diff = oldV - newV;
           const count = diff < 0 ? String(Math.abs(diff)) : '-' + String(diff);
-          await stockLogsRepository
-            .createStockLog({
-              stocklog: stockLogStatus,
-              branch_id: branchObjectId || item.branch_id || null,
-              view_item_id: item._id,
-              item_barcode_id: item.barcode_id,
-              item_name: item.name,
-              item_quantity: String(newV),
-              process: cleanReason,
-              reference: item.barcode_id,
-              note: cleanNote,
-              date: now,
-              action: 'Add',
-              opening_balance: String(oldV),
-              closing_balance: String(newV),
-              count: count,
-              changed_by_userid: context.userId,
-              changed_by: context.userName,
-            })
-            .catch(() => {});
+          const logResult = await stockLogsRepository.createStockLog({
+            stocklog: stockLogStatus,
+            branch_id: branchObjectId || item.branch_id || null,
+            view_item_id: item._id,
+            item_barcode_id: item.barcode_id,
+            item_name: item.name,
+            item_quantity: String(newV),
+            process: cleanReason,
+            reference: item.barcode_id,
+            note: cleanNote,
+            date: now,
+            action: 'Add',
+            opening_balance: String(oldV),
+            closing_balance: String(newV),
+            count: count,
+            changed_by_userid: context.userId,
+            changed_by: context.userName,
+          });
+          if (logResult && logResult.status === false) {
+            const rollbackFailures = await rollbackApplied();
+            applied.length = 0;
+            createdLogIds.length = 0;
+            return {
+              status: false,
+              data: {
+                updated: 0,
+                skipped,
+                ...(rollbackFailures ? { rollback_failures: rollbackFailures } : {}),
+              },
+              message: rollbackFailures
+                ? 'The stock change could not be undone completely. Check the affected items before retrying.'
+                : 'The stock change was not saved because its stock log could not be written.',
+            };
+          }
+          const logId = logResult && logResult.data && logResult.data._id;
+          if (logId) createdLogIds.push(logId);
         }
       }
 
@@ -3312,8 +3383,18 @@ class ItemRepository extends BaseModel {
           updated > 0 ? `Adjusted ${updated} item(s)` : 'Nothing changed - stock already matched',
       };
     } catch (error) {
+      let rollbackFailures = 0;
+      if (collection && (applied.length || createdLogIds.length)) {
+        rollbackFailures = await rollbackApplied();
+      }
       console.error('Error in ItemRepository.stockAdjustment:', error);
-      return { status: false, data: null, message: error.message };
+      return {
+        status: false,
+        data: rollbackFailures ? { rollback_failures: rollbackFailures } : null,
+        message: rollbackFailures
+          ? 'The stock change could not be undone completely. Check the affected items before retrying.'
+          : error.message,
+      };
     }
   }
 

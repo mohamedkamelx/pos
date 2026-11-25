@@ -72,14 +72,8 @@ itemSchema.index({ license: 1, branch_id: 1, company_price: -1 });
 itemSchema.index({ license: 1, branch_id: 1, available_quantity: 1 });
 itemSchema.index({ license: 1, branch_id: 1, updated_date: -1 });
 itemSchema.index({ license: 1, branch_id: 1, name: 1 });
-itemSchema.index(
-  { license: 1, branch_id: 1, search_tokens: 1 },
-  { name: 'item_search_tokens' }
-);
-itemSchema.index(
-  { license: 1, branch_id: 1, search_ngrams: 1 },
-  { name: 'item_search_ngrams' }
-);
+itemSchema.index({ license: 1, branch_id: 1, search_tokens: 1 }, { name: 'item_search_tokens' });
+itemSchema.index({ license: 1, branch_id: 1, search_ngrams: 1 }, { name: 'item_search_ngrams' });
 
 const Item = defineModel('Item', itemSchema);
 

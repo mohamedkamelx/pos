@@ -27,7 +27,9 @@
       id: 'groq',
       label: 'Groq',
       models: [
-        { id: 'openai/gpt-oss-120b', label: 'openai/gpt-oss-120b' }
+        { id: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B' },
+        { id: 'openai/gpt-oss-20b', label: 'GPT-OSS 20B' },
+        { id: 'qwen/qwen3.8-27b', label: 'Qwen3.8 27B' }
       ]
     },
     {
@@ -77,7 +79,10 @@
       modelLabel: '',
       secure: true,
       session: false,
-      unreadable: false
+      unreadable: false,
+      backupConfigured: false,
+      backupSecure: true,
+      activeToken: 'primary'
     },
     providers: [],
     provider: '',
@@ -204,7 +209,7 @@
       runtime_error: ['lang_ai_runtime_failed', 'The assistant could not start. Try again.'],
       chat_timeout: ['lang_ai_chat_timeout', 'The assistant took too long to answer. Try again.'],
       request_timeout: ['lang_ai_chat_timeout', 'The assistant took too long to answer. Try again.'],
-      rate_limited: ['lang_ai_rate_limited', 'The provider limit was reached. Wait a minute and try again.'],
+      rate_limited: ['lang_ai_rate_limited', 'The provider limit was reached. Try again in about {minutes} minutes.'],
       network_error: ['lang_ai_network', 'Could not reach the provider. Check the internet connection.'],
       empty_message: [null, 'Type or dictate a message first.'],
       empty_transcript: ['lang_ai_empty_transcript', 'No speech was recognised. Try again a little closer to the microphone.'],
@@ -238,6 +243,14 @@
       map.key_unreadable = map.provider_key_unreadable;
       map.key_save_failed = map.provider_key_save_failed;
       map.key_required = map.provider_key_required;
+    }
+    if (result && result.code === 'rate_limited' && Number(result.retryAfterMs) > 0) {
+      var minutes = Math.max(1, Math.ceil(Number(result.retryAfterMs) / 60000));
+      var rateText = t('lang_ai_rate_limited', map.rate_limited[1]);
+      if (rateText.indexOf('{minutes}') !== -1) {
+        return rateText.replace(/\{minutes\}/g, String(minutes));
+      }
+      return rateText;
     }
     var entry = result && map[result.code];
     if (entry) return entry[0] ? t(entry[0], entry[1]) : entry[1];
@@ -437,10 +450,31 @@
     setStateText(el.providerState, text, isError);
   }
 
+  function updateBackupState() {
+    var configured = !!(state.chat.backupConfigured &&
+      (!state.chat.provider || state.chat.provider === state.provider));
+    var text;
+    var isError = false;
+    if (!configured) {
+      text = t('lang_ai_provider_backup_missing', 'No backup token saved.');
+    } else if (state.chat.activeToken === 'backup') {
+      text = t('lang_ai_provider_backup_active', 'Backup token is active now.');
+    } else if (state.chat.backupSecure === false) {
+      text = t('lang_ai_provider_backup_session', 'No secure keystore is available. The backup token stays only until Posnic quits.');
+    } else {
+      text = t('lang_ai_provider_backup_saved', 'Backup token saved on this computer.');
+    }
+    setStateText(el.providerBackupState, text, isError);
+    setStateText(el.settingsBackupState, text, isError);
+    if (el.removeProviderBackup) el.removeProviderBackup.hidden = !configured;
+    if (el.removeSettingsBackup) el.removeSettingsBackup.hidden = !configured;
+  }
+
   function updateSetupState() {
     var ready = credentialsReady();
     updateTranscriptionState();
     updateProviderState();
+    updateBackupState();
     if (el.turnOn) el.turnOn.disabled = !ready || state.busy;
     setSetupStatus(ready
       ? t('lang_ai_setup_ready', 'Both credentials are saved. Turn on the assistant when you are ready.')
@@ -470,6 +504,9 @@
     state.chat.session = !!chat.session;
     state.chat.unreadable =
       chat.reason === 'unreadable' || chat.unreadable === true;
+    state.chat.backupConfigured = !!chat.backupConfigured;
+    state.chat.backupSecure = chat.backupSecure !== false;
+    state.chat.activeToken = chat.activeToken === 'backup' ? 'backup' : 'primary';
 
     state.providers = mergeProviders(status.providers);
     ensureProvider(state.chat.provider, state.chat.providerLabel, state.chat.model, state.chat.modelLabel);
@@ -759,6 +796,7 @@
       state.chat.secure = result.secure !== false;
       state.chat.session = !!result.session;
       state.chat.unreadable = false;
+      state.chat.activeToken = 'primary';
       renderProviderOptions();
       renderModelOptions();
       updateSetupState();
@@ -767,6 +805,66 @@
       setSetupError(t('lang_ai_provider_key_save_failed', 'The provider token could not be saved on this computer.'));
     } finally {
       state.providerBusy = false;
+      if (el.providerSave) el.providerSave.disabled = false;
+      if (el.providerBackupSave) el.providerBackupSave.disabled = false;
+    }
+  }
+
+  async function saveProviderBackupKey(scope) {
+    if (!hasIpc() || state.providerBusy) return;
+    var live = scope === 'settings';
+    var keyEl = live ? el.settingsBackupKey : el.providerBackupKey;
+    var stateEl = live ? el.settingsBackupState : el.providerBackupState;
+    var saveEl = live ? el.settingsBackupSave : el.providerBackupSave;
+    if (!state.provider || !state.model) {
+      setStateText(stateEl, t('lang_ai_provider_missing', 'No provider token saved.'), true);
+      return;
+    }
+
+    var key = String((keyEl && keyEl.value) || '').trim();
+    if (!key) {
+      setStateText(stateEl, t('lang_ai_provider_backup_required', 'Enter the backup token.'), true);
+      if (keyEl) keyEl.focus();
+      return;
+    }
+
+    state.providerBusy = true;
+    setSetupError('');
+    setStateText(stateEl, t('lang_ai_provider_backup_checking', 'Checking backup token...'), false);
+    if (saveEl) saveEl.disabled = true;
+    if (el.providerBackupSave) el.providerBackupSave.disabled = true;
+    if (el.providerSave) el.providerSave.disabled = true;
+    try {
+      var selection = await api().setProviderModel(state.provider, state.model);
+      if (!selection || selection.success === false) {
+        setStateText(stateEl, messageFor(selection, 'chat'), true);
+        return;
+      }
+
+      var result = await api().saveProviderKey(state.provider, key, true);
+      if (!result || !result.success) {
+        setStateText(stateEl, messageFor(result, 'chat'), true);
+        return;
+      }
+
+      if (el.providerBackupKey) el.providerBackupKey.value = '';
+      if (el.settingsBackupKey) el.settingsBackupKey.value = '';
+      state.chat.backupConfigured = result.backupConfigured !== false;
+      state.chat.backupSecure = result.secure !== false;
+      if (result.provider) state.provider = result.provider;
+      if (result.model) state.model = result.model;
+      state.chat.provider = state.provider;
+      state.chat.model = state.model;
+      renderProviderOptions();
+      renderModelOptions();
+      updateSetupState();
+      setStateText(stateEl, t('lang_ai_provider_backup_saved', 'Backup token saved on this computer.'), false);
+    } catch (error) {
+      setStateText(stateEl, t('lang_ai_provider_backup_save_failed', 'The backup token could not be saved on this computer.'), true);
+    } finally {
+      state.providerBusy = false;
+      if (saveEl) saveEl.disabled = false;
+      if (el.providerBackupSave) el.providerBackupSave.disabled = false;
       if (el.providerSave) el.providerSave.disabled = false;
     }
   }
@@ -888,6 +986,41 @@
       setStateText(el.providerState, t('lang_ai_provider_key_removed', 'Provider token removed.'), false);
     } catch (error) {
       setConnectionStatus(t('lang_ai_failed', 'The provider token could not be removed.'), true);
+    }
+  }
+
+  async function removeProviderBackup() {
+    if (!hasIpc()) return;
+    var provider = state.chat.provider || state.provider;
+    if (!provider) {
+      setConnectionStatus(t('lang_ai_provider_backup_missing', 'No backup token saved.'), true);
+      return;
+    }
+    var ok = global.confirm
+      ? global.confirm(t('lang_ai_provider_backup_remove_confirm', 'Remove the saved backup token from this computer?'))
+      : true;
+    if (!ok) return;
+
+    try {
+      var result = await api().clearProviderKey(provider, true);
+      if (!result || !result.success) {
+        setConnectionStatus(result && result.error
+          ? result.error
+          : t('lang_ai_provider_backup_remove_failed', 'The backup token could not be removed.'), true);
+        return;
+      }
+      state.chat.backupConfigured = false;
+      if (state.chat.activeToken === 'backup') state.chat.activeToken = 'primary';
+      updateSetupState();
+      setStateText(el.providerBackupState, t('lang_ai_provider_backup_removed', 'Backup token removed.'), false);
+      if (result.warning) setConnectionStatus(result.warning, true);
+      if (result.configured === false) {
+        state.enabled = false;
+        saveSettings();
+        showSetupForm();
+      }
+    } catch (error) {
+      setConnectionStatus(t('lang_ai_provider_backup_remove_failed', 'The backup token could not be removed.'), true);
     }
   }
 
@@ -1158,7 +1291,8 @@
       setStatus('');
     } catch (error) {
       if (generation !== state.chatGeneration) return;
-      setStatus(t('lang_ai_network', 'Could not reach the provider. Check the internet connection.'), true);
+      console.error('[AI] chat request failed in the desktop bridge.', error);
+      setStatus(t('lang_ai_failed', 'The assistant could not answer. Try again.'), true);
       showRetry();
     } finally {
       if (generation !== state.chatGeneration) return;
@@ -1542,7 +1676,8 @@
       renderMessages();
     } catch (error) {
       if (generation !== state.chatGeneration) return;
-      setStatus(t('lang_ai_network', 'Could not reach the provider. Check the internet connection.'), true);
+      console.error('[AI] plan confirmation failed in the desktop bridge.', error);
+      setStatus(t('lang_ai_failed', 'The assistant could not answer. Try again.'), true);
       renderMessages();
     } finally {
       if (generation !== state.chatGeneration) return;
@@ -1674,13 +1809,17 @@
       running.textContent = t('lang_ai_plan_running', 'Running...');
       foot.append(running);
     } else if (plan.status === 'partial' || plan.status === 'failed') {
-      var retry = document.createElement('button');
-      retry.type = 'button';
-      retry.className = 'btn btn-outline-primary btn-sm';
-      retry.textContent = t('lang_ai_plan_retry', 'Retry remaining');
-      retry.disabled = state.busy || state.planBusy;
-      retry.addEventListener('click', function () { confirmPlanCard(payload); });
-      foot.append(retry);
+      /* A plan that could not fully undo itself must be reviewed, not
+         replayed: retrying it could apply the surviving half twice. */
+      if (plan.retryable !== false) {
+        var retry = document.createElement('button');
+        retry.type = 'button';
+        retry.className = 'btn btn-outline-primary btn-sm';
+        retry.textContent = t('lang_ai_plan_retry', 'Retry remaining');
+        retry.disabled = state.busy || state.planBusy;
+        retry.addEventListener('click', function () { confirmPlanCard(payload); });
+        foot.append(retry);
+      }
       var cancelRetry = document.createElement('button');
       cancelRetry.type = 'button';
       cancelRetry.className = 'btn btn-link p-0';
@@ -2062,7 +2201,8 @@
     } catch (error) {
       state.busy = false;
       updateControls();
-      setStatus(t('lang_ai_network', 'Could not reach the provider. Check the internet connection.'), true);
+      console.error('[AI] transcription request failed in the desktop bridge.', error);
+      setStatus(t('lang_ai_audio_failed', 'That recording could not be read. Try again.'), true);
     }
   }
 
@@ -2155,6 +2295,14 @@
     el.providerKey = byId('ai_provider_key');
     el.providerSave = byId('ai_provider_save');
     el.providerState = byId('ai_provider_state');
+    el.providerBackupKey = byId('ai_provider_backup_key');
+    el.providerBackupSave = byId('ai_provider_backup_save');
+    el.providerBackupState = byId('ai_provider_backup_state');
+    el.removeProviderBackup = byId('ai_provider_backup_remove');
+    el.settingsBackupKey = byId('ai_settings_backup_key');
+    el.settingsBackupSave = byId('ai_settings_backup_save');
+    el.settingsBackupState = byId('ai_settings_backup_state');
+    el.removeSettingsBackup = byId('ai_settings_backup_remove');
     el.turnOn = byId('ai_turn_on');
     el.connectionStatus = byId('ai_connection_status');
     el.disable = byId('ai_disable');
@@ -2192,6 +2340,26 @@
         saveProviderKey();
       }
     });
+    if (el.providerBackupSave) el.providerBackupSave.addEventListener('click', function () { saveProviderBackupKey('setup'); });
+    if (el.providerBackupKey) {
+      el.providerBackupKey.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          saveProviderBackupKey('setup');
+        }
+      });
+    }
+    if (el.removeProviderBackup) el.removeProviderBackup.addEventListener('click', removeProviderBackup);
+    if (el.settingsBackupSave) el.settingsBackupSave.addEventListener('click', function () { saveProviderBackupKey('settings'); });
+    if (el.settingsBackupKey) {
+      el.settingsBackupKey.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          saveProviderBackupKey('settings');
+        }
+      });
+    }
+    if (el.removeSettingsBackup) el.removeSettingsBackup.addEventListener('click', removeProviderBackup);
     el.turnOn.addEventListener('click', turnOn);
     el.disable.addEventListener('click', disableFeature);
     el.removeKey.addEventListener('click', removeTranscription);

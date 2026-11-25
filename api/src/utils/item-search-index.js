@@ -145,7 +145,11 @@ function itemSearchFields(doc) {
       doc.gtin14,
       ...(Array.isArray(doc.barcodes) ? doc.barcodes : []),
     ]
-      .map((value) => String(value || '').trim().toLowerCase())
+      .map((value) =>
+        String(value || '')
+          .trim()
+          .toLowerCase()
+      )
       .filter(Boolean),
   };
 }

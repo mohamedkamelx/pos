@@ -25,6 +25,15 @@ function slotFileName(slot) {
   return `ai-provider-${id}.json`;
 }
 
+/* The primary provider token keeps its historical slot so existing installs
+   keep working. A second token lives in a sibling slot and is used only when
+   the primary reports a quota/rate limit. */
+function providerTokenSlot(providerID, index = 0) {
+  const id = String(providerID || '').trim();
+  if (!id) return '';
+  return index > 0 ? `provider:${id}:${index + 1}` : `provider:${id}`;
+}
+
 function secureStorageState(safeStorage) {
   try {
     if (!safeStorage || typeof safeStorage.isEncryptionAvailable !== 'function') {
@@ -173,6 +182,7 @@ function createKeyStore({ app, safeStorage }) {
 module.exports = {
   TRANSCRIPTION_SLOT,
   createKeyStore,
+  providerTokenSlot,
   secureStorageState,
   slotFileName,
 };

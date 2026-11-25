@@ -59,7 +59,9 @@ test('sale sheet shows the amount received and never a tender name', () => {
     partial_amounts: 500, items: [], items_total: 500, sales_total: 500 };
   const sheet = w.$('<div>').html(w.PosnicPro.sales.buildSaleSheet(data));
   const text = sheet.text();
-  assert.match(text, /Paid\s*\$\s*500\.00/);
+  assert.equal(sheet.find('.q-paid').length, 0);
+  assert.equal(sheet.find('.q-payment-line').length, 1);
+  assert.match(sheet.find('.q-payment-line').text(), /\$\s*500\.00/);
   assert.match(text, /Remaining\s*\$\s*0\.00/);
   assert.doesNotMatch(text, /UPI|Cash|Card|tender/i);
   data.multi_payment = { '<img src=x onerror=alert(1)>': 500 };
@@ -95,10 +97,12 @@ test('sale sheet lists every recorded collection and links the account under the
   };
   const sheet = w.$('<div>').html(w.PosnicPro.sales.buildSaleSheet(data));
   const text = sheet.text();
-  assert.match(text, /Paid\s*\$\s*350\.00/);
+  assert.equal(sheet.find('.q-paid').length, 0);
   assert.match(text, /Remaining\s*\$\s*150\.00/);
   assert.match(text, /Second collection/);
   assert.equal(sheet.find('.q-payment-line').length, 2);
+  assert.match(sheet.find('.q-payment-line').first().text(), /\$\s*200\.00/);
+  assert.match(sheet.find('.q-payment-line').last().text(), /\$\s*150\.00/);
   assert.equal(sheet.find('.q-account-link').length, 1);
   dom.window.close();
 });

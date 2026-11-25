@@ -22,6 +22,7 @@ const {
 const {
   TRANSCRIPTION_SLOT,
   createKeyStore,
+  providerTokenSlot,
 } = require('./ai/key-store');
 const {
   MAX_KEY_LENGTH,
@@ -65,12 +66,18 @@ function runtimeFailure(error) {
     empty_reply: 'The assistant returned an empty reply. Try again.',
     model_unavailable: 'The selected model is not available. Choose another model.',
     provider_error: 'The model provider returned an error.',
+    rate_limited: 'The provider limit was reached. Try again later.',
     provider_key_missing: 'Save a provider token before turning on chat.',
     provider_key_unreadable: 'The saved provider token could not be read. Enter it again.',
     runtime_failed: 'The embedded assistant could not start. Try again.',
   };
   const message = error && error.message ? String(error.message).slice(0, 300) : fallbacks[code];
-  return failure(code, message || fallbacks[code] || 'The assistant could not answer. Try again.');
+  const retryAfterMs = Number(error && error.retryAfterMs);
+  return failure(
+    code,
+    message || fallbacks[code] || 'The assistant could not answer. Try again.',
+    retryAfterMs > 0 ? { retryAfterMs } : undefined,
+  );
 }
 
 function createAiIpc({
@@ -79,6 +86,7 @@ function createAiIpc({
   safeStorage,
   systemPreferences,
   fetchImpl,
+  fallbackFetchImpl,
   runtimeFactory,
   apiBaseUrl,
   logger,
@@ -100,12 +108,18 @@ function createAiIpc({
     const settings = keyStore.getSettings();
     const provider = getProvider(settings.provider) || getProvider(DEFAULT_PROVIDER);
     const model = getModel(provider.id, settings.model) || provider.models[0];
-    const chat = keyStore.status(`provider:${provider.id}`);
+    const chat = keyStore.status(providerTokenSlot(provider.id));
+    const backup = keyStore.status(providerTokenSlot(provider.id, 1));
     return {
       configured: chat.configured,
       secure: chat.secure,
       session: chat.session,
       reason: chat.reason,
+      backupConfigured: backup.configured,
+      backupSecure: backup.secure,
+      activeToken: typeof runtime.activeToken === 'function'
+        ? runtime.activeToken(provider.id)
+        : 'primary',
       provider: provider.id,
       providerLabel: provider.label,
       model: model.id,
@@ -150,11 +164,14 @@ function createAiIpc({
 
     const settings = keyStore.getSettings();
     const provider = getProvider(settings.provider) || getProvider(DEFAULT_PROVIDER);
-    const chat = keyStore.read(`provider:${provider.id}`);
+    const primary = keyStore.read(providerTokenSlot(provider.id));
+    const backup = keyStore.read(providerTokenSlot(provider.id, 1));
+    const chat = primary.key ? primary : backup;
     if (!chat.key) {
+      const unreadable = primary.error === 'unreadable' || backup.error === 'unreadable';
       return failure(
-        chat.error === 'unreadable' ? 'provider_key_unreadable' : 'provider_key_missing',
-        chat.error === 'unreadable'
+        unreadable ? 'provider_key_unreadable' : 'provider_key_missing',
+        unreadable
           ? 'The saved provider token could not be read. Enter it again.'
           : 'Save a provider token before turning on chat.',
       );
@@ -255,6 +272,7 @@ function createAiIpc({
     const providerID = payload && payload.provider;
     const provider = getProvider(providerID);
     const key = payload && typeof payload.key === 'string' ? payload.key.trim() : '';
+    const backup = !!(payload && payload.backup === true);
     if (!provider) {
       return failure('provider_invalid', 'Choose a supported model provider.');
     }
@@ -266,16 +284,27 @@ function createAiIpc({
 
     let stored;
     try {
-      stored = keyStore.setSecret(`provider:${provider.id}`, key);
+      stored = keyStore.setSecret(providerTokenSlot(provider.id, backup ? 1 : 0), key);
     } catch (error) {
       return failure('provider_key_save_failed', 'The provider token could not be saved.');
     }
 
     const settings = keyStore.getSettings();
     if (typeof runtime.updateSettings === 'function') runtime.updateSettings(settings);
+    /* A newly saved primary token should be tried again before the backup.
+       A backup is read lazily on the next quota failure, so it needs no restart. */
+    if (!backup && typeof runtime.usePrimaryToken === 'function') {
+      runtime.usePrimaryToken(provider.id);
+    }
     let restarted = false;
     let warning = '';
-    if (settings.provider === provider.id && runtime.isRunning()) {
+    const activeIsBackup = typeof runtime.activeToken === 'function' &&
+      runtime.activeToken(provider.id) === 'backup';
+    /* Saving a new backup while the backup is already the active token must
+       restart so the new secret replaces the exhausted one. An inactive
+       backup is picked up lazily on the next quota failure. */
+    if (settings.provider === provider.id && runtime.isRunning() &&
+        (!backup || activeIsBackup)) {
       try {
         await runtime.restart();
         restarted = true;
@@ -285,9 +314,13 @@ function createAiIpc({
       }
     }
 
+    const primary = keyStore.status(providerTokenSlot(provider.id));
+    const backupStatus = keyStore.status(providerTokenSlot(provider.id, 1));
     return {
       success: true,
-      configured: true,
+      configured: primary.configured,
+      backupConfigured: backupStatus.configured,
+      backup,
       provider: provider.id,
       model: settings.model,
       secure: stored.secure,
@@ -299,17 +332,57 @@ function createAiIpc({
 
   ipcMain.handle('ai:clear-provider-key', async (_event, payload) => {
     const provider = getProvider(payload && payload.provider);
+    const backup = !!(payload && payload.backup === true);
     if (!provider) {
       return failure('provider_invalid', 'Choose a supported model provider.');
     }
     try {
-      keyStore.clear(`provider:${provider.id}`);
+      keyStore.clear(providerTokenSlot(provider.id, backup ? 1 : 0));
     } catch (error) {
       return failure('provider_key_remove_failed', 'The provider token could not be removed.');
     }
+
     const settings = keyStore.getSettings();
-    if (settings.provider === provider.id) await stopRuntime();
-    return { success: true, configured: false, provider: provider.id };
+    const primary = keyStore.status(providerTokenSlot(provider.id));
+    const backupStatus = keyStore.status(providerTokenSlot(provider.id, 1));
+    let restarted = false;
+    let warning = '';
+
+    if (backup) {
+      /* Removing the backup while it is the active token must put the primary
+         back in use. Removing an inactive backup needs no runtime change. */
+      const activeIsBackup = typeof runtime.activeToken === 'function' &&
+        runtime.activeToken(provider.id) === 'backup';
+      if (activeIsBackup && typeof runtime.usePrimaryToken === 'function') {
+        runtime.usePrimaryToken(provider.id);
+      }
+      if (activeIsBackup && settings.provider === provider.id && runtime.isRunning()) {
+        if (!primary.configured) {
+          await stopRuntime();
+          warning = 'The backup token was removed. Save a provider token before turning chat on again.';
+        } else {
+          try {
+            await runtime.restart();
+            restarted = true;
+          } catch (error) {
+            warning = 'The backup token was removed, but the assistant could not restart. Turn it off and on again.';
+            await stopRuntime();
+          }
+        }
+      }
+    } else if (settings.provider === provider.id) {
+      await stopRuntime();
+    }
+
+    return {
+      success: true,
+      configured: primary.configured,
+      backupConfigured: backupStatus.configured,
+      backup,
+      provider: provider.id,
+      restarted,
+      ...(warning ? { warning } : {}),
+    };
   });
 
   ipcMain.handle('ai:set-provider-model', async (_event, payload) => {
@@ -357,13 +430,21 @@ function createAiIpc({
           : 'Add your Groq Whisper key on the AI page.',
       );
     }
-    return transcribe({
+    const result = await transcribe({
       key: loaded.key,
       audio: payload && payload.audio,
       mimeType: payload && payload.mimeType,
       language: payload && payload.language,
       fetchImpl,
+      fallbackFetchImpl,
     });
+    if (!result.success && typeof logger === 'function') {
+      logger('[AI transcription] code=' + result.code
+        + (result.status ? ' status=' + result.status : '')
+        + (result.usedFallback ? ' fallback=chromium' : '')
+        + (result.detail ? ' detail=' + result.detail : ''));
+    }
+    return result;
   });
 
   ipcMain.handle('ai:chat', async (_event, payload) => {

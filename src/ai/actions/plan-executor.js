@@ -245,13 +245,16 @@ function verifyProduct(item, expected) {
   return { verified: true, message: 'Saved and checked.' };
 }
 
-async function executeStep(step, { api, attachments, sessionID, results }) {
+async function executeStep(step, { api, attachments, sessionID, results, registerRollback }) {
   const fields = resolveFields(step.fields, results);
   const target = step.target !== undefined ? resolveTarget(step.target, results) : '';
   const uploaded = step.action === 'create_product' || step.action === 'update_product'
     ? await uploadImages(api, attachments, sessionID, step.images)
     : [];
   const uploadedCover = uploaded.find((image) => image.cover === 'yes') || uploaded[0] || null;
+  const rollback = (undo) => {
+    if (typeof registerRollback === 'function') registerRollback(undo);
+  };
 
   if (step.action === 'create_category') {
     if (step.reuse && step.reuse.id) {
@@ -271,6 +274,9 @@ async function executeStep(step, { api, attachments, sessionID, results }) {
     });
     const id = idOf(response);
     if (!id) throw new Error('The category was saved but its id was not returned.');
+    rollback(async () => {
+      await api.delete('categories/' + encodeURIComponent(id));
+    });
     const saved = await fetchCategory(api, id);
     if (!saved) throw new Error('The category was saved but could not be read back.');
     const verified = sameText(saved.name, fields.name);
@@ -285,11 +291,23 @@ async function executeStep(step, { api, attachments, sessionID, results }) {
   }
 
   if (step.action === 'update_category') {
+    /* Read the live row now, not the preview snapshot: the rollback must
+       restore what is there at execution time. */
+    const current = await fetchCategory(api, target);
+    if (!current) throw new Error('The category was not found in this branch.');
+    const restore = {
+      name: cleanText(current.name, 200),
+      description: cleanText(current.description, 1000),
+      is_active: current.active !== undefined ? current.active : current.is_active !== false,
+    };
     const payload = {};
     if (fields.name !== undefined) payload.name = fields.name;
     if (fields.description !== undefined) payload.description = fields.description;
     if (fields.is_active !== undefined) payload.is_active = fields.is_active;
-    const response = await api.put('categories/' + encodeURIComponent(target), payload);
+    await api.put('categories/' + encodeURIComponent(target), payload);
+    rollback(async () => {
+      await api.put('categories/' + encodeURIComponent(target), restore);
+    });
     const saved = await fetchCategory(api, target);
     if (!saved) throw new Error('The category was saved but could not be read back.');
     const verified = fields.name === undefined || sameText(saved.name, fields.name);
@@ -300,7 +318,6 @@ async function executeStep(step, { api, attachments, sessionID, results }) {
       verified,
       message: verified ? 'Category updated and checked.' : 'Category updated, but the read-back did not match.',
       warning: verified ? '' : 'The saved category name did not match the plan.',
-      ...(response ? {} : {}),
     };
   }
 
@@ -310,6 +327,9 @@ async function executeStep(step, { api, attachments, sessionID, results }) {
     const response = await api.post('items', payload);
     const id = idOf(response);
     if (!id) throw new Error('The product was saved but its id was not returned.');
+    rollback(async () => {
+      await api.delete('items', { data: [id] });
+    });
     const saved = await fetchItem(api, id);
     const checked = verifyProduct(saved, {
       ...payload,
@@ -347,8 +367,12 @@ async function executeStep(step, { api, attachments, sessionID, results }) {
     }
     const cover = images.find((image) => image.cover === 'yes');
     const base = current || {};
+    const restorePayload = currentProductPayload(base, {}, existingImages, existingCover);
     const payload = currentProductPayload(base, fields, images, cover ? cover.name : '');
     await api.put('items/' + encodeURIComponent(target) + '/details', payload);
+    rollback(async () => {
+      await api.put('items/' + encodeURIComponent(target) + '/details', restorePayload);
+    });
     const saved = await fetchItem(api, target);
     const checked = verifyProduct(saved, {
       ...payload,
@@ -374,6 +398,17 @@ async function executeStep(step, { api, attachments, sessionID, results }) {
       note: fields.note || '',
       rows: [{ item_id: target, qty: fields.stock_quantity }],
     });
+    const restoreQty = before.available_quantity !== undefined
+      ? Number(before.available_quantity) || 0
+      : Number(before.stock) || 0;
+    rollback(async () => {
+      await api.post('items/stockAdjustment', {
+        reason: 'Inventory count',
+        mode: 'set',
+        note: 'Undone because a later assistant change failed.',
+        rows: [{ item_id: target, qty: restoreQty }],
+      });
+    });
     const data = dataOf(response);
     const saved = await fetchItem(api, target);
     const verified = !!saved && sameNumber(saved.available_quantity, expected);
@@ -395,6 +430,11 @@ async function executePlan(plan, { api, attachments, sessionID, onProgress, logg
   if (!plan || !Array.isArray(plan.steps)) throw new Error('The change plan is not valid.');
   if (!api || typeof api.get !== 'function') throw new Error('The shop data service is not available.');
   const results = new Map();
+  /* Every successful write registers how to undo itself. A failure later in
+     the plan runs these in reverse. The bundled MongoDB is standalone, so
+     this is an all-or-compensate execution rather than a server transaction:
+     it is the same pattern the stock and family writers use. */
+  const rollbacks = [];
   const emit = (step, status, extra) => {
     if (typeof onProgress !== 'function') return;
     try {
@@ -409,6 +449,9 @@ async function executePlan(plan, { api, attachments, sessionID, onProgress, logg
     } catch (error) {
       /* Progress is best effort. The final response is authoritative. */
     }
+  };
+  const addWarning = (text) => {
+    if (text && !plan.warnings.includes(text)) plan.warnings.push(text);
   };
 
   for (const step of plan.steps) {
@@ -432,7 +475,15 @@ async function executePlan(plan, { api, attachments, sessionID, onProgress, logg
     step.message = '';
     emit(step, 'running', { message: 'Working...' });
     try {
-      const result = await executeStep(step, { api, attachments, sessionID, results });
+      const result = await executeStep(step, {
+        api,
+        attachments,
+        sessionID,
+        results,
+        registerRollback: (undo) => {
+          if (typeof undo === 'function') rollbacks.push({ step, undo });
+        },
+      });
       step.status = 'success';
       step.result = result;
       step.resultId = result.id;
@@ -441,7 +492,7 @@ async function executePlan(plan, { api, attachments, sessionID, onProgress, logg
       step.verified = result.verified;
       if (result.warning) {
         step.warning = result.warning;
-        if (!plan.warnings.includes(result.warning)) plan.warnings.push(result.warning);
+        addWarning(result.warning);
       }
       results.set(step.id, result);
       emit(step, 'success', { message: result.message, result });
@@ -456,10 +507,59 @@ async function executePlan(plan, { api, attachments, sessionID, onProgress, logg
     }
   }
 
-  const failed = plan.steps.filter((step) => step.status === 'failed').length;
-  const skipped = plan.steps.filter((step) => step.status === 'skipped').length;
-  const success = plan.steps.filter((step) => step.status === 'success').length;
-  plan.status = failed ? (success ? 'partial' : 'failed') : 'completed';
+  let failed = plan.steps.filter((step) => step.status === 'failed').length;
+  let skipped = plan.steps.filter((step) => step.status === 'skipped').length;
+  let success = plan.steps.filter((step) => step.status === 'success').length;
+
+  if (failed) {
+    const rollbackErrors = [];
+    for (let index = rollbacks.length - 1; index >= 0; index -= 1) {
+      const entry = rollbacks[index];
+      try {
+        await entry.undo();
+        if (entry.step && entry.step.status === 'success') {
+          /* The write is gone, so the step is safe to run again if the user
+             retries. Keep a short note instead of a result that no longer
+             exists. */
+          entry.step.status = 'pending';
+          entry.step.message = 'Undone because the plan could not finish.';
+          entry.step.warning = '';
+          delete entry.step.result;
+          delete entry.step.resultId;
+          delete entry.step.resultName;
+          delete entry.step.verified;
+        } else if (entry.step && entry.step.status === 'failed') {
+          entry.step.message = `${entry.step.message} Nothing from this step was kept.`;
+        }
+      } catch (error) {
+        rollbackErrors.push((error && error.message) || 'unknown rollback error');
+        if (entry.step) {
+          entry.step.warning = 'This change could not be undone automatically. Review it before retrying.';
+        }
+      }
+    }
+
+    if (rollbackErrors.length) {
+      plan.status = 'partial';
+      plan.retryable = false;
+      addWarning(
+        'Some changes could not be undone automatically: ' +
+          rollbackErrors.join(' ') +
+          ' Review the affected records before trying again.'
+      );
+    } else {
+      plan.status = 'failed';
+      plan.retryable = true;
+      addWarning('No changes were kept. You can retry this plan.');
+    }
+  } else {
+    plan.status = 'completed';
+    plan.retryable = false;
+  }
+
+  failed = plan.steps.filter((step) => step.status === 'failed').length;
+  skipped = plan.steps.filter((step) => step.status === 'skipped').length;
+  success = plan.steps.filter((step) => step.status === 'success').length;
   plan.finishedAt = Date.now();
   plan.summaryStatus = { success, failed, skipped };
   return plan;

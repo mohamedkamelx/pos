@@ -680,12 +680,17 @@ PosnicPro.items = {
                     + '<div class="s-stat-label"><lang class="lang_margin">Margin</lang></div></div>'
                 : '')
             + '</div>';
-        var identity = '<div class="q-block"><div class="q-label"><lang class="lang_identity">Identity</lang></div>'
-            + (real(d.itemid) ? '<div><lang class="lang_sku">Item code</lang>: ' + esc(d.itemid) + '</div>' : '')
-            + (real(d.barcode_id) ? '<div class="q-muted"><lang class="lang_barcode_title">Barcode</lang>: ' + esc(d.barcode_id) + '</div>' : '')
-            + (real(d.category_name) ? '<div class="q-muted">' + esc(d.category_name) + '</div>' : '')
-            + '<div class="q-muted"><lang class="lang_unit">Unit</lang>: ' + esc(d.unit || 'qty') + '</div>'
-            + '</div>';
+        var identityBits = '';
+        if (real(d.barcode_id)) {
+            identityBits += '<div class="q-muted"><lang class="lang_barcode_title">Barcode</lang>: ' + esc(d.barcode_id) + '</div>';
+        }
+        if (real(d.category_name)) {
+            identityBits += '<div class="q-muted">' + esc(d.category_name) + '</div>';
+        }
+        var identity = identityBits
+            ? '<div class="q-block"><div class="q-label"><lang class="lang_identity">Identity</lang></div>'
+                + identityBits + '</div>'
+            : '';
         var pricingBits = '';
         /* Selling and retail are one price unless the user set them
            differently. Showing the same number twice reads as two prices. */

@@ -87,6 +87,9 @@ function formatForModel(result) {
   if (!result.count) {
     return `No products in the current branch matched "${result.query}".`;
   }
+  /* A single exact match needs its codes so the assistant can answer barcode
+     and SKU questions. A broad result set does not; the id is enough to act. */
+  const includeCodes = result.count === 1;
   const lines = [
     `Products in the current branch matching "${result.query}":`,
     ...result.results.map((item, index) => {
@@ -97,8 +100,8 @@ function formatForModel(result) {
         `price: ${item.sellingPrice}`,
         `stock: ${item.stock}`,
         item.unit ? `unit: ${item.unit}` : '',
-        item.barcode ? `barcode: ${item.barcode}` : '',
-        item.sku ? `sku: ${item.sku}` : '',
+        includeCodes && item.barcode ? `barcode: ${item.barcode}` : '',
+        includeCodes && item.sku ? `sku: ${item.sku}` : '',
       ].filter(Boolean);
       return parts.join(' | ');
     }),

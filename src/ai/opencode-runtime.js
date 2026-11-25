@@ -17,10 +17,12 @@ const path = require('path');
 const loadOpenCodeSdk = require('./sdk-loader');
 const {
   AGENT_ID,
+  PROVIDERS,
   getModel,
   getProvider,
   runtimeConfig,
 } = require('./provider-registry');
+const { providerTokenSlot } = require('./key-store');
 const { createContextStore } = require('./tools/context');
 const { createPosnicToolPlugin } = require('./tools/plugin');
 const { createUserProfileStore } = require('./user-profile');
@@ -30,6 +32,7 @@ const { executePlan } = require('./actions/plan-executor');
 const { createApiClient } = require('./tools/api-client');
 const { createConversationMemoryStore } = require('./conversation-memory');
 const { currencyInstruction, normalizeCurrencyText } = require('./currency');
+const { normalizeName } = require('./text-match');
 
 const START_TIMEOUT_MS = 25000;
 const CHAT_TIMEOUT_MS = 120000;
@@ -38,17 +41,18 @@ const COMPACT_TIMEOUT_MS = 60000;
    them instead of a character guess so a session can fill the model's actual
    context window before it is compacted. */
 const DEFAULT_CONTEXT_LIMIT = 131072;
-const COMPACT_AT_CONTEXT_RATIO = 0.8;
-const HARD_CONTEXT_RATIO = 0.95;
+const COMPACT_AT_CONTEXT_RATIO = 0.6;
+const HARD_CONTEXT_RATIO = 0.85;
 const CHARS_PER_TOKEN = 4;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function runtimeError(code, message) {
+function runtimeError(code, message, extra) {
   const error = new Error(message);
   error.code = code;
+  if (extra && typeof extra === 'object') Object.assign(error, extra);
   return error;
 }
 
@@ -132,7 +136,15 @@ function estimatedTokens(chars) {
   return Math.ceil(Math.max(0, Number(chars) || 0) / CHARS_PER_TOKEN);
 }
 
-function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUrl, profileStore } = {}) {
+function createOpenCodeRuntime({
+  baseDir,
+  keyStore,
+  logger,
+  fetchImpl,
+  apiBaseUrl,
+  profileStore,
+  chatTimeoutMs,
+} = {}) {
   let client = null;
   let starting = null;
   let sessionID = null;
@@ -141,8 +153,13 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
   let workspace = '';
   let location = null;
   let envBackup = new Map();
+  /* Which token slot each provider is using. The primary slot is the default;
+     after a quota failure the backup slot stays active until the user saves a
+     new primary token or removes the backup. */
+  const activeTokenSlots = new Map();
   let settings = keyStore ? keyStore.getSettings() : { provider: 'groq', model: 'openai/gpt-oss-120b' };
   let log = typeof logger === 'function' ? logger : () => {};
+  const chatTimeout = Number(chatTimeoutMs) > 0 ? Number(chatTimeoutMs) : CHAT_TIMEOUT_MS;
   const toolContext = createContextStore();
   const attachmentStore = createAttachmentStore();
   const planStore = createPlanStore();
@@ -191,15 +208,60 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
     return provider ? getModel(provider.id, settings.model) : null;
   }
 
+  function primarySlot(providerID) {
+    return providerTokenSlot(providerID, 0);
+  }
+
+  function backupSlot(providerID) {
+    return providerTokenSlot(providerID, 1);
+  }
+
+  function readProviderToken(providerID) {
+    if (!keyStore) {
+      return { key: '', error: 'provider_key_missing', slot: primarySlot(providerID), backup: false };
+    }
+    const primary = keyStore.read(primarySlot(providerID));
+    if (activeTokenSlots.get(providerID) !== backupSlot(providerID)) {
+      return { ...primary, slot: primarySlot(providerID), backup: false };
+    }
+    const backup = keyStore.read(backupSlot(providerID));
+    if (backup.key) {
+      return { ...backup, slot: backupSlot(providerID), backup: true };
+    }
+    activeTokenSlots.delete(providerID);
+    return { ...primary, slot: primarySlot(providerID), backup: false };
+  }
+
+  function usePrimaryToken(providerID) {
+    if (providerID) activeTokenSlots.delete(providerID);
+    else activeTokenSlots.clear();
+  }
+
+  function rotateProviderToken(providerID) {
+    if (!keyStore || !providerID) return false;
+    if (activeTokenSlots.get(providerID) === backupSlot(providerID)) return false;
+    const backup = keyStore.read(backupSlot(providerID));
+    if (!backup.key) return false;
+    activeTokenSlots.set(providerID, backupSlot(providerID));
+    return true;
+  }
+
+  function activeToken(providerID) {
+    return activeTokenSlots.get(providerID) === backupSlot(providerID) ? 'backup' : 'primary';
+  }
+
   function applyEnvironment() {
-    for (const provider of require('./provider-registry').PROVIDERS) {
+    const selected = selectedProvider();
+    for (const provider of PROVIDERS) {
       if (!envBackup.has(provider.env)) {
         envBackup.set(provider.env, {
           had: Object.prototype.hasOwnProperty.call(process.env, provider.env),
           value: process.env[provider.env],
         });
       }
-      const loaded = keyStore.read(`provider:${provider.id}`);
+      const loaded = selected && provider.id === selected.id
+        ? readProviderToken(provider.id)
+        : keyStore.read(primarySlot(provider.id));
       if (loaded.key) process.env[provider.env] = loaded.key;
       else delete process.env[provider.env];
     }
@@ -266,7 +328,7 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
       if (!provider || !model) {
         throw runtimeError('model_unavailable', 'The selected model is not available.');
       }
-      const loaded = keyStore.read(`provider:${provider.id}`);
+      const loaded = readProviderToken(provider.id);
       if (!loaded.key) {
         throw runtimeError(
           loaded.error === 'unreadable' ? 'provider_key_unreadable' : 'provider_key_missing',
@@ -425,7 +487,73 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
   }
 
   function providerErrorMessage(error) {
-    return String((error && error.message) || error || 'The model provider returned an error.').slice(0, 300);
+    const text = error && typeof error === 'object'
+      ? (error.message || error.type || error.code)
+      : error;
+    return String(text || 'The model provider returned an error.').slice(0, 300);
+  }
+
+  function retryAfterMsFromError(error) {
+    if (!error || typeof error !== 'object') return 0;
+    const direct = Number(error.retryAfterMs || error.retry_after_ms);
+    if (Number.isFinite(direct) && direct > 0) return Math.round(direct);
+    const retryAfter = Number(error.retryAfter || error.retry_after);
+    if (Number.isFinite(retryAfter) && retryAfter > 0) return Math.round(retryAfter * 1000);
+
+    let message = String(error.message || '');
+    if (error.response && typeof error.response.body === 'string') {
+      message += ` ${error.response.body}`;
+    }
+    const seconds = message.match(
+      /(?:try again|retry)(?:\s+again)?\s+(?:in|after)\s+(?:(\d+)\s*m(?:in(?:ute)?s?)?\s*)?(\d+(?:\.\d+)?)\s*s\b/i,
+    );
+    if (seconds) {
+      const minutes = Number(seconds[1] || 0);
+      const rest = Number(seconds[2] || 0);
+      if (minutes || rest) return Math.round((minutes * 60 + rest) * 1000);
+    }
+    const minutes = message.match(
+      /(?:try again|retry)(?:\s+again)?\s+(?:in|after)\s+(\d+(?:\.\d+)?)\s*m(?:in(?:ute)?s?)?\b/i,
+    );
+    if (minutes) return Math.round(Number(minutes[1]) * 60000);
+    return 0;
+  }
+
+  function isRateLimitError(error) {
+    if (!error) return false;
+    if (typeof error === 'string') {
+      return /rate limit|quota|tokens per day|too many requests/i.test(error);
+    }
+    const type = String(error.type || error.code || '').toLowerCase();
+    const status = Number(
+      error.status || error.statusCode || (error.response && error.response.status),
+    );
+    const message = String(error.message || '');
+    return status === 429 ||
+      type === 'rate_limited' ||
+      type.includes('rate-limit') ||
+      type.includes('rate_limit') ||
+      /rate limit|quota|tokens per day|too many requests/i.test(message);
+  }
+
+  function providerFailure(error) {
+    const rateLimited = isRateLimitError(error);
+    const failure = {
+      ok: false,
+      code: rateLimited ? 'rate_limited' : 'provider_error',
+      message: providerErrorMessage(error),
+      retryable: true,
+    };
+    if (rateLimited) {
+      const retryAfterMs = retryAfterMsFromError(error);
+      if (retryAfterMs > 0) failure.retryAfterMs = retryAfterMs;
+    }
+    const status = Number((error && (error.status || error.statusCode)) || 0);
+    log(
+      `[AI provider] ${failure.code}${status ? ` status=${status}` : ''}` +
+      `${failure.retryAfterMs ? ` retryAfterMs=${failure.retryAfterMs}` : ''}`,
+    );
+    return failure;
   }
 
   async function collectReply(id, cutoff) {
@@ -458,9 +586,7 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
       text,
       toolCalls,
       tokens,
-      error: failed ? String(
-        failed.error.message || failed.error.code || 'The model provider returned an error.',
-      ).slice(0, 300) : '',
+      error: failed ? failed.error : null,
     };
   }
 
@@ -470,25 +596,42 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
     try {
       prompt = await client.session.prompt({ sessionID: id, text: promptText });
     } catch (error) {
-      return {
-        ok: false,
-        code: 'provider_error',
-        message: providerErrorMessage(error),
-        retryable: true,
-      };
+      return providerFailure(error);
     }
 
     const promptDoneAt = Date.now();
+    const cutoff = (prompt && prompt.time && prompt.time.created) || 0;
     try {
       await withTimeout(
         client.session.wait({ sessionID: id }),
-        CHAT_TIMEOUT_MS,
+        chatTimeout,
         'chat_timeout',
         'The assistant took too long to reply.',
       );
     } catch (error) {
       try { await client.session.interrupt({ sessionID: id }); } catch (interruptError) { /* already stopped */ }
       if (error && error.code === 'chat_timeout') {
+        /* A slow model may have finished the plan and then kept the session
+           busy. Do not throw that completed work away: collect the steps it
+           already produced and return a plan or question if one is there. */
+        let collected = null;
+        try {
+          collected = await collectReply(id, cutoff);
+        } catch (collectError) { /* the timeout result still stands */ }
+        if (collected &&
+            (collected.text || collected.toolCalls.length) &&
+            planOrQuestionSucceeded(collected.toolCalls)) {
+          log(
+            `[AI timing] session=${id} timeout after a completed plan or question; returning it ` +
+            `wait=${Date.now() - promptDoneAt}ms`,
+          );
+          return {
+            ok: true,
+            text: collected.text,
+            toolCalls: collected.toolCalls,
+            tokens: collected.tokens,
+          };
+        }
         return {
           ok: false,
           code: 'chat_timeout',
@@ -496,27 +639,16 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
           retryable: false,
         };
       }
-      return {
-        ok: false,
-        code: 'provider_error',
-        message: providerErrorMessage(error),
-        retryable: true,
-      };
+      return providerFailure(error);
     }
 
     const waitDoneAt = Date.now();
-    const cutoff = (prompt && prompt.time && prompt.time.created) || 0;
     let collected;
     try {
       collected = await collectReply(id, cutoff);
     } catch (error) {
       log(`[AI timing] session=${id} prompt=${promptDoneAt - startedAt}ms wait=${waitDoneAt - promptDoneAt}ms collect=failed promptChars=${promptText.length}`);
-      return {
-        ok: false,
-        code: 'provider_error',
-        message: providerErrorMessage(error),
-        retryable: true,
-      };
+      return providerFailure(error);
     }
     log(
       `[AI timing] session=${id} prompt=${promptDoneAt - startedAt}ms ` +
@@ -533,12 +665,7 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
       };
     }
     if (collected.error) {
-      return {
-        ok: false,
-        code: 'provider_error',
-        message: collected.error,
-        retryable: true,
-      };
+      return providerFailure(collected.error);
     }
     return {
       ok: false,
@@ -589,6 +716,88 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
   }
 
   const READ_TOOL_RE = /^(posnic_search_products|posnic_list_products|posnic_list_categories|posnic_recall|posnic_help)$/;
+  const CREATE_REQUEST_RE = /(?:أضيف|اضيف|أضف|اضف|ضيف|إضافة|اضافة|إنشاء|انشاء|new product|add product|create product)/i;
+
+  function isCreateRequest(value) {
+    return CREATE_REQUEST_RE.test(String(value || ''));
+  }
+
+  function exactDuplicate(toolCalls, message) {
+    const wanted = normalizeName(message);
+    for (const call of Array.isArray(toolCalls) ? toolCalls : []) {
+      if (!call || call.name !== 'posnic_search_products') continue;
+      const result = call.metadata && call.metadata.posnic;
+      if (!result || result.kind !== 'product_search') continue;
+      const query = normalizeName(call.input && call.input.query);
+      for (const item of Array.isArray(result.results) ? result.results : []) {
+        const name = normalizeName(item && item.name);
+        if (!name) continue;
+        if (name === query || (Array.from(name).length >= 4 && wanted.includes(name))) {
+          return item;
+        }
+      }
+    }
+    return null;
+  }
+
+  function arabicDigits(value) {
+    return String(value == null ? '' : value).replace(/[0-9]/g, (digit) => '٠١٢٣٤٥٦٧٨٩'[digit]);
+  }
+
+  function duplicateQuestion(item, message) {
+    const arabic = /[\u0600-\u06FF]/.test(String(message || ''));
+    const name = String((item && item.name) || '').trim().slice(0, 120);
+    const values = [];
+    if (Number.isFinite(Number(item && item.sellingPrice))) {
+      values.push(`${arabic ? 'السعر' : 'price'} ${arabic ? arabicDigits(item.sellingPrice) : item.sellingPrice}`);
+    }
+    if (Number.isFinite(Number(item && item.costPrice))) {
+      values.push(`${arabic ? 'التكلفة' : 'cost'} ${arabic ? arabicDigits(item.costPrice) : item.costPrice}`);
+    }
+    if (Number.isFinite(Number(item && item.stock))) {
+      values.push(`${arabic ? 'المخزون' : 'stock'} ${arabic ? arabicDigits(item.stock) : item.stock}`);
+    }
+    const detail = values.length ? ` (${values.join(arabic ? '، ' : ', ')})` : '';
+    if (arabic) {
+      return {
+        question: `المنتج «${name}» موجود بالفعل${detail}. هل تريد تعديل السعر أو التكلفة أو المخزون، أم إلغاء؟`,
+        options: [
+          { label: 'تعديل السعر', value: 'تعديل السعر' },
+          { label: 'تعديل التكلفة', value: 'تعديل التكلفة' },
+          { label: 'تعديل المخزون', value: 'تعديل المخزون' },
+          { label: 'إلغاء', value: 'إلغاء' },
+        ],
+        pending: `المنتج الموجود: ${name}${detail}`,
+      };
+    }
+    return {
+      question: `The product "${name}" already exists${detail}. Do you want to edit the price, cost or stock, or cancel?`,
+      options: [
+        { label: 'Edit price', value: 'Edit price' },
+        { label: 'Edit cost', value: 'Edit cost' },
+        { label: 'Edit stock', value: 'Edit stock' },
+        { label: 'Cancel', value: 'Cancel' },
+      ],
+      pending: `Existing product: ${name}${detail}`,
+    };
+  }
+
+  function duplicateClarify(item, message) {
+    const copy = duplicateQuestion(item, message);
+    return {
+      id: `posnic_duplicate_${Date.now().toString(36)}`,
+      name: 'posnic_ask_user',
+      status: 'completed',
+      input: { question: copy.question, options: copy.options.map((option) => option.value), missing: [] },
+      metadata: { posnic: {
+        kind: 'clarify',
+        question: copy.question,
+        options: copy.options,
+        pending: copy.pending,
+        missing: [],
+      } },
+    };
+  }
 
   function planOrQuestionSucceeded(toolCalls) {
     return (Array.isArray(toolCalls) ? toolCalls : []).some((call) => {
@@ -616,7 +825,7 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
       pending.question ? `You asked: ${pending.question}` : '',
       pending.missing && pending.missing.length ? `Still missing: ${pending.missing.join(', ')}` : '',
       `The user answered: ${String(message || '').trim()}`,
-      'If every required value is known, call posnic_propose_plan now. If a required value is still missing, call posnic_ask_user once for all missing values. Never use 0 for a price or cost the user did not give.',
+      'If every required value is known and the image and category questions were answered, call posnic_propose_plan now. If anything is still missing or unanswered, call posnic_ask_user once for all remaining items together; never split them into separate turns or ask again for what was answered. Never use 0 for a price or cost the user did not give.',
     ].filter(Boolean).join('\n');
   }
 
@@ -710,7 +919,47 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
     let reply = await requestReply(session.id, promptText);
     let usedRecovery = false;
 
-    if (!reply.ok && reply.retryable && sessionTurns > 0) {
+    /* A daily or per-minute quota is tied to the token. If the user saved a
+       backup token, switch to it once and retry the same turn in a fresh
+       session with the conversation memory. The failed read is not recorded. */
+    if (!reply.ok && reply.code === 'rate_limited' && rotateProviderToken(provider.id)) {
+      log('[AI auth] rate limited; retrying with the backup provider token');
+      await removeCurrentSession();
+      await restart();
+      const freshId = await ensureSession();
+      activeSessionId = freshId;
+      toolContext.set(freshId, {
+        apiBaseUrl: resolveApiBaseUrl(),
+        token: typeof authToken === 'string' ? authToken : '',
+        branchId: typeof branchId === 'string' ? branchId : '',
+        username: typeof username === 'string' ? username : '',
+        conversationId: conversation,
+      });
+      promptText = buildPrompt(conversation, message, attached, {
+        full: true,
+        currencySign,
+      });
+      reply = await requestReply(freshId, promptText);
+      if (!reply.ok) log(`[AI auth] backup provider token failed: ${reply.code}`);
+    }
+
+    /* A create request for a product that already exists must not become a
+       generic "enter price, cost, stock..." question. The search result is
+       enough to ask the real choice, without another model round trip. */
+    if (reply.ok && turn.writeRequest && isCreateRequest(message) &&
+        !planOrQuestionSucceeded(reply.toolCalls)) {
+      const duplicate = exactDuplicate(reply.toolCalls, message);
+      if (duplicate) {
+        log(`[AI memory] exact duplicate found; asking whether to update ${duplicate.id || duplicate.name}`);
+        reply = {
+          ...reply,
+          text: '',
+          toolCalls: [...reply.toolCalls, duplicateClarify(duplicate, message)],
+        };
+      }
+    }
+
+    if (!reply.ok && reply.retryable && reply.code !== 'rate_limited' && sessionTurns > 0) {
       usedRecovery = true;
       log(`[AI memory] retrying in a fresh session after ${reply.code}`);
       await removeCurrentSession();
@@ -731,7 +980,11 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
     }
 
     if (!reply.ok) {
-      throw runtimeError(reply.code, reply.message);
+      throw runtimeError(
+        reply.code,
+        reply.message,
+        reply.retryAfterMs ? { retryAfterMs: reply.retryAfterMs } : undefined,
+      );
     }
 
     /* If an explicit add/create request, or an answer to a pending question,
@@ -758,6 +1011,7 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
         throw runtimeError(
           corrected.code || 'provider_error',
           corrected.message || 'The assistant could not finish the request. Try again.',
+          corrected.retryAfterMs ? { retryAfterMs: corrected.retryAfterMs } : undefined,
         );
       }
     }
@@ -937,6 +1191,7 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
   }
 
   return {
+    activeToken,
     attach,
     cancelPlan,
     chat,
@@ -951,6 +1206,7 @@ function createOpenCodeRuntime({ baseDir, keyStore, logger, fetchImpl, apiBaseUr
     status,
     stop,
     updateSettings,
+    usePrimaryToken,
   };
 }
 

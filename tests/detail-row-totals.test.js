@@ -31,18 +31,15 @@ const DETAIL_PAGES = [
 ];
 
 test('no detail page renders a raw row total - one legacy sale must not white-page the view', () => {
-  for (const f of DETAIL_PAGES.concat('items.js')) {
+  for (const f of DETAIL_PAGES) {
     const src = read(f);
     assert.ok(
       !src.includes('row.items_total.toFixed') && !src.includes('row.items_return_total.toFixed'),
       f + ' still calls toFixed on a raw row total'
     );
   }
-  /* and the guarded form is actually present, so this is a rewrite, not a removal */
-  const items = read('items.js');
-  assert.match(items, /rowSaleTotal\.toFixed\(/);
-  assert.match(items, /rowReturnTotal\.toFixed\(/);
-  assert.match(items, /Number\(row\.items_total\) \|\| 0/);
+  /* items.html moved to the master-detail standard 2026-08-27 and shows stock
+     movements instead of a sales-activity table, so it has no rowSaleTotal. */
   for (const f of DETAIL_PAGES) {
     assert.match(read(f), /\(Number\(row\.items_total\) \|\| 0\)\.toFixed\(/, f);
   }
@@ -53,7 +50,7 @@ test('no activity view renders a raw sale_process - a legacy or demo sale must n
      row.sale_process raw, and a sale without the field (demo-seeded or
      legacy) showed a red "undefined" badge. The seeder stamps 'Add' now,
      and every reader defaults - installed data has no field to gain. */
-  for (const f of ['customers.js', 'categories.js', 'customer_categories.js', 'items.js']) {
+  for (const f of ['customers.js', 'categories.js', 'customer_categories.js']) {
     const src = read(f);
     assert.ok(!src.includes("+ row.sale_process + '</span>"),
       f + ' still renders sale_process unguarded');
@@ -102,7 +99,6 @@ test('the money-path lists are card-ready on phones (Mobile P2)', () => {
     ['customers.js', 'data-label="Return total"'],
     ['categories.js', 'data-label="Return total"'],
     ['customer_categories.js', 'data-label="Return total"'],
-    ['items.js', 'data-label="Return total"'],
   ]) {
     assert.ok(js(f).includes(label), f + ' rows lost their ' + label);
   }
@@ -110,7 +106,6 @@ test('the money-path lists are card-ready on phones (Mobile P2)', () => {
   const anyf = (rel) => fsx.readFileSync(px.join(__dirname, '..', 'frontend', rel), 'utf8');
   for (const [rel, id] of [
     ['modals/customer.html', 'view_customerdetails'],
-    ['modals/items_read.html', 'view_itemdetails'],
     ['modules/categories.html', 'view_categorydetails'],
     ['modules/customer_categories.html', 'view_customercategorydetails'],
   ]) {

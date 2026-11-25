@@ -20,6 +20,19 @@ const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8'))
 const included = (pkg.build.files || []).filter((f) => typeof f === 'string' && !f.startsWith('!'));
 const includedSet = new Set(included);
 
+function globMatches(target, pattern) {
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\?/g, '.');
+  return new RegExp('^' + escaped + '$').test(target);
+}
+
+function isPackaged(target) {
+  if (includedSet.has(target) || includedSet.has(target.replace(/\.js$/, ''))) return true;
+  return included.some((pattern) => pattern.includes('*') && globMatches(target, pattern));
+}
+
 // Entry points that run from the asar. Anything they pull in with a relative
 // require has to travel with them.
 const ENTRIES = (pkg.build.files || [])
@@ -45,7 +58,7 @@ function scan(rel) {
     if (target.endsWith('.jsc')) target = target.replace(/\.jsc$/, '.js');
     if (!/\.[a-z]+$/.test(target)) target += '.js';
     // extraResources cover files loaded by absolute path at runtime, not these.
-    if (!includedSet.has(target) && !includedSet.has(target.replace(/\.js$/, ''))) {
+    if (!isPackaged(target)) {
       missing.push({ from: rel, needs: target, exists: fs.existsSync(path.join(ROOT, target)) });
     } else {
       scan(target);

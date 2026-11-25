@@ -1014,9 +1014,7 @@ PosnicPro.sales = {
                     }
                     return String(value).replace('T', ' ').slice(0, 16);
                 };
-                var html = '<tr class="q-paid"><td colspan="4" class="text-right">'
-                    + '<lang class="lang_paid">Paid</lang></td>'
-                    + '<td class="text-right q-paid-amount">' + money(paidTotal) + '</td></tr>';
+                var html = '';
                 if (paymentRows.length) {
                     html += '<tr class="q-payment-history"><td colspan="5">'
                         + '<div class="q-payment-history-list">'

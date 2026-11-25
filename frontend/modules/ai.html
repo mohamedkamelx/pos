@@ -64,6 +64,19 @@
                                                 </div>
                                             </div>
                                             <small class="text-muted d-block" id="ai_provider_state" role="status" aria-live="polite"></small>
+                                            <div class="form-group mt-3">
+                                                <label for="ai_provider_backup_key"><lang class="lang_ai_provider_backup_label">Backup token (optional)</lang></label>
+                                                <div class="input-group">
+                                                    <input type="password" class="form-control" id="ai_provider_backup_key" autocomplete="new-password" spellcheck="false" aria-describedby="ai_provider_backup_state">
+                                                    <div class="input-group-append">
+                                                        <button type="button" class="btn btn-outline-primary" id="ai_provider_backup_save">
+                                                            <span><lang class="lang_ai_provider_backup_save">Save backup</lang></span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <small class="text-muted d-block mt-2" id="ai_provider_backup_state" role="status" aria-live="polite"></small>
+                                                <button type="button" class="btn btn-link p-0 mt-1" id="ai_provider_backup_remove" hidden><lang class="lang_ai_provider_backup_remove">Remove backup token</lang></button>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -135,6 +148,19 @@
                             <button type="button" class="btn btn-link p-0" id="ai_remove_provider"><lang class="lang_ai_provider_key_remove">Remove provider token</lang></button>
                         </div>
                         <small class="text-muted d-block mt-2" id="ai_connection_status" role="status" aria-live="polite"></small>
+                        <div class="form-group mt-3">
+                            <label for="ai_settings_backup_key"><lang class="lang_ai_provider_backup_label">Backup token (optional)</lang></label>
+                            <div class="input-group">
+                                <input type="password" class="form-control" id="ai_settings_backup_key" autocomplete="new-password" spellcheck="false" aria-describedby="ai_settings_backup_state">
+                                <div class="input-group-append">
+                                    <button type="button" class="btn btn-outline-primary" id="ai_settings_backup_save">
+                                        <span><lang class="lang_ai_provider_backup_save">Save backup</lang></span>
+                                    </button>
+                                </div>
+                            </div>
+                            <small class="text-muted d-block mt-2" id="ai_settings_backup_state" role="status" aria-live="polite"></small>
+                            <button type="button" class="btn btn-link p-0 mt-1" id="ai_settings_backup_remove" hidden><lang class="lang_ai_provider_backup_remove">Remove backup token</lang></button>
+                        </div>
                     </div>
                 </div>
             </div>
