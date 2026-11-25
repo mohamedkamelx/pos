@@ -310,6 +310,49 @@ describe('CategoryService', () => {
       expect(queryFilters.$or).toHaveLength(2);
     });
 
+    test('falls back to spelling-tolerant ranking when the exact search is empty', async () => {
+      const shoes = makeMockCategory({ name: 'احذية' });
+      const clothes = makeMockCategory({ name: 'ملابس' });
+      repo.findAll
+        .mockResolvedValueOnce({ data: [], total: 0, page: 1, limit: 10, totalPages: 0 })
+        .mockResolvedValueOnce({
+          data: [shoes, clothes],
+          total: 2,
+          page: 1,
+          limit: 5000,
+          totalPages: 1,
+        });
+
+      const result = await service.getAllCategories(
+        { search: 'الاحزايا' },
+        { page: 1, limit: 10 }
+      );
+
+      expect(result.status).toBe(true);
+      expect(result.data.data.map((row) => row.name)).toEqual(['احذية']);
+      expect(result.data.total).toBe(1);
+      expect(repo.findAll).toHaveBeenCalledTimes(2);
+    });
+
+    test('does not fall back when the exact search found a category', async () => {
+      const shoes = makeMockCategory({ name: 'احذية' });
+      repo.findAll.mockResolvedValueOnce({
+        data: [shoes],
+        total: 1,
+        page: 1,
+        limit: 10,
+        totalPages: 1,
+      });
+
+      const result = await service.getAllCategories(
+        { search: 'احذية' },
+        { page: 1, limit: 10 }
+      );
+
+      expect(result.data.data).toEqual([shoes]);
+      expect(repo.findAll).toHaveBeenCalledTimes(1);
+    });
+
     test('does NOT apply $or search filter when name filter also present', async () => {
       repo.findAll.mockResolvedValue([]);
 

@@ -72,10 +72,6 @@ const cspDirectives = {
     "'self'",
     "'unsafe-inline'", // Allow existing inline scripts in legacy Frontend (login handlers, config)
     "'unsafe-eval'", // Required for ACL functionality in frontend
-    /* Local Whisper runs ONNX Runtime's WebAssembly build in a Worker. This
-       permits compiling that shipped module; it does not permit loading a
-       script or a WASM file from another host. */
-    "'wasm-unsafe-eval'",
     /* cdnjs is no longer allowed. print.js used to be loaded from it into
        dashboard.html - which is the main application window, with a preload
        and the whole IPC surface behind it - with no integrity hash, so a bad
@@ -88,22 +84,11 @@ const cspDirectives = {
   'connect-src': [
     "'self'",
     /*
-     * The optional voice feature has two outbound destinations, and both are
-     * reached only after the shop turns it on:
-     *
-     *   - Hugging Face, for the public local Whisper weights. A read-only GET,
-     *     cached on the till after the first download.
-     *   - Groq, only when the Groq engine is selected. The desktop app sends
-     *     that request through the main process (the key never enters the
-     *     renderer); the browser preview talks to Groq directly, which is why
-     *     the origin has to be named here.
-     *
-     * No voice request is made while the feature is off.
+     * The optional AI assistant calls Groq from the Electron main process,
+     * not from this page. The key and the request stay out of the renderer,
+     * so no third-party origin belongs in the page's connect-src. No request
+     * is made while the assistant is off.
      */
-    'https://api.groq.com',
-    'https://huggingface.co',
-    'https://*.huggingface.co',
-    'https://*.hf.co',
   ],
   'img-src': [
     'blob:', // Authenticated receipt previews.

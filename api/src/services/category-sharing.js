@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const BaseModel = require('../models/base.model');
 const scope = require('./price-scope');
 const { allowed } = require('../utils/branch-access');
+const { buildSearchIndex } = require('../utils/item-search-index');
 const oid = (v) => new ObjectId(String(v));
 async function context(req, write = false) {
   if (!allowed(req.user, 'category', write ? 'write' : 'read'))
@@ -92,6 +93,47 @@ async function distribute(plan, source, previousName) {
           { ...wall, category_id: _id },
           { $set: { category_name: source.name, updated_date: new Date() } }
         );
+      /* The category name is part of the item search index. Re-index the
+         affected items in batches so a rename is searchable immediately. */
+      const cursor = db.collection('items').find(
+        { ...wall, category_id: _id },
+        {
+          projection: {
+            name: 1,
+            description: 1,
+            category_name: 1,
+            brand: 1,
+            tags: 1,
+            stock_locations: 1,
+            translations: 1,
+            sku: 1,
+            barcode_id: 1,
+            itemid: 1,
+            plu_code: 1,
+            gtin: 1,
+            gtin14: 1,
+            barcodes: 1,
+            variant_parent_name: 1,
+            variant_value: 1,
+          },
+        }
+      );
+      let searchOps = [];
+      for await (const item of cursor) {
+        searchOps.push({
+          updateOne: {
+            filter: { _id: item._id },
+            update: { $set: buildSearchIndex(item) },
+          },
+        });
+        if (searchOps.length >= 500) {
+          await db.collection('items').bulkWrite(searchOps, { ordered: false });
+          searchOps = [];
+        }
+      }
+      if (searchOps.length) {
+        await db.collection('items').bulkWrite(searchOps, { ordered: false });
+      }
       outcomes.push({ branchId, status: target ? 'updated' : 'created' });
     } catch (e) {
       outcomes.push({ branchId, status: 'conflict', message: e.message });

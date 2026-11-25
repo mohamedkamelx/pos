@@ -88,4 +88,14 @@ describe('categories.constants', () => {
     expect(VALIDATION_PATTERNS.NAME).toBeInstanceOf(RegExp);
     expect(VALIDATION_PATTERNS.IMAGE_URL).toBeInstanceOf(RegExp);
   });
+
+  test('accepts Arabic and other Unicode category names', () => {
+    expect(VALIDATION_PATTERNS.NAME.test('احذية')).toBe(true);
+    expect(VALIDATION_PATTERNS.NAME.test('الأحذية')).toBe(true);
+    expect(VALIDATION_PATTERNS.NAME.test('أَحْذِيَة')).toBe(true);
+    expect(VALIDATION_PATTERNS.NAME.test('Café & Co (2026)')).toBe(true);
+    expect(VALIDATION_PATTERNS.NAME.test('ملابس-رجالي_2')).toBe(true);
+    expect(VALIDATION_PATTERNS.NAME.test('shoes<script>')).toBe(false);
+    expect(VALIDATION_PATTERNS.NAME.test('shoes;drop')).toBe(false);
+  });
 });

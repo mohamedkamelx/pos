@@ -647,33 +647,34 @@ PosnicPro.items = {
             + '<span class="p-doc-title">' + esc(d.name) + '</span>'
             + (low ? '<span class="rs-pill unpaid"><lang class="lang_low_stock">Low stock</lang></span>' : '')
             + '<span class="ml-auto"></span>'
-            + '<button type="button" class="btn btn-sm btn-light" data-module="item" data-access="write" onclick="hasher.setHash(\'items/' + esc(id) + '/edit\');"><i class="feather icon-edit-2 mr-1"></i>Edit</button>'
+            + '<button type="button" class="btn btn-sm btn-light" data-module="item" data-access="write" onclick="hasher.setHash(\'items/' + esc(id) + '/edit\');"><i class="feather icon-edit-2 mr-1"></i><lang class="lang_edit_title">Edit</lang></button>'
             + '<div class="btn-group">'
             + '<button type="button" class="btn btn-sm btn-light dropdown-toggle" data-toggle="dropdown" aria-haspopup="true" aria-expanded="false"><lang class="lang_tab_more">More</lang></button>'
             + '<div class="dropdown-menu dropdown-menu-right">'
-            + '<a class="dropdown-item" data-module="item" data-access="write" href="javascript:void(0)" onclick="hasher.setHash(\'items/' + esc(id) + '/clone\');"><i class="feather icon-copy mr-2"></i>Clone</a>'
-            + (real(d.barcode_id) ? '<a class="dropdown-item" href="javascript:void(0)" onclick="hasher.setHash(\'items/' + esc(id) + '/barcode\');"><i class="feather icon-align-justify mr-2"></i>Barcode labels</a>' : '')
+            + '<a class="dropdown-item" data-module="item" data-access="write" href="javascript:void(0)" onclick="hasher.setHash(\'items/' + esc(id) + '/clone\');"><i class="feather icon-copy mr-2"></i><lang class="lang_clone">Clone</lang></a>'
+            + (real(d.barcode_id) ? '<a class="dropdown-item" href="javascript:void(0)" onclick="hasher.setHash(\'items/' + esc(id) + '/barcode\');"><i class="feather icon-align-justify mr-2"></i><lang class="lang_barcode_title">Barcode</lang></a>' : '')
             + '<div class="dropdown-divider"></div>'
-            + '<a class="dropdown-item text-danger" data-module="item" data-access="delete" href="javascript:void(0)" onclick="PosnicPro.items.deleteAsk();"><i class="feather icon-trash mr-2"></i>Delete</a>'
+            + '<a class="dropdown-item text-danger" data-module="item" data-access="delete" href="javascript:void(0)" onclick="PosnicPro.items.deleteAsk();"><i class="feather icon-trash mr-2"></i><lang class="lang_delete">Delete</lang></a>'
             + '</div></div>'
             + '<button type="button" class="btn btn-sm btn-light" title="Close and show the full list" data-t-title="lang_close_and_show_the_full_list" aria-label="Close" data-t-aria-label="lang_close_title" onclick="PosnicPro.items.closeDoc();"><i class="feather icon-x"></i></button>'
             + '</div>';
         var strip = '<div class="p-void-strip" id="i_delete_strip" style="display:none;">'
             + '<span>Delete <b>' + esc(d.name) + '</b>? Past sales and purchases keep their lines; only the catalogue entry goes.</span>'
-            + '<button type="button" class="btn btn-sm btn-danger" onclick="PosnicPro.items.deleteConfirm(\'' + esc(id) + '\');">Delete item</button>'
-            + '<button type="button" class="btn btn-sm btn-light" onclick="$(\'#i_delete_strip\').slideUp(120);">Cancel</button>'
+            + '<button type="button" class="btn btn-sm btn-danger" onclick="PosnicPro.items.deleteConfirm(\'' + esc(id) + '\');"><lang class="lang_delete">Delete</lang></button>'
+            + '<button type="button" class="btn btn-sm btn-light" onclick="$(\'#i_delete_strip\').slideUp(120);"><lang class="lang_cancel">Cancel</lang></button>'
             + '</div>';
         var img = (d.image && d.image !== 'item.svg') ? d.image : '';
+        var mrp = Number(d.mrp_price) || 0;
         var stats = '<div class="s-doc-stats">'
             + '<div class="s-stat"><div class="s-stat-value"' + (low ? ' style="color: var(--theme-danger-color, #c0392b);"' : '') + '>'
             + (tracked ? esc(d.available_quantity) + ' ' + esc(d.unit || 'qty') : '\u2014') + '</div>'
-            + '<div class="s-stat-label">' + (tracked ? 'In stock' + (low ? ' \u00b7 low' : '') : 'Not tracked') + '</div></div>'
+            + '<div class="s-stat-label">' + (tracked
+                ? (low ? '<lang class="lang_low_stock">Low stock</lang>' : '<lang class="lang_stock">Stock</lang>')
+                : '<lang class="lang_not_tracked">Not tracked</lang>') + '</div></div>'
             + '<div class="s-stat"><div class="s-stat-value">' + cur + '&nbsp;' + sell.toFixed(2) + '</div>'
             + '<div class="s-stat-label"><lang class="lang_selling_price_2">Selling price</lang></div></div>'
-            + (cost > 0
-                ? '<div class="s-stat"><div class="s-stat-value">' + cur + '&nbsp;' + cost.toFixed(2) + '</div>'
-                    + '<div class="s-stat-label"><lang class="lang_companyamount_title">Cost</lang></div></div>'
-                : '')
+            + '<div class="s-stat"><div class="s-stat-value">' + cur + '&nbsp;' + cost.toFixed(2) + '</div>'
+            + '<div class="s-stat-label"><lang class="lang_companyamount_title">Cost</lang></div></div>'
             + (margin !== null
                 ? '<div class="s-stat"><div class="s-stat-value">' + margin.toFixed(1) + '%</div>'
                     + '<div class="s-stat-label"><lang class="lang_margin">Margin</lang></div></div>'
@@ -681,30 +682,36 @@ PosnicPro.items = {
             + '</div>';
         var identity = '<div class="q-block"><div class="q-label"><lang class="lang_identity">Identity</lang></div>'
             + (real(d.itemid) ? '<div><lang class="lang_sku">Item code</lang>: ' + esc(d.itemid) + '</div>' : '')
-            + (real(d.barcode_id) ? '<div class="q-muted">Barcode: ' + esc(d.barcode_id) + '</div>' : '')
+            + (real(d.barcode_id) ? '<div class="q-muted"><lang class="lang_barcode_title">Barcode</lang>: ' + esc(d.barcode_id) + '</div>' : '')
             + (real(d.category_name) ? '<div class="q-muted">' + esc(d.category_name) + '</div>' : '')
-            + '<div class="q-muted">Unit: ' + esc(d.unit || 'qty') + '</div>'
+            + '<div class="q-muted"><lang class="lang_unit">Unit</lang>: ' + esc(d.unit || 'qty') + '</div>'
             + '</div>';
         var pricingBits = '';
-        if (real(d.supplier_name)) { pricingBits += '<div class="q-muted">Supplier: ' + esc(d.supplier_name) + '</div>'; }
-        var pricing = '<div class="q-block"><div class="q-label"><lang class="lang_pricing_supply">Pricing &amp; supply</lang></div>'
-            + '<div><lang class="lang_mrp">Retail price</lang> ' + cur + '&nbsp;' + (Number(d.mrp_price || d.selling_price) || 0).toFixed(2) + '</div>'
-            + pricingBits
+        /* Selling and retail are one price unless the user set them
+           differently. Showing the same number twice reads as two prices. */
+        if (mrp > 0 && mrp !== sell) {
+            pricingBits += '<div><lang class="lang_mrp">Retail price</lang> ' + cur + '&nbsp;' + mrp.toFixed(2) + '</div>';
+        }
+        if (real(d.supplier_name)) {
+            pricingBits += '<div class="q-muted"><lang class="lang_supplier">Supplier</lang>: ' + esc(d.supplier_name) + '</div>';
+        }
+        var pricing = pricingBits
+            ? '<div class="q-block"><div class="q-label"><lang class="lang_pricing_supply">Pricing &amp; supply</lang></div>'
+                + pricingBits
+                + '</div>'
+            : '';
+        var recordActor = d.creation_origin && d.creation_origin.actor_name
+            ? d.creation_origin.actor_name
+            : (d.created_by || 'Not recorded');
+        var record = '<div class="q-block s-doc-record"><div class="q-label"><lang class="lang_on_record">On record</lang></div>'
+            + '<div class="q-muted"><lang class="lang_by">By</lang>: ' + esc(recordActor) + '</div>'
+            + (d.created_date ? '<div class="q-muted"><lang class="lang_added">Added</lang> ' + esc(PosnicPro.convertDate(d.created_date)) + '</div>' : '')
+            + (d.updated_date ? '<div class="q-muted"><lang class="lang_updated">Updated</lang> ' + esc(PosnicPro.convertDate(d.updated_date)) + '</div>' : '')
             + '</div>';
-        var record = '<div class="q-block"><div class="q-label"><lang class="lang_on_record">On record</lang></div>'
-            + (d.creation_origin ? '<div class="q-muted">Created by: ' + esc(d.creation_origin.actor_name) + '</div>'
-                + '<div class="q-muted">Creation method: ' + esc(({ add_item: 'Add item', quick_item: 'Quick item', item_import: 'File import' })[d.creation_origin.operation] || d.creation_origin.operation) + '</div>'
-                + '<div class="q-muted">Access: ' + esc(d.creation_origin.authentication) + '</div>'
-                + '<div class="q-muted">Source: ' + esc(d.creation_origin.source) + '</div>'
-                + '<div class="q-muted">Client (reported): ' + esc(d.creation_origin.client) + '</div>'
-                + '<div class="q-muted">Creation time (UTC): ' + esc(d.creation_origin.recorded_at) + '</div>'
-                + '<div class="q-muted">Request: ' + esc(d.creation_origin.request_id) + '</div>'
-                : '<div class="q-muted">Created by: ' + esc(d.created_by || 'Not recorded') + '</div>'
-                    + '<div class="q-muted"><lang class="lang_creation_method_not_recorded">Creation method: Not recorded</lang></div>')
-            + (d.created_date ? '<div class="q-muted">Added ' + esc(PosnicPro.convertDate(d.created_date)) + '</div>' : '')
-            + (d.updated_date ? '<div class="q-muted">Updated ' + esc(PosnicPro.convertDate(d.updated_date)) + '</div>' : '')
-            + (tracked && Number(d.low_stock) > 0 ? '<div class="q-muted">Low-stock alert at ' + esc(d.low_stock) + '</div>' : '')
-            + '</div>';
+        var description = real(d.description)
+            ? '<div class="q-block s-doc-description"><div class="q-label"><lang class="lang_description">Description</lang></div>'
+                + '<div class="s-doc-description-text">' + esc(d.description).replace(/\n/g, '<br>') + '</div></div>'
+            : '';
         var photo = img
             ? '<div class="i-doc-photo"><img loading="lazy" decoding="async" src="' + esc(img) + '" alt="' + esc(d.name) + '" onerror="this.style.display=\'none\';"></div>'
             : '';
@@ -712,6 +719,7 @@ PosnicPro.items = {
             + '<div class="i-doc-top">' + '<div class="i-doc-main">' + stats
             + '<div class="s-doc-grid">' + identity + pricing + record + '</div>'
             + '</div>' + photo + '</div>'
+            + description
             + '<div class="q-label" style="margin-top:18px;"><lang class="lang_recent_stock_movements">Recent stock movements</lang></div>'
             + '<div id="i_doc_moves" class="text-muted" style="font-size:13px;"><lang class="lang_loading_4">Loading ...</lang></div>'
             + '</div></div>';
@@ -1276,126 +1284,6 @@ PosnicPro.items = {
                 });
             });
             return false;
-        }
-    },
-    /*TO display the item details*/
-    viewItem: function (id) {
-        var loader = $(".loader-view-item");
-        $("<div class='loadingSpinner'></div>").appendTo(loader);
-        PosnicPro.get('items/' + id, function (response) {
-            if (response.type === 'success') {
-                PosnicPro.record_id = id;
-                PosnicPro.items.viewItemData(response);
-                loader.find(".loadingSpinner:first").remove();
-            } else {
-                PosnicPro.alert(response.type, response.message);
-            }
-        }, function (xhr) {
-            var response = jQuery.parseJSON(xhr.responseText);
-            PosnicPro.alert(response.type, response.message);
-        });
-    },
-    viewItemData: function (response) {
-        $('#v-pills-inventory').addClass('show active');
-        $(".infobar-settings-sidebar-overlay").css({"background": "rgba(0,0,0,0.4)", "position": "fixed"});
-        $("#infobar-settings-sidebar-item-details").addClass("sidebarview");
-        $("#item-detail-tab").addClass("active");
-        $("#item_detail").addClass("active show");
-        $("#item-sale-tab,#item-image-tab,#item-description-tab,#item-pricehistory-tab").removeClass("active");
-        $("#item_sale,#item_image,#description_detail,#item_price_history").removeClass("active show");
-        $('#show_product_image,#item-image-tab,#item-description-tab').hide();
-        var data = response.data;
-
-        $.each(data, function (key, val) {
-            if (val === '') {
-                $('#item_view_' + key).text('');
-            } else {
-                $('#item_view_' + key).text(val);
-            }
-        });
-        let unit = (typeof (data.unit) != "undefined" && data.unit !== null) ? data.unit : "qty";
-        $('#item_view_units').text(unit);
-        var locations = Array.isArray(data.stock_locations) ? data.stock_locations : [];
-        $('#item_view_locations_row').prop('hidden', !locations.length);
-        $('#item_view_stock_locations').text(locations.join(' · '));
-        var updateCreateDate = PosnicPro.convertDate(response.data.created_date);
-        $('#item_view_date').text(updateCreateDate);
-        if (data.discount_amount > 0) {
-            var currency = PosnicPro.local.get('currencySign');
-            $('.item-discount-sign').html(currency);
-            $('.item-discount-value').html(data.discount_amount);
-        } else {
-            $('.item-discount-sign').html('%');
-            $('.item-discount-value').html(data.discount_percentage);
-            if (data.discount_amount === 0 && data.discount_percentage === 0) {
-                $('.item-discount-value').html('0');
-            }
-        }
-        var sign = $('.item-discount-sign').html();
-        if (sign === '%') {
-            $('.discount_amountval').css("display", "none");
-            $('.discount_percentageval').css("display", "block");
-        } else {
-            $('.discount_amountval').css("display", "block");
-            $('.discount_percentageval').css("display", "none");
-        }
-        if (data.track_inventory === true) {
-            $('#item-access').removeClass('badge-danger').addClass('badge-success');
-            $('#item-view-access').removeClass('fa-times').addClass('fa-check');
-            $('#inventory-access-item').html(PosnicPro.i18n.t('lang_on_2', 'ON'));
-        } else {
-            $('#item-access').removeClass('badge-success').addClass('badge-danger');
-            $('#item-view-access').removeClass('fa-check').addClass('fa-times');
-            $('#inventory-access-item').html(PosnicPro.i18n.t('lang_off_2', 'OFF'));
-        }
-        if (data.negative_stock === true) {
-            $('#stock-access').removeClass('badge-danger').addClass('badge-success');
-            $('#item-view-stock-access').removeClass('fa-times').addClass('fa-check');
-            $('#stock-access-item').html(PosnicPro.i18n.t('lang_on_2', 'ON'));
-        } else {
-            $('#stock-access').removeClass('badge-success').addClass('badge-danger');
-            $('#item-view-stock-access').removeClass('fa-check').addClass('fa-times');
-            $('#stock-access-item').html(PosnicPro.i18n.t('lang_off_2', 'OFF'));
-        }
-
-        $('#item_view_mrpprice').number(data.mrp_price, 2);
-        $('#item_view_companyprice').number(data.company_price, 2);
-        $('#item_view_sellingprice').number(data.selling_price, 2);
-        var image_path = (data.image && data.image !== "item.svg") ? data.image : 'static/images/default/item.svg';
-        $('.itemimageview').attr('src', image_path);
-        $('.itemimageview').attr('onerror', "this.onerror=null;this.src='static/images/default/item.svg';");
-        $('.itemimageview').attr('id', data.image);
-        $('.itemimageview').attr('onClick', 'PosnicPro.viewImage(this.id,\'item\')');
-        $('#item_view_created_date').text(updateCreateDate);
-        var updateUpdateDate = PosnicPro.convertDate(response.data.updated_date);
-        $('#item_view_updated_date').text(updateUpdateDate);
-        $('#item_view_image').html('');
-        // Handle MongoDB date object format for manufacturing date
-        var mfgDateValue = response.data.items_mfg_date;
-        if (mfgDateValue && typeof mfgDateValue === 'object' && mfgDateValue.$date && mfgDateValue.$date.$numberLong) {
-            mfgDateValue = parseInt(mfgDateValue.$date.$numberLong);
-        }
-        var updateMfgDate = mfgDateValue ? PosnicPro.convertDate(mfgDateValue) : 'N/A';
-        $('#items_view_mfg_date').text(updateMfgDate);
-        // Handle MongoDB date object format for expiry date
-        var expDateValue = response.data.items_expiry_date;
-        if (expDateValue && typeof expDateValue === 'object' && expDateValue.$date && expDateValue.$date.$numberLong) {
-            expDateValue = parseInt(expDateValue.$date.$numberLong);
-        }
-        var updateExpDate = expDateValue ? PosnicPro.convertDate(expDateValue) : 'N/A';
-        $('#items_view_expiry_date').text(updateExpDate);
-        $.each(data.multi_image, function (key, val) {
-            $('#item-image-tab').show();
-            $('#show_product_image').show();
-            var image_path = val.name;
-            let img = jQuery('<img loading="lazy" decoding="async" class="imagezoom item_tab_images" id="' + image_path + '" src="" style="height:150px; width:150px;border: 2px solid #ccc;border-radius: 10px;padding:5px;margin-right: 20px;" onclick="PosnicPro.viewImage(this.id);">');
-            img.attr('src', image_path);
-            $('#item_view_image').append(img);
-        });
-        $('#item_view_description_value,#item_description_value').html('');
-        if (data.description !== '') {
-            $('#item-description-tab').show();
-            $('#item_view_description_value,#item_description_value').text(data.description);
         }
     },
     /*
@@ -3457,305 +3345,6 @@ PosnicPro.items = {
     }
 };
 
-PosnicPro.itemdetails = {
-
-    itemdetailsTable: function (type) {
-        PosnicPro.appendReportTableBody('customerdetails', '#view_itemdetails');
-        var loader = $(".loader-itemactivity");
-        $("<div class='loadingSpinner'></div>").appendTo(loader);
-        var table = $('#view_itemdetails');
-        if ($('a#view_items_page').hasClass('active')) {
-            var branch = [];
-            branch.push(PosnicPro.local.get("branch_id_set"));
-        } else {
-            var branch = $("#item_branch_value").val()
-        }
-        if (type === 'customerreportexport') {
-            var per_page = table.data('total');
-        } else {
-            var current_page = table.data('current_page');
-            var per_page = $('#view_itemdetails_per_page').val();
-        }
-        let item_id = currentHash.split('/');
-        var data = {
-            page: current_page,
-            limit: per_page,
-            item_id: item_id[1],
-            branch: branch
-        };
-        var params = {
-            url: 'sales/itemSaleDetails',
-            data: data
-        };
-        PosnicPro.get(params, function (response) {
-            if (response.type === 'success') {
-                if (type !== 'itemreportexport') {
-                    table.data('total', response.data.table.data.total);
-                    table.data('total_pages', response.data.table.data.total_pages);
-                    table.data('current_page', response.data.table.data.current_page);
-                    table.data('per_page', response.data.table.data.per_page);
-                    PosnicPro.paging(response.data.table.data.total_pages, response.data.table.data.current_page);
-                    table.children('tbody').text('');
-                    $('#view_itemdetails_total,.item_details_noofsale').text(response.data.table.data.total);
-                    var row_total = (table.data('current_page') - 1) * table.data('per_page') + 1;
-                    $('#view_itemdetails_page_total').text(row_total);
-                    var page_totals = (table.data('current_page') - 1) * table.data('per_page');
-                    $('#view_itemdetails_page_perpage_total').text(page_totals + response.data.table.data.list.length);
-                    var currency = PosnicPro.local.get('currencySign');
-                    var rowTotal = response.data.table.data.total;
-                    if (rowTotal === 0) {
-                        $('.itemactivity_content').hide();
-                        $('#itemactivity_img_hide').show();
-
-                    } else {
-                        $('#itemactivity_img_hide').hide();
-                        $('.itemactivity_content').show();
-                    }
-                    var process_class = "badge badge-success-inverse";
-                    var saleTotalValue = 0;
-                    var returnTotalValue = 0;
-                    for (var i = 0; i < response.data.table.data.list.length; i++) {
-                        var row = response.data.table.data.list[i];
-                        // A sale without denormalised totals (demo seeds, old
-                        // imports) must cost that CELL its number, never the
-                        // page - undefined.toFixed() here white-paged items.
-                        var rowSaleTotal = Number(row.items_total) || 0;
-                        var rowReturnTotal = Number(row.items_return_total) || 0;
-                        saleTotalValue += rowSaleTotal;
-                        returnTotalValue += rowReturnTotal;
-                        if (!row.sale_process || row.sale_process == 'Add' || row.sale_process == 'Edit') {
-                            process_class = "badge badge-success-inverse";
-                        } else if (row.sale_process == 'PartialReturn') {
-                            process_class = "badge badge-secondary-inverse";
-                        } else {
-                            process_class = "badge badge-danger-inverse";
-                        }
-                        let salesQty = 0;
-                        $(row.items).each(function (key, val) {
-                            salesQty += val.item_quantity;
-                        });
-                        let returnQty = 0;
-                        $(row.items_return).each(function (key, val) {
-                            $(val.returnArray.returnValue).each(function (key, val) {
-                                returnQty += val.item_quantity;
-                            });
-                        });
-                        let row_no = (table.data('current_page') - 1) * table.data('per_page') + i + 1;
-
-                        // Prefer backend-provided string_date, but gracefully
-                        // fall back to raw date fields so we never show the
-                        // current time when no preformatted date is present.
-                        let rawDate = row.string_date || row.date || row.created_date || row.updated_date;
-                        let updateDate = rawDate ? PosnicPro.convertDate(rawDate) : '';
-                        let trow = '<tr> <td scope="row" data-label="#">' + row_no + '</td> <td data-label="Sale">' + row.sales_id + '</td> <td class="export-date" data-label="Date">' + updateDate + '</td> <td class="text-center" data-label="Process"><span class="' + process_class + '">' + (row.sale_process || 'Add') + '</span></td> <td class="text-center text-danger" data-label="Return quantity">' + returnQty + '</td> <td class="text-right text-danger" data-label="Return total">' + (/^[A-Z]{3}$/.test(row.currencyCode || '') ? row.currencyCode : currency) + '&nbsp;' + rowReturnTotal.toFixed(Number.isInteger(row.currencyDigits) && row.currencyDigits >= 0 && row.currencyDigits <= 4 ? row.currencyDigits : 2) + '</td><td class="text-center text-success" data-label="Quantity">' + salesQty + '</td><td class="text-right text-success" data-label="Total">' + (/^[A-Z]{3}$/.test(row.currencyCode || '') ? row.currencyCode : currency) + '&nbsp;' + rowSaleTotal.toFixed(Number.isInteger(row.currencyDigits) && row.currencyDigits >= 0 && row.currencyDigits <= 4 ? row.currencyDigits : 2) + '</td></tr>';
-                        $('#view_itemdetails').children('tbody').append(trow);
-                        $('span.number').number(true, 2);
-                    }
-                    let total = 0;
-                    $('.item_details_totalsale').html('0');
-                    if (response.data.sale.length !== 0) {
-                        total = response.data.sale[0];
-                        $('.item_details_totalsale').html(total);
-                    }
-
-                    let totalreturn = 0;
-                    $('.item_details_totalreturn').html('0');
-                    if (response.data.return.length !== 0) {
-                        totalreturn = response.data.return[0];
-                        $('.item_details_totalreturn').html(totalreturn);
-                    }
-
-                    // Prefer the server's item-revenue total (the sum of THIS
-                    // item's line totals across all its sales). The old fallback
-                    // summed each sale's whole-bill total over just the loaded
-                    // page, so it counted other items in the bill and changed as
-                    // you paged. Round to 2 decimals (no raw 1306.8600000000001).
-                    var itemSaleValue =
-                        response.data.sale_amount !== undefined && response.data.sale_amount !== null
-                            ? Number(response.data.sale_amount)
-                            : saleTotalValue;
-                    var itemReturnValue =
-                        response.data.return_amount !== undefined && response.data.return_amount !== null
-                            ? Number(response.data.return_amount)
-                            : returnTotalValue;
-                    $('.item_details_saletotalvalue').html(itemSaleValue.toFixed(2));
-                    $('.item_details_returntotalvalue').html(itemReturnValue.toFixed(2));
-                    // Complete totals grouped by saved bill currency.
-                    if (Array.isArray(response.data.currency_totals)) {
-                        const formatTotals = field => response.data.currency_totals.map(group => {
-                            const label = /^[A-Z]{3}$/.test(group.currencyCode || '') ? group.currencyCode : currency;
-                            const digits = Number.isInteger(group.currencyDigits) && group.currencyDigits >= 0 && group.currencyDigits <= 4 ? group.currencyDigits : 2;
-                            return label + ' ' + (Number(group[field]) || 0).toFixed(digits);
-                        }).join(' · ') || currency + ' 0.00';
-                        $('.item_details_saletotalvalue').text(formatTotals('total'));
-                        $('.item_details_returntotalvalue').text(formatTotals('return_total'));
-                    }
-                    $('.item_details_saletotalvalue, .item_details_returntotalvalue')
-                        .siblings('.display-currency').toggle(!Array.isArray(response.data.currency_totals));
-                } else {
-                    var itemsalesreport = [];
-                    data = response.data.table.data.list;
-                    $(data).each(function (key, val) {
-                        let salesQty = 0;
-                        $(val.items).each(function (key, val) {
-                            salesQty += val.item_quantity;
-                        });
-                        let returnQty = 0;
-                        $(val.items_return).each(function (key, val) {
-                            $(val.returnArray.returnValue).each(function (key, val) {
-                                returnQty += val.item_quantity;
-                            });
-                        });
-
-                        // Use the same date fallback for CSV export so the
-                        // exported report matches the on-screen Date column.
-                        let exportRawDate = val.string_date || val.date || val.created_date || val.updated_date;
-                        let date = exportRawDate ? PosnicPro.convertDate(exportRawDate) : '';
-                        let process = val.sale_process || 'Add';
-                        let saleId = val.sales_id;
-                        let returnTotal = val.items_return_total;
-                        let saleTotal = val.items_total;
-                        itemsalesreport.push({SalesId: saleId, Date: date, Process: process, NoOfReturn: returnQty, ReturnAmount: returnTotal, NoOfSale: salesQty, SaleAmount: saleTotal, Currency: /^[A-Z]{3}$/.test(val.currencyCode || '') ? val.currencyCode : (PosnicPro.local.get('currencySign') || '')});
-                    });
-                    PosnicPro.JSONToCSVConvertor(itemsalesreport, 'item-sales-reports', true);
-                    PosnicPro.itemdetails.itemdetailsTable();
-                }
-            }
-            loader.find(".loadingSpinner:first").remove();
-        }, function (xhr) {
-            var response = jQuery.parseJSON(xhr.responseText);
-            PosnicPro.alert(response.type, response.message);
-        });
-    },
-
-    /*
-     * A single item's price trail.
-     *
-     * Inventory was already tracked; price was not, and shops that reprice
-     * often had no way to see what a product used to cost or who changed it.
-     * Every price change - a manual edit, a re-import, a bulk update - is
-     * recorded server-side; this reads it back, newest first.
-     */
-    priceHistory: function () {
-        var item_id = currentHash.split('/')[1];
-        if (!item_id) { return false; }
-
-        var loader = $('.loader-item-pricehistory');
-        $('#item_pricehistory_body').empty();
-        $('#item_history_filter_row').hide();
-        $("<div class='loadingSpinner'></div>").appendTo(loader);
-
-        PosnicPro.get({ url: 'items/priceHistory/' + item_id, data: '' }, function (response) {
-            loader.find('.loadingSpinner:first').remove();
-            var rows = (response && response.data) ? response.data : [];
-            PosnicPro.itemdetails._historyRows = rows;
-            if (!rows.length) {
-                $('#item_pricehistory_wrap').hide();
-                $('#item_history_filter_row').hide();
-                $('#item_pricehistory_empty').show();
-                return;
-            }
-            $('#item_pricehistory_empty').hide();
-            $('#item_pricehistory_wrap').show();
-            $('#item_history_filter').val('all');
-            $('#item_history_filter_row').show();
-            PosnicPro.itemdetails.renderHistory();
-        }, function (xhr) {
-            loader.find('.loadingSpinner:first').remove();
-            $('#item_pricehistory_wrap').hide();
-            $('#item_history_filter_row').hide();
-            $('#item_pricehistory_empty').show();
-        });
-        return false;
-    },
-
-    /*
-     * Draw the stored history through the current filter.
-     *
-     * The rows are already loaded, so filtering by "Price changes", "Name",
-     * "Category" or "SKU / Barcode" is instant - no round trip. A field is
-     * matched by its stored `field`/`value_type`, so this keeps working as
-     * new tracked fields are added server-side.
-     */
-    renderHistory: function () {
-        var rows = PosnicPro.itemdetails._historyRows || [];
-        var filter = $('#item_history_filter').val() || 'all';
-        var match = function (r) {
-            var type = r.value_type || 'money';
-            var f = r.field || '';
-            switch (filter) {
-                case 'price': return type === 'money' || type === 'percent';
-                case 'name': return f === 'name';
-                case 'category': return f === 'category_name';
-                case 'sku': return f === 'itemid' || f === 'barcode_id';
-                default: return true;
-            }
-        };
-
-        var legacyLabel = {
-            selling_price: 'Selling price',
-            mrp_price: 'Retail price',
-            company_price: 'Company price'
-        };
-        var currency = PosnicPro.local.get('currencySign') || '';
-        var esc = function (v) {
-            return String(v === undefined || v === null ? '' : v)
-                .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-                .replace(/"/g, '&quot;');
-        };
-        var show = function (v, type) {
-            if (type === 'money') return currency + '&nbsp;' + (Number(v) || 0).toFixed(2);
-            if (type === 'percent') return (Number(v) || 0) + '%';
-            var t = esc(v);
-            return t === '' ? '<span class="text-muted">-</span>' : t;
-        };
-
-        var html = '';
-        var shown = 0;
-        for (var i = 0; i < rows.length; i++) {
-            var r = rows[i];
-            if (!match(r)) continue;
-            shown += 1;
-            var type = r.value_type || 'money';
-            var label = r.label || legacyLabel[r.field] || r.field || '';
-
-            // The up/down arrow only means something for a number. A name going
-            // from "Pen" to "Pencil" gets a neutral dash instead.
-            var change = '<span class="text-muted">-</span>';
-            if (type === 'money' || type === 'percent') {
-                var oldN = Number(r.old_value) || 0;
-                var newN = Number(r.new_value) || 0;
-                change = (newN >= oldN)
-                    ? '<span class="text-success"><i class="feather icon-arrow-up"></i> ' + (newN - oldN).toFixed(2) + '</span>'
-                    : '<span class="text-danger"><i class="feather icon-arrow-down"></i> ' + (oldN - newN).toFixed(2) + '</span>';
-            }
-
-            var rawDate = r.date || r.created_date || r.updated_date;
-            var when = rawDate ? PosnicPro.convertDate(rawDate) : '';
-            var source = esc(r.process || 'Edit');
-            var by = esc(r.changed_by || '');
-            html += '<tr>'
-                + '<td>' + when + '</td>'
-                + '<td>' + esc(label) + '</td>'
-                + '<td class="text-right">' + show(r.old_value, type) + '</td>'
-                + '<td class="text-right f-w-6">' + show(r.new_value, type) + '</td>'
-                + '<td class="text-center">' + change + '</td>'
-                + '<td><span class="badge badge-info-inverse">' + source + '</span></td>'
-                + '<td>' + by + '</td>'
-                + '</tr>';
-        }
-        if (!shown) {
-            html = '<tr><td colspan="7" class="text-center text-muted" style="padding:20px;"><lang class="lang_no_changes_of_this_kind">No changes of this kind.</lang></td></tr>';
-        }
-        $('#item_pricehistory_body').html(html);
-        $('#item_history_filter_count').text(shown + ' of ' + rows.length);
-    },
-
-    itemdetailsreportexport: function (index) {
-        var type = $(index).data('id');
-        PosnicPro.itemdetails.itemdetailsTable(type);
-    }
-};
 
 
 $(function () {

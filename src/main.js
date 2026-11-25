@@ -18,7 +18,7 @@ const {
      require('electron'), which is why scheduled work runs as the app. */
   safeStorage,
   /* macOS gates the microphone behind TCC as well as Chromium's permission
-     layer, so voice setup asks the OS at the moment the shop turns it on. */
+     layer, so AI setup asks the OS at the moment the shop turns it on. */
   systemPreferences
 } = electron;
 
@@ -143,7 +143,7 @@ try {
 
 const { HardwareManager } = require('./hardware-manager');
 const { setupHardwareIPC } = require('./hardware-ipc');
-const { setupVoiceIPC, voiceInputState } = require('./voice-ipc');
+const { setupAiIPC, aiInputState } = require('./ai-ipc');
 const MongoDBManager = require('./mongodb-manager');
 const { AssetUpdater } = require('./asset-updater');
 
@@ -1807,9 +1807,10 @@ function createWindow(showStartupLoader = !isWarmStartup()) {
    *
    * A point of sale needs almost none of them. Printing goes through IPC to
    * the main process; it is not a browser permission. The one conditional
-   * exception is the microphone for voice dictation: it is off by default,
-   * the renderer sets voiceInputState.enabled only after the shop opts in,
-   * and even then only an audio-only request is granted. Video stays denied.
+   * exception is the microphone for the AI assistant: it is off by default,
+   * the main process sets aiInputState.enabled only after the shop opts in
+   * and both credentials exist, and even then only an audio-only request is
+   * granted. Video stays denied.
    */
   const ALLOWED_PERMISSIONS = new Set([
     /* Fullscreen: the customer display uses it, and it grants no access to
@@ -1842,9 +1843,9 @@ function createWindow(showStartupLoader = !isWarmStartup()) {
          and print windows share this session; neither has any reason to
          record, and neither may borrow the till's permission. */
       const fromMainWindow = !!mainWindow && webContents === mainWindow.webContents;
-      const voiceMicrophone =
-        fromMainWindow && permission === 'media' && voiceInputState.enabled && audioOnly;
-      const allowed = ALLOWED_PERMISSIONS.has(permission) || voiceMicrophone;
+      const aiMicrophone =
+        fromMainWindow && permission === 'media' && aiInputState.enabled && audioOnly;
+      const allowed = ALLOWED_PERMISSIONS.has(permission) || aiMicrophone;
       if (!allowed) {
         console.log(`[Security] denied permission request: ${permission}`);
       }
@@ -1859,7 +1860,7 @@ function createWindow(showStartupLoader = !isWarmStartup()) {
     (webContents, permission, requestingOrigin, details) => {
       if (ALLOWED_PERMISSIONS.has(permission)) return true;
       if (!mainWindow || webContents !== mainWindow.webContents) return false;
-      if (permission !== 'media' || !voiceInputState.enabled) return false;
+      if (permission !== 'media' || !aiInputState.enabled) return false;
       const mediaType = details && details.mediaType;
       return !mediaType || mediaType === 'audio';
     }
@@ -3845,10 +3846,20 @@ app.whenReady().then(async () => {
     return;
   }
 
-  /* The renderer may call voice:set-enabled as soon as it loads, so the
+  /* The renderer may call ai:set-enabled as soon as it loads, so the
      handlers must exist before the window does. */
-  setupVoiceIPC({ app, safeStorage, systemPreferences });
-  console.log('Voice IPC handlers registered');
+  setupAiIPC({
+    app,
+    safeStorage,
+    systemPreferences,
+    /* Resolve the port lazily: setupAiIPC runs before the API starts, and
+       process.env.PORT is set during startup. */
+    apiBaseUrl: () => `http://127.0.0.1:${apiPort()}`,
+    /* Keep assistant timing and recovery lines in the app log. They contain
+       no prompts, keys or shop records, only stage names and tool counts. */
+    logger: (line) => console.log(line),
+  });
+  console.log('AI IPC handlers registered');
 
   // Show UI immediately while MongoDB and the API initialize.
   createWindow();

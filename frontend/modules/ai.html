@@ -1,0 +1,143 @@
+<div class="vertical-layout page_loader" id="ai" style="display: none">
+    <div class="breadcrumbbar">
+        <div class="row align-items-center">
+            <div class="col-12">
+                <h4 class="page-title mb-0"><lang class="lang_ai_title">AI Assistant</lang></h4>
+            </div>
+        </div>
+    </div>
+    <div class="contentbar">
+        <div class="row">
+            <div class="col-xl-8">
+                <div class="card m-b-30" id="ai_setup_card">
+                    <div class="card-body">
+                        <h5 class="card-title"><lang class="lang_ai_setup_title">Turn on the assistant</lang></h5>
+                        <div class="alert alert-danger" id="ai_setup_error" role="alert" hidden></div>
+                        <button type="button" class="btn btn-primary" id="ai_enable" data-search-aliases="turn on off enable disable assistant Groq microphone voice provider model | تشغيل إيقاف تفعيل تعطيل المساعد Groq ميكروفون صوت">
+                            <i class="feather icon-zap mr-2" aria-hidden="true"></i>
+                            <span><lang class="lang_ai_enable">Enable AI assistant</lang></span>
+                        </button>
+                        <div id="ai_setup_form" class="mt-4" hidden>
+                            <div class="row">
+                                <div class="col-lg-6 mb-3">
+                                    <div class="card border h-100 posnic-ai-credential" aria-labelledby="ai_transcription_heading">
+                                        <div class="card-body">
+                                            <h6 class="card-title" id="ai_transcription_heading"><lang class="lang_ai_transcription_title">Speech to text</lang></h6>
+                                            <div class="form-group">
+                                                <label for="ai_transcription_key"><lang class="lang_ai_transcription_key_label">Groq Whisper API key</lang></label>
+                                                <div class="input-group">
+                                                    <input type="password" class="form-control" id="ai_transcription_key" autocomplete="new-password" spellcheck="false" aria-describedby="ai_transcription_state">
+                                                    <div class="input-group-append">
+                                                        <button type="button" class="btn btn-primary" id="ai_transcription_save">
+                                                            <span><lang class="lang_ai_key_save">Save and check</lang></span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <small class="text-muted d-block" id="ai_transcription_state" role="status" aria-live="polite"></small>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-lg-6 mb-3">
+                                    <div class="card border h-100 posnic-ai-credential" aria-labelledby="ai_chat_heading">
+                                        <div class="card-body">
+                                            <h6 class="card-title" id="ai_chat_heading"><lang class="lang_ai_chat_title">Assistant model</lang></h6>
+                                            <div class="form-row">
+                                                <div class="form-group col-sm-6">
+                                                    <label for="ai_provider"><lang class="lang_ai_provider_label">Provider</lang></label>
+                                                    <select class="form-control" id="ai_provider" aria-describedby="ai_provider_state"></select>
+                                                </div>
+                                                <div class="form-group col-sm-6">
+                                                    <label for="ai_model"><lang class="lang_ai_model_label">Model</lang></label>
+                                                    <select class="form-control" id="ai_model" aria-describedby="ai_provider_state"></select>
+                                                </div>
+                                            </div>
+                                            <div class="form-group">
+                                                <label for="ai_provider_key"><lang class="lang_ai_provider_key_label">Provider token</lang></label>
+                                                <div class="input-group">
+                                                    <input type="password" class="form-control" id="ai_provider_key" autocomplete="new-password" spellcheck="false" aria-describedby="ai_provider_state">
+                                                    <div class="input-group-append">
+                                                        <button type="button" class="btn btn-primary" id="ai_provider_save">
+                                                            <span><lang class="lang_ai_use_provider_key">Use this token</lang></span>
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            <small class="text-muted d-block" id="ai_provider_state" role="status" aria-live="polite"></small>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <button type="button" class="btn btn-primary" id="ai_turn_on" aria-describedby="ai_setup_status" disabled>
+                                <i class="feather icon-play mr-2" aria-hidden="true"></i>
+                                <span><lang class="lang_ai_turn_on">Turn on assistant</lang></span>
+                            </button>
+                            <small class="text-muted d-block mt-2" id="ai_setup_status" role="status" aria-live="polite"></small>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="card m-b-30" id="ai_chat_card" hidden>
+                    <div class="card-header d-flex align-items-center justify-content-between">
+                        <h5 class="card-title mb-0"><lang class="lang_ai_conversation">Conversation</lang></h5>
+                        <button type="button" class="btn btn-link p-0" id="ai_new_chat">
+                            <i class="feather icon-refresh-ccw mr-1" aria-hidden="true"></i>
+                            <lang class="lang_ai_new_chat">New chat</lang>
+                        </button>
+                    </div>
+                    <div class="card-body">
+                        <div class="posnic-ai-messages" id="ai_messages" role="log" aria-live="polite" aria-relevant="additions">
+                            <div class="posnic-ai-empty" id="ai_empty"><lang class="lang_ai_empty">Ask about products, prices or stock, or ask me to add or change something.</lang></div>
+                        </div>
+                        <div class="d-flex align-items-center mb-2">
+                            <div class="small text-muted" id="ai_status" role="status" aria-live="polite"></div>
+                            <button type="button" class="btn btn-link p-0 ml-2" id="ai_retry" hidden>
+                                <i class="feather icon-refresh-cw mr-1" aria-hidden="true"></i>
+                                <span><lang class="lang_retry">Retry</lang></span>
+                            </button>
+                        </div>
+                        <div class="posnic-ai-composer">
+                            <div class="posnic-ai-attachments" id="ai_attachments" hidden></div>
+                            <label class="sr-only" for="ai_prompt"><lang class="lang_ai_message_label">Your message</lang></label>
+                            <textarea class="form-control" id="ai_prompt" rows="2" maxlength="4000" placeholder="Type a question" data-t-placeholder="lang_ai_placeholder" dir="auto"></textarea>
+                            <div class="posnic-ai-controls">
+                                <button type="button" class="btn btn-outline-primary" id="ai_attach" title="Attach a product image" data-t-title="lang_ai_attach_title">
+                                    <i class="feather icon-paperclip mr-2" aria-hidden="true"></i>
+                                    <span><lang class="lang_ai_attach">Image</lang></span>
+                                </button>
+                                <input type="file" id="ai_attach_input" accept="image/png,image/jpeg,image/gif,image/bmp" multiple hidden aria-label="Attach a product image" data-t-aria-label="lang_ai_attach_title">
+                                <button type="button" class="btn btn-outline-primary posnic-ai-mic" id="ai_mic" aria-pressed="false" title="Record a question" data-t-title="lang_ai_record_title">
+                                    <i class="feather icon-mic mr-2" aria-hidden="true"></i>
+                                    <span><lang class="lang_ai_record">Record</lang></span>
+                                </button>
+                                <span class="small text-muted posnic-ai-record-time" id="ai_record_time"></span>
+                                <button type="button" class="btn btn-primary" id="ai_send">
+                                    <span><lang class="lang_ai_send">Send</lang></span>
+                                    <i class="feather icon-send ml-2" aria-hidden="true"></i>
+                                </button>
+                            </div>
+                        </div>
+                        <div class="d-flex align-items-start mt-2" id="ai_chat_only_note">
+                            <i class="feather icon-info mr-1" aria-hidden="true"></i>
+                            <small class="text-muted"><lang class="lang_ai_read_note">The assistant can look up products and categories and prepare changes for your review. Nothing changes until you confirm.</lang></small>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="col-xl-4">
+                <div class="card m-b-30" id="ai_settings_card" hidden>
+                    <div class="card-body">
+                        <h5 class="card-title"><lang class="lang_setting">Setting</lang></h5>
+                        <div class="d-flex flex-wrap align-items-center">
+                            <button type="button" class="btn btn-link p-0 mr-3" id="ai_disable"><lang class="lang_ai_turn_off">Turn off</lang></button>
+                            <button type="button" class="btn btn-link p-0 mr-3" id="ai_remove_key"><lang class="lang_ai_remove_key">Remove key</lang></button>
+                            <button type="button" class="btn btn-link p-0" id="ai_remove_provider"><lang class="lang_ai_provider_key_remove">Remove provider token</lang></button>
+                        </div>
+                        <small class="text-muted d-block mt-2" id="ai_connection_status" role="status" aria-live="polite"></small>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>

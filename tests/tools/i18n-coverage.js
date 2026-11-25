@@ -159,6 +159,12 @@ function keysUsed() {
     for (const m of js.matchAll(/title: '((?:[^'\\]|\\.)*)',\s*titleKey: '([^']+)'/g)) {
       remember(m[2], m[1], file);
     }
+    /* Error tables keep the key and its English together as a pair. The
+       render site asks for the pair later, so the key is used even though no
+       t() call names it at the table. */
+    for (const m of js.matchAll(/\[\s*'(lang_[A-Za-z0-9_-]+)'\s*,\s*'((?:[^'\\]|\\.)*)'\s*\]/g)) {
+      remember(m[1], m[2], file);
+    }
     /* JavaScript renders markup too - table headers, pills, receipt labels -
        and the observer translates it, so its keys are keys the UI uses. */
     /* A key is a word. Anything else between those quotes is JavaScript

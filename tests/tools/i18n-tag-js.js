@@ -90,6 +90,7 @@ const DENY = new Set(['Add|Edit', 'Received|Open', 'Partial|Received', 'Active|I
 const BRANDS = new Set([
   'Swiggy', 'Zomato', 'ONDC', 'magicpin', 'OpenCart', 'WooCommerce', 'Shopify',
   'Posnic', 'POSNIC', 'Razorpay', 'PhonePe', 'Google', 'Windows', 'Android',
+  'Groq', 'NVIDIA',
 ]);
 
 const TAGS = 'th|td|label|h[1-6]|small|strong|b|em|span|button|a|p|li|legend|div';

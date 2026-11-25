@@ -2,6 +2,7 @@
 const CategoryRepository = require('../repositories/category.repository');
 const { Types } = require('mongoose');
 const BaseModel = require('../models/base.model');
+const { rankNameMatches } = require('../utils/smart-name-search');
 const {
   sanitizeCategoryData,
   validateCategoryData,
@@ -142,7 +143,45 @@ class CategoryService {
 
       console.log('Category Final queryFilters:', JSON.stringify(queryFilters, null, 2));
 
-      const result = await this.repository.findAll(queryFilters, options);
+      let result = await this.repository.findAll(queryFilters, options);
+
+      /* A typed search that finds nothing may still be one letter away from a
+         real category (the common "احزايا" for "أحذية"). Score the branch's
+         categories by edit distance before reporting zero. The fallback is
+         only for the simple search field; name/description filters keep their
+         exact regex semantics. */
+      if (
+        filters.search &&
+        !filters.name &&
+        !filters.description &&
+        result &&
+        Number(result.total) === 0
+      ) {
+        const fuzzyFilters = { ...queryFilters };
+        delete fuzzyFilters.$or;
+        const candidates = await this.repository.findAll(fuzzyFilters, {
+          page: 1,
+          limit: 5000,
+          sort: options.sort,
+        });
+        const ranked = rankNameMatches(
+          filters.search,
+          (candidates && candidates.data) || [],
+          (category) => category && category.name
+        );
+        if (ranked.length) {
+          const page = Math.max(1, parseInt(options.page, 10) || 1);
+          const limit = Math.max(1, parseInt(options.limit, 10) || 10);
+          const start = (page - 1) * limit;
+          result = {
+            data: ranked.slice(start, start + limit).map((entry) => entry.item),
+            total: ranked.length,
+            page,
+            limit,
+            totalPages: Math.ceil(ranked.length / limit),
+          };
+        }
+      }
 
       return {
         status: true,
@@ -422,7 +461,22 @@ class CategoryService {
         return this.getAllCategories({}, options);
       }
 
-      const result = await this.repository.search(searchTerm, options);
+      let result = await this.repository.search(searchTerm, options);
+
+      /* Autocomplete uses the same spelling tolerance as the category list. */
+      if (result && Number(result.total) === 0) {
+        const filters = { search: searchTerm };
+        if (options.branchId) filters.branch_id = options.branchId;
+        if (options.license) filters.license = options.license;
+        if (options.status) filters.status = options.status;
+        const fuzzy = await this.getAllCategories(filters, {
+          page: options.page,
+          limit: options.limit,
+        });
+        if (fuzzy.status && fuzzy.data && Number(fuzzy.data.total) > 0) {
+          return fuzzy;
+        }
+      }
 
       return {
         status: true,

@@ -53,13 +53,6 @@
                                         class="feather icon-inbox mr-2"></i>
                                     <lang class="lang_cash_register">Cash Register</lang>
                                 </a>
-                                <a class="nav-link mb-2" data-module="branch" data-access="write"
-                                    id="v-pills-voice-tab" data-toggle="pill" href="#v-pills-voice" role="tab"
-                                    aria-controls="v-pills-voice" aria-selected="false"
-                                    data-search-aliases="dictation microphone speech to text Arabic Groq Whisper local | إملاء صوتي ميكروفون تحويل الكلام إلى نص عربي"><i
-                                        class="feather icon-mic mr-2"></i>
-                                    <lang class="lang_voice_input">Voice input</lang>
-                                </a>
                                                                                                                                                                 <a class="nav-link mb-2" data-module="branch" data-access="write" id="v-pills-theme-tab"
                                     data-toggle="pill" href="#v-pills-theme" role="tab" aria-controls="v-pills-theme"
                                     aria-selected="false" onclick="PosnicPro.themeManager.loadThemeSettingsUI();"><i class="feather icon-droplet mr-2"></i>
@@ -2288,115 +2281,6 @@
                             </form>
                         </div>
                         <!-- General Tab End -->
-<div class="tab-pane fade" data-module="branch" data-access="write" id="v-pills-voice"
-                            role="tabpanel" aria-labelledby="v-pills-voice-tab">
-                            <div class="card m-b-30">
-                                <div class="card-header">
-                                    <h5 class="card-title mb-0">
-                                        <lang class="lang_voice_input">Voice input</lang>
-                                    </h5>
-                                </div>
-                                <div class="card-body">
-                                    <div class="custom-control custom-switch mb-1">
-                                        <input type="checkbox" class="custom-control-input" id="voice_enabled"
-                                            data-search-aliases="dictation microphone speech turn on off enable disable | إملاء صوتي ميكروفون تشغيل إيقاف">
-                                        <label class="custom-control-label" for="voice_enabled">
-                                            <lang class="lang_voice_enable">Enable voice dictation</lang>
-                                        </label>
-                                    </div>
-                                    <small class="text-muted d-block mb-3">
-                                        <lang class="lang_voice_shortcut_hint">Shortcut: Ctrl+Alt+V. The microphone in search works too.</lang>
-                                    </small>
-
-                                    <div class="form-row">
-                                        <div class="form-group col-md-6">
-                                            <label for="voice_provider"><lang class="lang_voice_engine">Engine</lang></label>
-                                            <select class="form-control" id="voice_provider"
-                                                data-search-aliases="engine provider Groq local Whisper account | محرك مزود محلي حساب">
-                                                <option value="local"><lang class="lang_voice_local">On this computer (Whisper)</lang></option>
-                                                <option value="groq"><lang class="lang_voice_groq">Groq (free account)</lang></option>
-                                            </select>
-                                            <small class="text-muted d-block mt-1" id="voice_engine_hint"></small>
-                                        </div>
-                                        <div class="form-group col-md-6" id="voice_model_group">
-                                            <label for="voice_local_model"><lang class="lang_voice_model">Arabic model</lang></label>
-                                            <select class="form-control" id="voice_local_model"
-                                                data-search-aliases="Whisper model small base accuracy download | نموذج ويسبر دقة تنزيل">
-                                                <option value="small"><lang class="lang_voice_model_small">Small - slower, more accurate</lang></option>
-                                                <option value="base"><lang class="lang_voice_model_base">Base - faster, less accurate</lang></option>
-                                            </select>
-                                        </div>
-                                    </div>
-
-                                    <div id="voice_local_panel">
-                                        <div class="d-flex align-items-center flex-wrap">
-                                            <button type="button" class="btn btn-outline-primary" id="voice_local_load">
-                                                <i class="feather icon-download-cloud mr-2"></i>
-                                                <lang class="lang_voice_model_load">Download and load model</lang>
-                                            </button>
-                                            <span class="text-muted ml-3" id="voice_local_status">
-                                                <lang class="lang_voice_download_size">About 240 MB once, then cached</lang>
-                                            </span>
-                                        </div>
-                                        <div class="progress posnic-voice-progress" id="voice_local_progress_wrap" hidden>
-                                            <div class="progress-bar" id="voice_local_progress" role="progressbar"
-                                                style="width:0%" aria-valuemin="0" aria-valuemax="100"></div>
-                                        </div>
-                                        <small class="text-muted d-block mt-2">
-                                            <lang class="lang_voice_offline">After the model is downloaded, the local engine works offline.</lang>
-                                        </small>
-                                    </div>
-
-                                    <div id="voice_groq_panel" hidden>
-                                        <div class="form-group mb-2">
-                                            <label for="voice_groq_key"><lang class="lang_voice_groq_key">Groq API key</lang></label>
-                                            <div class="input-group">
-                                                <input type="password" class="form-control" id="voice_groq_key"
-                                                    autocomplete="new-password" spellcheck="false">
-                                                <div class="input-group-append">
-                                                    <button type="button" class="btn btn-outline-primary" id="voice_groq_save">
-                                                        <lang class="lang_voice_groq_save">Save key</lang>
-                                                    </button>
-                                                </div>
-                                            </div>
-                                            <small class="text-muted d-block mt-2" id="voice_groq_status"></small>
-                                        </div>
-                                        <div class="d-flex align-items-center flex-wrap mb-2">
-                                            <button type="button" class="btn btn-link p-0 mr-3" id="voice_groq_validate">
-                                                <lang class="lang_voice_groq_validate">Check key</lang>
-                                            </button>
-                                            <button type="button" class="btn btn-link p-0" id="voice_groq_remove">
-                                                <lang class="lang_voice_groq_remove">Remove key</lang>
-                                            </button>
-                                        </div>
-                                        <small class="text-muted d-block">
-                                            <lang class="lang_voice_groq_hint">Audio is sent to Groq for transcription. The key belongs to this shop and is never shared.</lang>
-                                        </small>
-                                    </div>
-
-                                    <hr>
-
-                                    <div class="form-group mb-2">
-                                        <label><lang class="lang_voice_try">Try dictation</lang></label>
-                                        <div class="d-flex align-items-center flex-wrap">
-                                            <button type="button" class="btn btn-primary" id="voice_test_record">
-                                                <i class="feather icon-mic mr-2"></i>
-                                                <span><lang class="lang_voice_start">Start recording</lang></span>
-                                            </button>
-                                            <span class="text-muted ml-3" id="voice_test_status"></span>
-                                        </div>
-                                        <div id="voice_test_bar" class="posnic-voice-host"></div>
-                                        <textarea class="form-control mt-2" id="voice_test_text" rows="3" dir="rtl"
-                                            placeholder="Your transcript appears here" data-t-placeholder="lang_voice_test_placeholder"></textarea>
-                                    </div>
-
-                                    <small class="text-muted d-block">
-                                        <lang class="lang_voice_privacy">Audio is recorded only while the bar is on screen, and the clip is discarded after transcription.</lang>
-                                    </small>
-                                    <small class="text-muted d-block" id="voice_platform_hint"></small>
-                                </div>
-                            </div>
-                        </div>
                         <div class="tab-pane fade" data-module="branch" data-access="write" id="v-pills-theme"
                             role="tabpanel" aria-labelledby="v-pills-theme-tab">
                             <div class="card m-b-30">

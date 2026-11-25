@@ -46,4 +46,9 @@ module.exports = [
     description: 'Rename the default walk-in customer and general supplier to their Arabic names',
     up: require('./arabic-default-party-names'),
   },
+  {
+    id: '008-item-search-index',
+    description: 'Build the normalized, typo-tolerant item search index and its indexes',
+    up: require('./008-item-search-index'),
+  },
 ];

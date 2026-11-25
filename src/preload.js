@@ -201,16 +201,32 @@ contextBridge.exposeInMainWorld('electronAPI', {
     set: (key, value) => ipcRenderer.invoke('preferences:set', key, value)
   },
   /*
-   * Voice dictation. The key and the Groq request stay in the main process;
-   * the renderer only gets a status, a save/clear result, and a transcript.
+   * AI assistant. The key, the Groq requests and the chat-history bound stay
+   * in the main process; the renderer only gets a status, a save/clear result,
+   * a transcript and a reply.
    */
-  voice: {
-    setEnabled: (enabled) => ipcRenderer.invoke('voice:set-enabled', !!enabled),
-    keyStatus: () => ipcRenderer.invoke('voice:key-status'),
-    validateKey: (key) => ipcRenderer.invoke('voice:validate-key', key),
-    saveKey: (key) => ipcRenderer.invoke('voice:save-key', key),
-    clearKey: () => ipcRenderer.invoke('voice:clear-key'),
-    transcribe: (payload) => ipcRenderer.invoke('voice:transcribe', payload)
+  ai: {
+    setEnabled: (enabled) => ipcRenderer.invoke('ai:set-enabled', !!enabled),
+    keyStatus: () => ipcRenderer.invoke('ai:key-status'),
+    validateKey: (key) => ipcRenderer.invoke('ai:validate-key', key),
+    saveKey: (key) => ipcRenderer.invoke('ai:save-key', key),
+    clearKey: () => ipcRenderer.invoke('ai:clear-key'),
+    transcribe: (payload) => ipcRenderer.invoke('ai:transcribe', payload),
+    chat: (payload) => ipcRenderer.invoke('ai:chat', payload),
+    validateProviderKey: (provider, key) => ipcRenderer.invoke('ai:validate-provider-key', { provider, key }),
+    saveProviderKey: (provider, key) => ipcRenderer.invoke('ai:save-provider-key', { provider, key }),
+    clearProviderKey: (provider) => ipcRenderer.invoke('ai:clear-provider-key', { provider }),
+    setProviderModel: (provider, model) => ipcRenderer.invoke('ai:set-provider-model', { provider, model }),
+    resetChat: (payload) => ipcRenderer.invoke('ai:reset-chat', payload),
+    attach: (payload) => ipcRenderer.invoke('ai:attach', payload),
+    removeAttachment: (payload) => ipcRenderer.invoke('ai:remove-attachment', payload),
+    confirmPlan: (payload) => ipcRenderer.invoke('ai:confirm-plan', payload),
+    cancelPlan: (payload) => ipcRenderer.invoke('ai:cancel-plan', payload),
+    onPlanProgress: (callback) => {
+      const handler = (_event, progress) => callback(progress);
+      ipcRenderer.on('ai:plan-progress', handler);
+      return () => ipcRenderer.removeListener('ai:plan-progress', handler);
+    }
   },
   connectors: {
     status:  () => ipcRenderer.invoke('connectors:status'),

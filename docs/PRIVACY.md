@@ -3,7 +3,7 @@
 What Posnic does with your data, in plain terms. This covers the desktop
 application and the self-hosted server in this repository.
 
-**Last updated:** 24 November 2026
+**Last updated:** 25 November 2026
 
 ## The short version
 
@@ -13,9 +13,9 @@ analytics and no telemetry. We cannot see your sales, your customers or your
 stock, because they never reach us.
 
 Posnic also ships integrations you can switch on — emailing a receipt, taking
-an online payment. Those exist because shops asked for them, and
-each one sends data to a provider **you** choose and configure. None is on by
-default; none involves us. [What you can switch
+an online payment, asking an AI assistant. Those exist because shops asked for
+them, and each one sends data to a provider **you** choose and configure. None
+is on by default; none involves us. [What you can switch
 on](#what-you-can-switch-on-and-what-it-sends) lists every one of them and what
 it sends where.
 
@@ -67,10 +67,10 @@ policy refuses Google's domains outright.
 
 | Feature                    | Off by default | What it sends                                                                     | To whom                                                                    | Turn it off by                                                 |
 | -------------------------- | -------------- | --------------------------------------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------- |
-| Voice input - local        | Yes            | Nothing containing shop or customer data. On first use, a read-only request downloads the public Whisper model. The recording stays on this computer. | Hugging Face, for the model files only                                     | Switching voice input off, or clearing the browser's cached model |
-| Voice input - Groq         | Yes            | The recorded audio clip, so it can be transcribed                                 | Groq, using the free API key this shop creates and stores                  | Switching voice input off, or removing the key                  |
+| Speech to text (AI assistant) | Yes         | The recorded audio clip, so it can be transcribed                                 | Groq, using the free Whisper key this shop creates and stores              | Turning the assistant off, or removing the key                  |
+| AI assistant chat          | Yes            | The message you type and recent conversation context                              | The model provider you select and hold the account with: Groq or NVIDIA   | Turning the assistant off, or removing the provider token       |
 | Email receipts and reports | Yes            | Customer email, invoice PDF, sale total, payment mode                             | The SMTP or email API provider you configure                               | Clearing the email settings                                    |
-| Google Analytics           | Yes            | Page views and usage events from this shop's pages, under Google's own collection | Google, into the Analytics account whose measurement id you enter          | Switching the toggle off (Settings → Integrations → Analytics) |
+| Google Analytics | Yes | Page views and usage events from this shop's pages, under Google's own collection | Google, into the Analytics account whose measurement id you enter | Switching the toggle off (Settings → Integrations → Analytics) |
 | S3 file storage            | Yes            | Item and user images you upload                                                   | The S3 bucket you own                                                      | Leaving storage set to local                                   |
 | Browser push notifications | Yes            | A low-stock count and a link to the low-stock page                                | The push service your browser uses, with keys stored in your shop database | Removing the subscription or the reorder level                 |
 | Outbound webhooks          | Yes            | A change event naming the entity and time; no business record                     | The HTTPS endpoint you register                                            | Deleting the webhook subscription                              |
@@ -80,31 +80,34 @@ If none of these is configured — which is how the app installs — then apart 
 the database download above, nothing your shop does reaches the network at all.
 Pull the cable and keep selling; that is the design.
 
-### Voice input
+### AI assistant
 
-Voice dictation is off until a shop turns it on in **Settings → Voice input**.
-The microphone permission is refused by the desktop application while it is off.
-Audio is recorded only while the on-screen dictation bar is listening, and the
-clip is discarded by Posnic after it has been transcribed.
+The AI assistant is off until a shop turns it on. The microphone is requested
+only after that explicit opt-in. There are two parts:
 
-There are two engines, and the shop chooses which one to use:
+- **Speech to text.** A recording is sent to Groq for transcription with
+  Whisper (`whisper-large-v3`). Groq receives the audio clip. Each shop creates its own free Groq account and Whisper key at
+  `console.groq.com/keys`; the key is the shop's, not Posnic's, and Groq's terms
+  and privacy policy apply to the audio it receives.
+- **Chat.** Replies come from an OpenCode agent embedded in the Posnic desktop
+  application. It sends the message you type and recent conversation context to
+  the model provider you select and hold the account with — Groq or NVIDIA — for
+  the reply. That provider's terms and privacy policy apply to what it receives.
 
-- **On this computer (Whisper).** The recording never leaves the till. The
-  first use downloads a public Whisper model from Hugging Face, which is a
-  read-only request for model files and does not include any shop or customer
-  data. The model is cached on the till and the engine then works offline.
-- **Groq.** The recording is sent to Groq for transcription. Groq receives the
-  audio clip and returns text. Each shop creates its own free Groq account and
-  API key; the key is the shop's, not Posnic's, and Groq's terms and privacy
-  policy apply to the audio it receives. In the desktop application the key is
-  encrypted with the operating system's keystore and is never synced or placed
-  in the shop database. On a system without a secure keystore the key is held
-  only in the main process for that run and is never written to disk.
+Both the Whisper key and the model provider token are stored only on the
+computer where they were entered. In the desktop application they are encrypted
+with the operating system's keystore when one is available; on a system without
+a secure keystore they are held only for that run and are never written to disk.
+They are never synced or placed in the shop database.
 
-Neither engine stores dictation in Posnic's database, and neither syncs audio
-between installations. A transcript is inserted as ordinary text in the field
-the shop was using, so it is then governed by that field's normal storage and
-sync rules. A shop that enables Groq should disclose this to staff and, where
+This trial assistant is chat-only. Tools and actions are disabled: it cannot
+read or change shop records, stock, sales, prices, customers, reports, settings
+or the local database. Posnic does not keep a voice history or store the
+conversation in the shop database. Conversation history is kept only on this
+computer in the app's own data folder, is never synced between installations,
+and is cleared with Reset chat.
+
+A shop that enables the assistant should disclose this to staff and, where
 their circumstances require it, to customers whose speech may be recorded.
 
 **Your customers did not choose these providers, you did.** If you switch one

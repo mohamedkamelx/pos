@@ -160,7 +160,6 @@ PosnicPro.settings = {
                     PosnicPro.suppliers.viewSupplierData(response);
                 } else if (module === 'categories') {
                     PosnicPro.categories.viewCategoryData(response);
-                    PosnicPro.items.viewItemData(response);
                 } else if (module === 'branches') {
                     PosnicPro.branches.viewBranchData(response);
                 } else if (module === 'users') {

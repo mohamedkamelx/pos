@@ -9,6 +9,7 @@ const { Types } = require('mongoose');
 const { ObjectId } = require('mongodb');
 const asyncHandler = require('express-async-handler');
 const { DEFAULTS } = require('../constants/categories.constants');
+const { rankNameMatches } = require('../utils/smart-name-search');
 
 /**
  * Categories Controller
@@ -719,10 +720,16 @@ class CategoriesController extends BaseController {
         name: cat.name,
       }));
 
-      // Apply search filter if provided
-      const filtered = search
+      // Apply search filter if provided. A spelling slip falls back to the
+      // closest category name instead of an empty dropdown.
+      let filtered = search
         ? options.filter((opt) => opt.name.toLowerCase().includes(search.toLowerCase()))
         : options;
+      if (search && !filtered.length) {
+        filtered = rankNameMatches(search, options, (option) => option.name).map(
+          (entry) => entry.item
+        );
+      }
 
       return this.success(res, filtered, result.message);
     } else {

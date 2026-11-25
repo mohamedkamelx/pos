@@ -36,6 +36,9 @@ const APP_RENDERER_FILES = new Set([
 const APP_KEEP_JS = new Set([
   'src/crash-log.js',
   'src/crash-guard.js',
+  /* Dynamic import from a vm.Script has no import callback, so the ESM bridge
+     must stay a normal module. */
+  'src/ai/sdk-loader.js',
 ]);
 
 // These two are also read as text and executed inside the hidden print window.
@@ -44,6 +47,12 @@ const API_KEEP_JS = new Set([
   'src/helpers/receipt-design.js',
   'src/helpers/sale-payment-summary.js',
 ]);
+
+/* Native files cannot be loaded from inside an asar archive. The repack below
+   rebuilds the archive, so every runtime native library - not only the
+   serialport binding - has to be named here. The embedded OpenCode SDK pulls
+   in the TUI renderer and PTY helper even for chat-only use. */
+const ASAR_UNPACK = '**/node_modules/{@serialport/bindings-cpp,@opentui/core-linux-x64,@opencode/pty-linux-x64-gnu,@ff-labs/fff-bin-linux-x64-gnu,bun-pty,@number0/iroh-linux-x64-gnu}/**';
 
 function walk(dir, predicate = () => true) {
   const found = [];
@@ -269,7 +278,7 @@ async function harden(context) {
     fs.rmSync(asarPath, { force: true });
     fs.rmSync(`${asarPath}.unpacked`, { recursive: true, force: true });
     await asar.createPackageWithOptions(tempDir, asarPath, {
-      unpack: '**/node_modules/@serialport/bindings-cpp/**',
+      unpack: ASAR_UNPACK,
     });
     asar.uncacheAll();
 

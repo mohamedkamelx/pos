@@ -144,6 +144,21 @@
       "src/hardware-manager.html",
       "src/hardware-manager.js",
       "src/hardware-ipc.js",
+      "src/ai-ipc.js",
+      "src/ai/provider-registry.js",
+      "src/ai/key-store.js",
+      "src/ai/transcriber.js",
+      "src/ai/provider-client.js",
+      "src/ai/opencode-runtime.js",
+      "src/ai/sdk-loader.js",
+      "src/ai/user-profile.js",
+      "src/ai/attachments.js",
+      "src/ai/conversation-memory.js",
+      "src/ai/currency.js",
+      "src/ai/text-match.js",
+      "src/ai/reference/*.js",
+      "src/ai/tools/*.js",
+      "src/ai/actions/*.js",
       "src/print-window-guard.js",
       "src/receipt-page-layout.js",
       "src/print-pdf.js",
@@ -187,6 +202,7 @@
       "src/preload.js",
       "package.json",
       "!**/*.md",
+      "src/ai/reference/*.md",
       "THIRD-PARTY-NOTICES.md",
       "LICENSE",
       "!**/*.map",
@@ -526,7 +542,7 @@
       "entitlements": "builds/entitlements.mac.plist",
       "entitlementsInherit": "builds/entitlements.mac.plist",
       "extendInfo": {
-        "NSMicrophoneUsageDescription": "Posnic uses the microphone only while you are dictating, and only after voice input is turned on."
+        "NSMicrophoneUsageDescription": "Posnic uses the microphone only while you are recording a question for the AI assistant, and only after the assistant is turned on."
       },
       "target": [
         {
@@ -645,9 +661,11 @@
     "sharp": "^0.35.5"
   },
   "dependencies": {
+    "@opencode/sdk": "2.4.1",
     "electron-updater": "^6.8.9",
     "mongodb": "7.7.0",
     "pdf-to-printer": "^5.8.1",
+    "redis": "^6.4.0",
     "serialport": "^13.0.0"
   },
   "overrides": {

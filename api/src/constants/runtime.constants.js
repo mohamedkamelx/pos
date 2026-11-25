@@ -15,7 +15,7 @@
  * requires it, in the same commit.
  */
 
-const API_SCHEMA_VERSION = 8;
+const API_SCHEMA_VERSION = 9;
 const SYNC_PROTOCOL_VERSION = 1;
 
 module.exports = { API_SCHEMA_VERSION, SYNC_PROTOCOL_VERSION };

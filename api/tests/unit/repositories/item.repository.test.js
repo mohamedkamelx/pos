@@ -76,6 +76,7 @@ jest.mock('../../../src/models/base.model', () => {
 });
 
 const ItemRepository = require('../../../src/repositories/item.repository');
+const { buildSearchIndex } = require('../../../src/utils/item-search-index');
 const BaseModel = require('../../../src/models/base.model');
 const { ObjectId } = require('mongodb');
 const Branch = require('../../../src/models/branch.model');
@@ -459,6 +460,50 @@ describe('ItemRepository', () => {
     test('rethrows error', async () => {
       repo.getCollection.mockRejectedValueOnce(new Error('fail'));
       await expect(repo.searchItems('q')).rejects.toThrow('fail');
+    });
+    test('ranks a prefix match and scopes the query to branch and licence', async () => {
+      const candidate = {
+        _id: 'item-1',
+        name: 'Pepsi 1L',
+        ...buildSearchIndex({ name: 'Pepsi 1L', category_name: 'Cold Drinks' }),
+      };
+      col.find
+        .mockReturnValueOnce(mkChain([candidate]))
+        .mockReturnValueOnce(mkChain([]))
+        .mockReturnValueOnce(
+          mkChain([{ _id: 'item-1', name: 'Pepsi 1L', category_name: 'Cold Drinks' }])
+        );
+
+      const r = await repo.searchItems('pepsi', {
+        branchId: FAKE_BRANCH,
+        licenseId: FAKE_LICENSE,
+      });
+
+      expect(r).toEqual([
+        { _id: 'item-1', name: 'Pepsi 1L', category_name: 'Cold Drinks' },
+      ]);
+      const filterText = JSON.stringify(col.find.mock.calls[0][0]);
+      expect(filterText).toContain('branch_access.branch_id');
+      expect(filterText).toContain('license');
+      expect(filterText).toContain('search_tokens');
+    });
+    test('finds a typo through the n-gram index and strips derived fields', async () => {
+      const candidate = {
+        _id: 'item-1',
+        name: 'Pepsi 1L',
+        ...buildSearchIndex({ name: 'Pepsi 1L' }),
+      };
+      col.find
+        .mockReturnValueOnce(mkChain([]))
+        .mockReturnValueOnce(mkChain([candidate]))
+        .mockReturnValueOnce(mkChain([{ _id: 'item-1', name: 'Pepsi 1L' }]));
+
+      const r = await repo.searchItems('pepse');
+
+      expect(r).toEqual([{ _id: 'item-1', name: 'Pepsi 1L' }]);
+      expect(r[0].search_tokens).toBeUndefined();
+      expect(r[0].search_ngrams).toBeUndefined();
+      expect(JSON.stringify(col.find.mock.calls[1][0])).toContain('search_ngrams');
     });
   });
 

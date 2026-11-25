@@ -30,7 +30,8 @@ const IPC_FILES = [
   'src/hardware-ipc.js',
   'src/pin-lock-ipc.js',
   'src/update-integration.js',
-  'src/voice-ipc.js',
+  'src/ai-ipc.js',
+  'src/ai/opencode-runtime.js',
 ];
 
 test('no file registers an IPC handler on the raw ipcMain', () => {

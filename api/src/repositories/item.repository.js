@@ -3,6 +3,19 @@ const sellingPriceHold = require('../utils/selling-price-hold');
 const itemText = require('../utils/item-localization');
 const gtin = require('../utils/gtin');
 const { searchPattern } = require('../utils/safe-search');
+const {
+  buildSearchIndex,
+  compareSearchCandidates,
+  escapeSearchRegex,
+  ngramsForToken,
+  normalizeSearchText,
+  scoreSearchCandidate,
+  stripSearchIndex,
+  tokenizeSearchText,
+  unique,
+  withSearchIndex,
+} = require('../utils/item-search-index');
+const { ensureIndexOnce } = require('../db/ensure-index');
 // src/repositories/item.repository.js
 const BaseModel = require('../models/base.model');
 const Item = require('../models/item.model');
@@ -103,6 +116,29 @@ const TRACKED_FIELDS = [
   { field: 'company_price', label: 'Company price', type: 'money' },
   { field: 'selling_price', label: 'Selling price', type: 'money' },
 ];
+
+const SEARCH_CANDIDATE_LIMIT = 300;
+const SEARCH_CANDIDATE_PROJECTION = {
+  name: 1,
+  category_name: 1,
+  description: 1,
+  brand: 1,
+  tags: 1,
+  stock_locations: 1,
+  translations: 1,
+  sku: 1,
+  barcode_id: 1,
+  itemid: 1,
+  plu_code: 1,
+  gtin: 1,
+  gtin14: 1,
+  barcodes: 1,
+  variant_parent_name: 1,
+  variant_value: 1,
+  search_tokens: 1,
+  search_ngrams: 1,
+  updated_date: 1,
+};
 
 /**
  * Item Repository
@@ -1569,14 +1605,14 @@ class ItemRepository extends BaseModel {
 
       if (!id) {
         // Insert new item
-        const insertData = {
+        const insertData = withSearchIndex({
           ...updateData,
           created_date: now,
           created_by: loggedUserName || 'System',
           created_by_id: loggedUserId || null,
           creation_origin: itemCreationOrigin.record('add_item', context, now),
           item_status: ITEM_STATUS.REGULAR,
-        };
+        });
 
         const result = await collection.insertOne(insertData);
         const insertedId = result.insertedId;
@@ -1679,6 +1715,11 @@ class ItemRepository extends BaseModel {
         );
         if (retainedClash) return { status: 'exist', message: retainedClash.message, data: null };
       }
+
+      /* The search index is derived from the merged document, not only from
+         this edit's fields, so a name-only change keeps the old description
+         searchable and a description-only change keeps the old name. */
+      Object.assign(updateData, buildSearchIndex({ ...existingItem, ...updateData }));
 
       const itemWrite = await collection.updateOne(
         {
@@ -1905,38 +1946,136 @@ class ItemRepository extends BaseModel {
    */
   async searchItems(query, context = {}) {
     const collection = await this.getCollection(this.collectionName);
+    const raw = String(query == null ? '' : query).trim();
+    if (!raw) return [];
 
-    const clauses = [
-      {
-        $or: [
-          { name: { $regex: searchPattern(query), $options: 'i' } },
-          { stock_locations: { $regex: searchPattern(query), $options: 'i' } },
-          { 'translations.name': { $regex: searchPattern(query), $options: 'i' } },
-          { barcode_id: query },
-          { barcodes: query },
-        ],
-      },
-    ];
+    const normalized = normalizeSearchText(raw);
+    const queryTokens = unique(tokenizeSearchText(normalized)).slice(0, 8);
+    if (!queryTokens.length) return [];
+
+    const requestedLimit = parseInt(context.limit, 10);
+    const limit =
+      Number.isFinite(requestedLimit) && requestedLimit > 0
+        ? Math.min(requestedLimit, 100)
+        : 20;
 
     const { branchId, licenseId } = context;
+    const scope = [];
     if (branchId) {
       const branchObjectId = ObjectId.isValid(branchId) ? new ObjectId(branchId) : branchId;
-      clauses.push({
+      scope.push({
         $or: [{ 'branch_access.branch_id': branchObjectId }, { branch_id: branchObjectId }],
       });
     }
     if (licenseId) {
-      clauses.push({ license: ObjectId.isValid(licenseId) ? new ObjectId(licenseId) : licenseId });
+      scope.push({ license: ObjectId.isValid(licenseId) ? new ObjectId(licenseId) : licenseId });
+    }
+    const scopeFilter = scope.length === 0 ? {} : scope.length === 1 ? scope[0] : { $and: scope };
+
+    /* Databases created before the migration still need these indexes for the
+       first search; ensureIndexOnce is a no-op after the first success. */
+    await Promise.all([
+      ensureIndexOnce(
+        collection,
+        { license: 1, branch_id: 1, search_tokens: 1 },
+        { name: 'item_search_tokens' }
+      ),
+      ensureIndexOnce(
+        collection,
+        { license: 1, branch_id: 1, search_ngrams: 1 },
+        { name: 'item_search_ngrams' }
+      ),
+    ]).catch(() => {});
+
+    const queryNgrams = unique(queryTokens.flatMap(ngramsForToken)).slice(0, 64);
+
+    /* Barcodes and SKUs are exact identifiers. They stay exact so a scan does
+       not rank a partial code above the real product. */
+    const codeValues = unique([raw, raw.toLowerCase(), raw.toUpperCase(), normalized]);
+    const codeClauses = [];
+    for (const value of codeValues) {
+      codeClauses.push(
+        { barcode_id: value },
+        { itemid: value },
+        { sku: value },
+        { plu_code: value },
+        { gtin: value },
+        { gtin14: value },
+        { barcodes: value }
+      );
     }
 
-    const searchQuery = clauses.length === 1 ? clauses[0] : { $and: clauses };
+    const tokenMust = queryTokens.map((token) => ({
+      search_tokens: { $regex: '^' + escapeSearchRegex(token) },
+    }));
+    const exactOr = [...codeClauses];
+    if (tokenMust.length) exactOr.push({ $and: tokenMust });
+    const exactFilter = { $and: [scopeFilter, { $or: exactOr }] };
 
-    let cursor = collection.find(searchQuery);
-    const limit = parseInt(context.limit, 10);
-    if (Number.isFinite(limit) && limit > 0) cursor = cursor.limit(Math.min(limit, 100));
+    const [exactDocs, ngramDocs] = await Promise.all([
+      collection
+        .find(exactFilter, { projection: SEARCH_CANDIDATE_PROJECTION })
+        .limit(SEARCH_CANDIDATE_LIMIT)
+        .toArray(),
+      queryNgrams.length
+        ? collection
+            .find(
+              { $and: [scopeFilter, { search_ngrams: { $in: queryNgrams } }] },
+              { projection: SEARCH_CANDIDATE_PROJECTION }
+            )
+            .limit(SEARCH_CANDIDATE_LIMIT)
+            .toArray()
+        : Promise.resolve([]),
+    ]);
 
+    const candidates = new Map();
+    for (const doc of [...exactDocs, ...ngramDocs]) {
+      if (doc && doc._id != null) candidates.set(String(doc._id), doc);
+    }
+
+    const scored = [...candidates.values()]
+      .map((doc) => ({
+        doc,
+        score: scoreSearchCandidate(doc, normalized, queryTokens, queryNgrams),
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort(compareSearchCandidates)
+      .slice(0, limit);
+
+    if (scored.length) {
+      const ids = scored.map((entry) => entry.doc._id);
+      const fullDocs = await collection.find({ _id: { $in: ids } }).toArray();
+      const byId = new Map(fullDocs.map((doc) => [String(doc._id), doc]));
+      return scored
+        .map((entry) => byId.get(String(entry.doc._id)))
+        .filter(Boolean)
+        .map((doc) =>
+          stripRemovedItemFields(stripSearchIndex(BaseModel.simplifyFields(doc)))
+        );
+    }
+
+    /* Legacy fallback: a database that has not run the backfill yet still
+       answers the old exact/substring query. The next write or the migration
+       puts the item on the new index. */
+    const legacyClauses = [
+      {
+        $or: [
+          { name: { $regex: searchPattern(raw), $options: 'i' } },
+          { stock_locations: { $regex: searchPattern(raw), $options: 'i' } },
+          { 'translations.name': { $regex: searchPattern(raw), $options: 'i' } },
+          { barcode_id: raw },
+          { barcodes: raw },
+        ],
+      },
+      ...scope,
+    ];
+    const legacyQuery = legacyClauses.length === 1 ? legacyClauses[0] : { $and: legacyClauses };
+    let cursor = collection.find(legacyQuery);
+    cursor = cursor.limit(Math.min(limit, 100));
     const items = await cursor.toArray();
-    return items.map((doc) => stripRemovedItemFields(BaseModel.simplifyFields(doc)));
+    return items.map((doc) =>
+      stripRemovedItemFields(stripSearchIndex(BaseModel.simplifyFields(doc)))
+    );
   }
   async getItemTableRow(id, context = {}) {
     try {
@@ -2718,7 +2857,7 @@ class ItemRepository extends BaseModel {
           ? new ObjectId(data.items_category_id)
           : null;
 
-      const document = {
+      const document = withSearchIndex({
         license: licenseObjectId,
         branch_access: [
           {
@@ -2759,7 +2898,7 @@ class ItemRepository extends BaseModel {
         // Instant lines sell any quantity - stock never blocks them.
         negative_stock: true,
         item_status: ITEM_STATUS.INSTANT,
-      };
+      });
 
       const collection = await this.getCollection(this.collectionName);
       document.createdAt = now;
@@ -4496,6 +4635,7 @@ class ItemRepository extends BaseModel {
             updated_by: userName,
             updated_by_id: userId,
           };
+          Object.assign(setFields, buildSearchIndex({ ...matched, ...setFields }));
           const itemWrite = await collection.updateOne(
             { _id: matched._id, ...sellingPriceHold.writable(setFields.selling_price) },
             { $set: setFields }
@@ -4515,7 +4655,7 @@ class ItemRepository extends BaseModel {
             'Import'
           ).catch(() => {});
         } else {
-          const itemDocument = { ...insertData, ...updateData };
+          const itemDocument = withSearchIndex({ ...insertData, ...updateData });
           const insertOneResult = await collection.insertOne(itemDocument);
           insertedIds.push(insertOneResult.insertedId);
           writtenId = insertOneResult.insertedId;

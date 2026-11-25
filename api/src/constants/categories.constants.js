@@ -78,7 +78,11 @@ const FIELD_LIMITS = {
 
 // Validation patterns
 const VALIDATION_PATTERNS = {
-  NAME: /^[a-zA-Z0-9\s\-_&()]+$/,
+  /* Category names are user-facing shop text, so they must accept Arabic and
+     every other Unicode script, not only Latin letters. Marks are included so
+     vocalised Arabic (harakat) remains valid; the punctuation set stays the
+     same as before. */
+  NAME: /^[\p{L}\p{M}\p{N}\s\-_&()]+$/u,
   IMAGE_URL: /^[a-zA-Z0-9\-_./]+$/,
 };
 
