@@ -180,7 +180,11 @@ say(`  starting ${exe}`);
 const childEnv = { ...process.env };
 delete childEnv.ELECTRON_RUN_AS_NODE;
 
-const child = spawn(exe, [], {
+/* Ubuntu 23.10+ restricts unprivileged user namespaces, so Chromium refuses
+   to start under a CI runner without its sandbox. This is a local smoke test
+   of a build we produced, not a browser visiting untrusted pages. */
+const childArgs = process.platform === 'linux' ? ['--no-sandbox'] : [];
+const child = spawn(exe, childArgs, {
   detached: false,
   stdio: ['ignore', 'pipe', 'pipe'],
   windowsHide: true,
