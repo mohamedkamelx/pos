@@ -69,10 +69,7 @@ describe('smart name search', () => {
     });
 
     test('matches a plural category to its singular product family', () => {
-      const products = [
-        { name: 'غسالة سامسونج 8 كيلو' },
-        { name: 'ثلاجة LG' },
-      ];
+      const products = [{ name: 'غسالة سامسونج 8 كيلو' }, { name: 'ثلاجة LG' }];
       const ranked = rankNameMatches('غسالات', products, (row) => row.name);
       expect(ranked[0].item.name).toContain('غسالة');
       expect(ranked.map((entry) => entry.item.name)).not.toContain('ثلاجة LG');

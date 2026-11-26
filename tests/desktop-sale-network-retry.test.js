@@ -4,13 +4,18 @@ const fs=require('node:fs');
 const source=fs.readFileSync('frontend/static/script/js/modules/js/sales.js','utf8').replace(/\r\n/g,'\n');
 const start=source.indexOf('                var response = xhr && xhr.responseJSON;');
 const end=source.indexOf('\n            });\n            });',start);
+const correctionsStart=source.indexOf('PosnicPro.sales.applyStockCorrections = function (response) {');
+const correctionsEnd=source.indexOf('\n};',correctionsStart)+3;
 assert.ok(start >= 0 && end > start, 'retry handler boundaries must be found');
-const handler=new Function('xhr','$','setTimeout',source.slice(start,end));
+assert.ok(correctionsStart >= 0 && correctionsEnd > correctionsStart, 'stock correction boundaries must be found');
+const handler=new Function('xhr','$','setTimeout','PosnicPro','savedSubmission',source.slice(start,end));
 function run(xhr){
  const changes=[];
  const $=selector=>({removeAttr(){return this;},addClass(){return this;},removeClass(){return this;},val(value){changes.push({selector,value});return this;}});
  $.each=(rows,fn)=>rows.forEach((row,i)=>fn(i,row));
- handler(xhr,$,fn=>fn());
+ const PosnicPro={sales:{submissionJournal:()=>({reject:()=>false}),resetIdempotencyKey(){}}};
+ new Function('PosnicPro','$','setTimeout',source.slice(correctionsStart,correctionsEnd))(PosnicPro,$,fn=>fn());
+ handler(xhr,$,fn=>fn(),PosnicPro,undefined);
  return changes;
 }
 test('offline and proxy failures leave the cart unchanged without throwing',()=>{

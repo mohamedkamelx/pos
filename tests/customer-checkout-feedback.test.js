@@ -24,7 +24,7 @@ test('missing product discounts render zero and valid percentage/amount discount
 test('cart quantity counts units rather than lines and handles fractional quantities',()=>{
  const {dom,w,$}=env('<span class="sale-cart-quantity"></span><span class="sale-cart-lines"></span>');
  try {
-  const a=sales.indexOf('        var cartQuantity =');const b=sales.indexOf('        var addSalesSubTotal',a);
+  const a=sales.indexOf('        var cartQuantity = PosnicPro.sales.addLineTable.reduce');const b=sales.indexOf('        var addSalesSubTotal',a);
   w.PosnicPro.sales.addLineTable=[{item_id:'a',item_quantity:1},{item_id:'b',item_quantity:1},{item_id:'c',item_quantity:3}];w.eval(sales.slice(a,b));
   assert.equal($('.sale-cart-quantity').text(),'5');assert.equal($('.sale-cart-lines').text(),'3');
   w.PosnicPro.sales.addLineTable=[{item_id:'a',item_quantity:0.1},{item_id:'b',item_quantity:0.2}];w.eval(sales.slice(a,b));assert.equal($('.sale-cart-quantity').text(),'0.3');

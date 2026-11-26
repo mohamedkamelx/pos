@@ -354,10 +354,7 @@ const processSale = async (
               );
               if (Number.isFinite(held) && held > 0) {
                 const key = String(oldItem.item_id);
-                originalStockByItem.set(
-                  key,
-                  (originalStockByItem.get(key) || 0) + held
-                );
+                originalStockByItem.set(key, (originalStockByItem.get(key) || 0) + held);
               }
             }
           });
@@ -1167,23 +1164,26 @@ const processSale = async (
      */
     let stockReservations = new Map();
     if (!extensionStock) {
-      const stockLines = id === '' ? itemsale : changes_items.filter(
-        (change) => change.process === 'add'
-      );
+      const stockLines =
+        id === '' ? itemsale : changes_items.filter((change) => change.process === 'add');
       const reserved = await saleStock.reserve(stockLines, itemRepository);
       stockReservations = reserved.reservations;
       if (reserved.shortages.length) {
         return {
           status: false,
           data: reserved.shortages.map((shortage) => {
-            const line = itemsale.find(
-              (candidate) => shortage.line_id
-                && (candidate.line_id === shortage.line_id || candidate.id === shortage.line_id)
-            ) || itemsale.find(
-              (candidate) => String(candidate.item_id) === String(shortage.item_id)
-            ) || changes_items.find(
-              (candidate) => String(candidate.item_id) === String(shortage.item_id)
-            );
+            const line =
+              itemsale.find(
+                (candidate) =>
+                  shortage.line_id &&
+                  (candidate.line_id === shortage.line_id || candidate.id === shortage.line_id)
+              ) ||
+              itemsale.find(
+                (candidate) => String(candidate.item_id) === String(shortage.item_id)
+              ) ||
+              changes_items.find(
+                (candidate) => String(candidate.item_id) === String(shortage.item_id)
+              );
             const factor = Number(line?.unit_conversion?.factor) || 1;
             const held = id === '' ? 0 : originalStockByItem.get(shortage.item_id) || 0;
             const editable = shortage.available_quantity + held;
@@ -1191,10 +1191,7 @@ const processSale = async (
               ...shortage,
               editable_quantity: editable,
               /* The cart edits quantities in the line's selling unit. */
-              item_quantity: Math.max(
-                0,
-                Math.floor((editable / factor) * 1e6) / 1e6
-              ),
+              item_quantity: Math.max(0, Math.floor((editable / factor) * 1e6) / 1e6),
             };
           }),
           message: saleStock.message(reserved.shortages),

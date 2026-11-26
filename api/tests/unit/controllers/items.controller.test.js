@@ -324,11 +324,14 @@ describe('search', () => {
     const res = mockRes();
     await ctrl.search(req, res);
 
-    expect(svc.searchItems).toHaveBeenCalledWith('غسالات', expect.objectContaining({
-      limit: 100,
-      contextTerms: ['غسالات', 'أجهزة'],
-      category: 'غسالات',
-    }));
+    expect(svc.searchItems).toHaveBeenCalledWith(
+      'غسالات',
+      expect.objectContaining({
+        limit: 100,
+        contextTerms: ['غسالات', 'أجهزة'],
+        category: 'غسالات',
+      })
+    );
     const [, options] = svc.searchItems.mock.calls[0];
     expect(options.branchId.toString()).toBe(VALID_BRANCH);
     expect(options.licenseId.toString()).toBe(VALID_LIC);

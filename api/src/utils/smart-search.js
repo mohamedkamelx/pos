@@ -187,20 +187,43 @@ function rootKey(token) {
 
 /* Arabic number words are how tills are told quantities on the shop floor. */
 const NUMBER_WORDS = new Map([
-  ['صفر', '0'], ['زيرو', '0'], ['zero', '0'],
-  ['واحد', '1'], ['واحده', '1'], ['one', '1'],
-  ['اتنين', '2'], ['اثنين', '2'], ['تنين', '2'], ['two', '2'],
-  ['تلاته', '3'], ['ثلاثه', '3'], ['تلات', '3'], ['three', '3'],
-  ['اربعه', '4'], ['four', '4'],
-  ['خمسه', '5'], ['five', '5'],
-  ['سته', '6'], ['six', '6'],
-  ['سبعه', '7'], ['seven', '7'],
-  ['تمانيه', '8'], ['ثمانيه', '8'], ['eight', '8'],
-  ['تسعه', '9'], ['nine', '9'],
-  ['عشره', '10'], ['ten', '10'],
-  ['ميه', '100'], ['مية', '100'], ['مئه', '100'], ['hundred', '100'],
-  ['الف', '1000'], ['thousand', '1000'],
-  ['مليون', '1000000'], ['million', '1000000'],
+  ['صفر', '0'],
+  ['زيرو', '0'],
+  ['zero', '0'],
+  ['واحد', '1'],
+  ['واحده', '1'],
+  ['one', '1'],
+  ['اتنين', '2'],
+  ['اثنين', '2'],
+  ['تنين', '2'],
+  ['two', '2'],
+  ['تلاته', '3'],
+  ['ثلاثه', '3'],
+  ['تلات', '3'],
+  ['three', '3'],
+  ['اربعه', '4'],
+  ['four', '4'],
+  ['خمسه', '5'],
+  ['five', '5'],
+  ['سته', '6'],
+  ['six', '6'],
+  ['سبعه', '7'],
+  ['seven', '7'],
+  ['تمانيه', '8'],
+  ['ثمانيه', '8'],
+  ['eight', '8'],
+  ['تسعه', '9'],
+  ['nine', '9'],
+  ['عشره', '10'],
+  ['ten', '10'],
+  ['ميه', '100'],
+  ['مية', '100'],
+  ['مئه', '100'],
+  ['hundred', '100'],
+  ['الف', '1000'],
+  ['thousand', '1000'],
+  ['مليون', '1000000'],
+  ['million', '1000000'],
 ]);
 
 function canonicalNumberToken(token) {
@@ -326,21 +349,55 @@ function synonymsFor(term) {
    ignored as evidence; "soap" and "soup" both reduce to sb and must not
    become a match on sound alone. */
 const ARABIC_PHONETIC_MAP = new Map([
-  ['ا', 'a'], ['أ', 'a'], ['إ', 'a'], ['آ', 'a'], ['ٱ', 'a'],
-  ['ب', 'b'], ['ت', 't'], ['ث', 's'], ['ج', 'g'], ['ح', 'h'], ['خ', 'kh'],
-  ['د', 'd'], ['ذ', 'z'], ['ر', 'r'], ['ز', 'z'], ['س', 's'], ['ش', 'sh'],
-  ['ص', 's'], ['ض', 'd'], ['ط', 't'], ['ظ', 'z'], ['ع', 'a'], ['غ', 'gh'],
-  ['ف', 'f'], ['ق', 'k'], ['ك', 'k'], ['ل', 'l'], ['م', 'm'], ['ن', 'n'],
-  ['ه', 'h'], ['و', 'w'], ['ي', 'y'], ['ى', 'y'], ['ة', 'h'], ['ء', ''],
-  ['ئ', ''], ['ؤ', ''], ['چ', 'ch'], ['پ', 'b'], ['ڤ', 'f'], ['گ', 'g'],
+  ['ا', 'a'],
+  ['أ', 'a'],
+  ['إ', 'a'],
+  ['آ', 'a'],
+  ['ٱ', 'a'],
+  ['ب', 'b'],
+  ['ت', 't'],
+  ['ث', 's'],
+  ['ج', 'g'],
+  ['ح', 'h'],
+  ['خ', 'kh'],
+  ['د', 'd'],
+  ['ذ', 'z'],
+  ['ر', 'r'],
+  ['ز', 'z'],
+  ['س', 's'],
+  ['ش', 'sh'],
+  ['ص', 's'],
+  ['ض', 'd'],
+  ['ط', 't'],
+  ['ظ', 'z'],
+  ['ع', 'a'],
+  ['غ', 'gh'],
+  ['ف', 'f'],
+  ['ق', 'k'],
+  ['ك', 'k'],
+  ['ل', 'l'],
+  ['م', 'm'],
+  ['ن', 'n'],
+  ['ه', 'h'],
+  ['و', 'w'],
+  ['ي', 'y'],
+  ['ى', 'y'],
+  ['ة', 'h'],
+  ['ء', ''],
+  ['ئ', ''],
+  ['ؤ', ''],
+  ['چ', 'ch'],
+  ['پ', 'b'],
+  ['ڤ', 'f'],
+  ['گ', 'g'],
   ['ژ', 'zh'],
 ]);
 
 function latinSkeleton(value) {
   return String(value || '')
     .replace(/ph/g, 'f')
-    .replace(/sh/g, '\u0001')
-    .replace(/ch/g, '\u0002')
+    .replace(/sh/g, '\uE000')
+    .replace(/ch/g, '\uE001')
     .replace(/th/g, 't')
     .replace(/ck/g, 'k')
     .replace(/qu/g, 'k')
@@ -351,10 +408,10 @@ function latinSkeleton(value) {
     .replace(/v/g, 'f')
     .replace(/p/g, 'b')
     .replace(/j/g, 'g')
-    .replace(/[^a-z0-9\u0001\u0002]/g, '')
+    .replace(/[^a-z0-9\uE000\uE001]/g, '')
     .replace(/[aeiouy]/g, '')
-    .replace(/\u0001/g, 'sh')
-    .replace(/\u0002/g, 'ch')
+    .replace(/\uE000/g, 'sh')
+    .replace(/\uE001/g, 'ch')
     .replace(/(.)\1+/g, '$1');
 }
 
@@ -541,10 +598,7 @@ function expandQuery(value, options = {}) {
   }
 
   const tokenForms = [...forms].filter((form) => !form.includes(' '));
-  const phonetics = unique([
-    ...tokens.map(phoneticKey),
-    ...tokenForms.map(phoneticKey),
-  ])
+  const phonetics = unique([...tokens.map(phoneticKey), ...tokenForms.map(phoneticKey)])
     .filter((key) => key.length >= 3 && !/^[0-9]+$/.test(key))
     .slice(0, MAX_PHONETICS);
   const ngrams = unique(tokenForms.flatMap(ngramsForToken)).slice(0, MAX_QUERY_NGRAMS);

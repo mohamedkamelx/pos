@@ -32,9 +32,7 @@ function lineQuantity(line) {
     const quoted = Number(line.stock_quantity);
     if (Number.isFinite(quoted)) return quoted;
   }
-  return Number(
-    stockQuantity({ unit_conversion: line.unit_conversion }, line.item_quantity)
-  );
+  return Number(stockQuantity({ unit_conversion: line.unit_conversion }, line.item_quantity));
 }
 
 function aggregate(lines) {
@@ -88,11 +86,7 @@ async function inspect(lines, itemRepository) {
 async function release(reservations, itemRepository) {
   for (const reservation of reservations.values()) {
     try {
-      await itemRepository.updateStock(
-        reservation.itemId,
-        reservation.quantity,
-        'sale_rollback'
-      );
+      await itemRepository.updateStock(reservation.itemId, reservation.quantity, 'sale_rollback');
     } catch (error) {
       /* A failed rollback must not hide the original save failure. The
          periodic sync scan still reports the row, and the caller logs it. */
@@ -108,10 +102,7 @@ async function reserve(lines, itemRepository) {
     const document = await itemRepository.findItemById(request.itemId);
     if (!document || !tracksStock(document) || allowsNegative(document)) continue;
 
-    const reserved = await itemRepository.deductStockIfAvailable(
-      document._id,
-      request.quantity
-    );
+    const reserved = await itemRepository.deductStockIfAvailable(document._id, request.quantity);
     if (!reserved) {
       const latest = await itemRepository.findItemById(request.itemId);
       await release(reservations, itemRepository);

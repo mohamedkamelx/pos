@@ -232,13 +232,20 @@ function scoreSearchCandidate(doc, query, queryTokens, queryNgrams, options = {}
   let contextHits = 0;
   for (const form of expansion.contextForms) {
     if (form.length < 3) continue;
-    if (fields.category.includes(form) || fields.tags.includes(form) || fields.name.includes(form)) {
+    if (
+      fields.category.includes(form) ||
+      fields.tags.includes(form) ||
+      fields.name.includes(form)
+    ) {
       contextHits += 1;
     }
   }
   score += Math.min(contextHits, 4) * 10;
   const contextCategory = normalizeSearchText(options.category);
-  if (contextCategory && (fields.category === contextCategory || fields.category.includes(contextCategory))) {
+  if (
+    contextCategory &&
+    (fields.category === contextCategory || fields.category.includes(contextCategory))
+  ) {
     score += 20;
   }
 

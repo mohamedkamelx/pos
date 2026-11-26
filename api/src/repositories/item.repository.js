@@ -2045,7 +2045,8 @@ class ItemRepository extends BaseModel {
 
     const fuzzyOr = [];
     if (queryNgrams.length) fuzzyOr.push({ search_ngrams: { $in: queryNgrams } });
-    if (expansion.phonetics.length) fuzzyOr.push({ search_phonetics: { $in: expansion.phonetics } });
+    if (expansion.phonetics.length)
+      fuzzyOr.push({ search_phonetics: { $in: expansion.phonetics } });
     const fuzzyFilter = fuzzyOr.length ? { $and: [scopeFilter, { $or: fuzzyOr }] } : null;
 
     const [exactDocs, ngramDocs] = await Promise.all([
@@ -2107,11 +2108,7 @@ class ItemRepository extends BaseModel {
     });
     const legacyClauses = [
       {
-        $or: [
-          ...legacyTextClauses,
-          { barcode_id: raw },
-          { barcodes: raw },
-        ],
+        $or: [...legacyTextClauses, { barcode_id: raw }, { barcodes: raw }],
       },
       ...scope,
     ];
@@ -2493,14 +2490,8 @@ class ItemRepository extends BaseModel {
           regex
         );
         searchConditions.push(
-          ...salesSearchFields.smartConditions(
-            searchPreferences.sales_search_fields,
-            expansion
-          ),
-          ...salesSearchFields.fuzzyConditions(
-            searchPreferences.sales_search_fields,
-            expansion
-          )
+          ...salesSearchFields.smartConditions(searchPreferences.sales_search_fields, expansion),
+          ...salesSearchFields.fuzzyConditions(searchPreferences.sales_search_fields, expansion)
         );
         if (!searchConditions.length) return { status: true, data: [], message: 'success' };
       } else if (regex) {
@@ -3888,10 +3879,10 @@ class ItemRepository extends BaseModel {
       const licenseObjectId =
         licenseId && ObjectId.isValid(licenseId) ? new ObjectId(licenseId) : licenseId;
 
-      const rawQuery = String(query == null ? '' : query).trim().slice(0, 80);
-      const regex = rawQuery
-        ? new RegExp(searchPattern(rawQuery), 'i')
-        : null;
+      const rawQuery = String(query == null ? '' : query)
+        .trim()
+        .slice(0, 80);
+      const regex = rawQuery ? new RegExp(searchPattern(rawQuery), 'i') : null;
       const expansion = rawQuery ? expandQuery(rawQuery) : null;
       const smartTerms = expansion
         ? [
@@ -3914,9 +3905,7 @@ class ItemRepository extends BaseModel {
       });
       const fuzzyClauses = expansion
         ? [
-            ...(expansion.ngrams.length
-              ? [{ search_ngrams: { $in: expansion.ngrams } }]
-              : []),
+            ...(expansion.ngrams.length ? [{ search_ngrams: { $in: expansion.ngrams } }] : []),
             ...(expansion.phonetics.length
               ? [{ search_phonetics: { $in: expansion.phonetics } }]
               : []),
@@ -3927,12 +3916,7 @@ class ItemRepository extends BaseModel {
         $and: [
           regex
             ? {
-                $or: [
-                  ...textClauses,
-                  { itemid: regex },
-                  { barcode_id: regex },
-                  ...fuzzyClauses,
-                ],
+                $or: [...textClauses, { itemid: regex }, { barcode_id: regex }, ...fuzzyClauses],
               }
             : {},
           { 'branch_access.branch_id': branchObjectId },

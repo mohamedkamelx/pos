@@ -1,9 +1,6 @@
 'use strict';
 
-const {
-  smartConditions,
-  fuzzyConditions,
-} = require('../../../src/helpers/sales-search-fields');
+const { smartConditions, fuzzyConditions } = require('../../../src/helpers/sales-search-fields');
 const { expandQuery } = require('../../../src/utils/smart-search');
 
 describe('sales search smart conditions', () => {
