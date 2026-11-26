@@ -62,20 +62,22 @@ jobs:
               archive="mongodb-linux-x86_64-ubuntu2204-${version}.tgz"
               url="https://fastdl.mongodb.org/linux/${archive}"
               dest="mongodb/bin"
+              extract_dir="mongodb-linux-x86_64-ubuntu2204-${version}"
               ;;
             macOS)
               case "$(uname -m)" in
-                arm64) mongodb_arch=arm64; download_arch=arm64 ;;
-                *) mongodb_arch=x64; download_arch=x86_64 ;;
+                arm64) mongodb_arch=arm64; download_arch=arm64; extract_arch=aarch64 ;;
+                *) mongodb_arch=x64; download_arch=x86_64; extract_arch=x86_64 ;;
               esac
               archive="mongodb-macos-${download_arch}-${version}.tgz"
               url="https://fastdl.mongodb.org/osx/${archive}"
               dest="mongodb-${mongodb_arch}/bin"
+              extract_dir="mongodb-macos-${extract_arch}-${version}"
               ;;
           esac
           curl -fsSL "$url" | tar -xz -C /tmp
           mkdir -p "$dest"
-          cp "/tmp/${archive%.tgz}/bin/mongod" "$dest/mongod"
+          cp "/tmp/${extract_dir}/bin/mongod" "$dest/mongod"
           chmod +x "$dest/mongod"
           "$dest/mongod" --version | head -1
           node scripts/check-mongodb-binaries.js
