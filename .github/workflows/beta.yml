@@ -52,6 +52,34 @@ jobs:
       - name: Prepare the bundled runtime
         run: npm run prepare:bundle
 
+      - name: Fetch the bundled database
+        shell: bash
+        run: |
+          set -euo pipefail
+          version=7.0.14
+          case "${{ matrix.name }}" in
+            Linux)
+              archive="mongodb-linux-x86_64-ubuntu2204-${version}.tgz"
+              url="https://fastdl.mongodb.org/linux/${archive}"
+              dest="mongodb/bin"
+              ;;
+            macOS)
+              case "$(uname -m)" in
+                arm64) mongodb_arch=arm64; download_arch=arm64 ;;
+                *) mongodb_arch=x64; download_arch=x86_64 ;;
+              esac
+              archive="mongodb-macos-${download_arch}-${version}.tgz"
+              url="https://fastdl.mongodb.org/osx/${archive}"
+              dest="mongodb-${mongodb_arch}/bin"
+              ;;
+          esac
+          curl -fsSL "$url" | tar -xz -C /tmp
+          mkdir -p "$dest"
+          cp "/tmp/${archive%.tgz}/bin/mongod" "$dest/mongod"
+          chmod +x "$dest/mongod"
+          "$dest/mongod" --version | head -1
+          node scripts/check-mongodb-binaries.js
+
       - name: Build the test installer
         run: |
           npx electron-builder --${{ matrix.platform }} --publish never \
