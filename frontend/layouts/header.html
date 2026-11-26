@@ -13,7 +13,7 @@
                     <li class="list-inline-item"><button type="button" id="posnic-mobile-search" class="global-search-trigger" aria-label="Search anything in POSNIC" data-t-aria-label="lang_search_posnic" aria-haspopup="dialog"><i class="feather icon-search" aria-hidden="true"></i></button></li>
                     <li class="list-inline-item">
                         <div class="menubar">
-                            <a class="menu-hamburger" href="javascript:void(0)" aria-label="Menu" aria-expanded="false">
+                            <a class="menu-hamburger" href="javascript:void(0)" aria-label="Menu" data-t-aria-label="lang_menu" aria-expanded="false">
                                 <img src="static/images/svg-icon/menu.svg" class="img-fluid menu-hamburger-collapse"
                                     alt="menu" loading="lazy" decoding="async">
                                 <img src="static/images/svg-icon/close.svg" class="img-fluid menu-hamburger-close"
@@ -36,12 +36,12 @@
 
 <div class="mobile-nav-scrim" aria-hidden="true"></div>
 
-<nav class="mobile-tabbar" aria-label="Primary navigation">
+<nav class="mobile-tabbar" aria-label="Primary navigation" data-t-aria-label="lang_primary_navigation">
     <a class="mobile-tab" data-tab="dashboard" href="#/dashboard" data-module="dashboard" data-access="read">
         <i class="feather icon-home" aria-hidden="true"></i><span><lang class="lang_home_title">Home</lang></span>
     </a>
     <a class="mobile-tab" data-tab="sell" href="#/sales/new" data-module="sales" data-access="write">
-        <i class="feather icon-shopping-cart" aria-hidden="true"></i><span><lang class="lang_newsale_title">Sell</lang></span>
+        <i class="feather icon-shopping-cart" aria-hidden="true"></i><span><lang class="lang_sell_tab">Sell</lang></span>
     </a>
     <a class="mobile-tab" data-tab="items" href="#/items" data-module="item" data-access="read||write||delete">
         <i class="feather icon-package" aria-hidden="true"></i><span><lang class="lang_items_title">Items</lang></span>
@@ -49,7 +49,7 @@
     <a class="mobile-tab" data-tab="customers" href="#/customers" data-module="customer" data-access="read||write||delete">
         <i class="feather icon-users" aria-hidden="true"></i><span><lang class="lang_customers_title">Customers</lang></span>
     </a>
-    <button type="button" class="mobile-tab mobile-tab-more" data-tab="more" aria-label="More" aria-expanded="false">
+    <button type="button" class="mobile-tab mobile-tab-more" data-tab="more" aria-label="More" data-t-aria-label="lang_tab_more" aria-expanded="false">
         <i class="feather icon-menu" aria-hidden="true"></i><span><lang class="lang_tab_more">More</lang></span>
     </button>
 </nav>

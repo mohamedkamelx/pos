@@ -22,7 +22,7 @@ function copyImageIfMissing(source, destination) {
     console.warn(
       'Optional item image copy skipped:',
       destination,
-      error && (error.code || error.message),
+      error && (error.code || error.message)
     );
   }
 }

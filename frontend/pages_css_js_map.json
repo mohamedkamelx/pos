@@ -31,8 +31,8 @@
             "static/style/plugins/sweet-alert2/sweetalert2.min.css",
             "static/pages/lock-screen.css",
             "static/style/css/record-workspace.css",
-            "static/style/css/rtl.css",
-            "static/style/css/mobile.css"
+            "static/style/css/mobile.css",
+            "static/style/css/rtl.css"
         ],
         "js": [
             "static/script/js/jquery.min.js",
@@ -183,8 +183,8 @@
             "static/style/css/icons.min.css",
             "static/style/css/modules/font.css",
             "static/style/scss/style.scss",
-            "static/style/css/rtl.css",
-            "static/style/css/mobile.css"
+            "static/style/css/mobile.css",
+            "static/style/css/rtl.css"
         ]
     },
     "customersearch": {
@@ -276,8 +276,8 @@
             "static/style/css/jquery.toast.min.css",
             "static/style/css/modules/font.css",
             "static/style/scss/style.scss",
-            "static/style/css/rtl.css",
-            "static/style/css/mobile.css"
+            "static/style/css/mobile.css",
+            "static/style/css/rtl.css"
         ]
     },
     "ssoauth": {

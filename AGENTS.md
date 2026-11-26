@@ -14,7 +14,9 @@ Declare row type, searchable identifiers, primary party or item filter, business
 
 ## Settings
 
-The Features list is only switches. Never put a dropdown, text field or Save button in a Features card. Every setting belongs on its own module page (Tax, Marketing, Messaging, Kiosk, Captain App, etc.); add a tab there. A module without a page needs a page, not an exception. File a setting by the thing it belongs to, not by how it is built. Integrations is only for outward-facing API tokens, webhooks, signed connectors and the shop's own analytics property.
+**Where a setting goes:** Every setting belongs on its own module page (Tax, Marketing, Messaging, Kiosk, Captain App, etc.); add a tab there. A module without a page needs a page, not an exception. File a setting by the thing it belongs to, not by how it is built.
+
+The Features list is only switches. Never put a setting in a Features card - no dropdown, text field or Save button. Integrations is only for outward-facing API tokens, webhooks, signed connectors and the shop's own analytics property.
 
 ## Verification and CI
 
