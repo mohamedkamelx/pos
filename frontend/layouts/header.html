@@ -12,20 +12,10 @@
                 <ul class="list-inline mb-0">
                     <li class="list-inline-item"><button type="button" id="posnic-mobile-search" class="global-search-trigger" aria-label="Search anything in POSNIC" data-t-aria-label="lang_search_posnic" aria-haspopup="dialog"><i class="feather icon-search" aria-hidden="true"></i></button></li>
                     <li class="list-inline-item">
-                        <div class="topbar-toggle-icon">
-                            <a class="topbar-toggle-hamburger" href="javascript:void(0)">
-                                <img src="static/images/svg-icon/horizontal.svg"
-                                    class="img-fluid menu-hamburger-horizontal" alt="horizontal" loading="lazy" decoding="async">
-                                <img src="static/images/svg-icon/verticle.svg" class="img-fluid menu-hamburger-vertical"
-                                    alt="verticle" loading="lazy" decoding="async">
-                            </a>
-                        </div>
-                    </li>
-                    <li class="list-inline-item">
                         <div class="menubar">
-                            <a class="menu-hamburger" href="javascript:void(0)">
+                            <a class="menu-hamburger" href="javascript:void(0)" aria-label="Menu" aria-expanded="false">
                                 <img src="static/images/svg-icon/menu.svg" class="img-fluid menu-hamburger-collapse"
-                                    alt="collapse" loading="lazy" decoding="async">
+                                    alt="menu" loading="lazy" decoding="async">
                                 <img src="static/images/svg-icon/close.svg" class="img-fluid menu-hamburger-close"
                                     alt="close" loading="lazy" decoding="async">
                             </a>
@@ -44,8 +34,25 @@
     </div>
 </div>
 
+<div class="mobile-nav-scrim" aria-hidden="true"></div>
 
-
+<nav class="mobile-tabbar" aria-label="Primary navigation">
+    <a class="mobile-tab" data-tab="dashboard" href="#/dashboard" data-module="dashboard" data-access="read">
+        <i class="feather icon-home" aria-hidden="true"></i><span><lang class="lang_home_title">Home</lang></span>
+    </a>
+    <a class="mobile-tab" data-tab="sell" href="#/sales/new" data-module="sales" data-access="write">
+        <i class="feather icon-shopping-cart" aria-hidden="true"></i><span><lang class="lang_newsale_title">Sell</lang></span>
+    </a>
+    <a class="mobile-tab" data-tab="items" href="#/items" data-module="item" data-access="read||write||delete">
+        <i class="feather icon-package" aria-hidden="true"></i><span><lang class="lang_items_title">Items</lang></span>
+    </a>
+    <a class="mobile-tab" data-tab="customers" href="#/customers" data-module="customer" data-access="read||write||delete">
+        <i class="feather icon-users" aria-hidden="true"></i><span><lang class="lang_customers_title">Customers</lang></span>
+    </a>
+    <button type="button" class="mobile-tab mobile-tab-more" data-tab="more" aria-label="More" aria-expanded="false">
+        <i class="feather icon-menu" aria-hidden="true"></i><span><lang class="lang_tab_more">More</lang></span>
+    </button>
+</nav>
 
 <!-- Start Topbar -->
 <div class="topbar">

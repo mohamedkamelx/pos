@@ -103,6 +103,7 @@ function fakeOpenCodeSdk({ promptHook, tokenHook, waitHook } = {}) {
   const state = {
     sessions: new Map(),
     sessionCount: 0,
+    sessionInputs: [],
     prompts: [],
     compactCalls: 0,
     removeCalls: 0,
@@ -120,7 +121,8 @@ function fakeOpenCodeSdk({ promptHook, tokenHook, waitHook } = {}) {
     },
     agent: { list: async () => ({ data: [{ id: 'posnic-assistant' }] }) },
     session: {
-      create: async () => {
+      create: async (input) => {
+        state.sessionInputs.push(input);
         const id = `ses_${++state.sessionCount}`;
         state.sessions.set(id, []);
         return { id };
@@ -359,6 +361,7 @@ test('both credentials are validated, encrypted and kept out of the page', async
       'ai:save-provider-key',
       'ai:set-enabled',
       'ai:set-provider-model',
+      'ai:set-reasoning',
       'ai:transcribe',
       'ai:validate-key',
       'ai:validate-provider-key',
@@ -434,6 +437,19 @@ test('the provider token and model selection are separate from transcription', a
   assert.equal(status.chat.configured, true);
   assert.equal(status.chat.provider, 'nvidia');
   assert.equal(status.chat.model, 'moonshotai/kimi-k3.1-pro');
+  assert.equal(status.chat.reasoning, 'medium');
+
+  const high = await h.handlers.get('ai:set-reasoning')({}, { reasoning: 'high' });
+  assert.equal(high.success, true);
+  assert.equal(high.reasoning, 'high');
+  assert.equal((await h.handlers.get('ai:key-status')({})).chat.reasoning, 'high');
+  assert.equal((await h.handlers.get('ai:set-reasoning')({}, { reasoning: 'max' })).code,
+    'reasoning_invalid');
+
+  await h.handlers.get('ai:set-provider-model')({}, {
+    provider: 'nvidia', model: 'mistralai/mistral-large-4-1t-a52b',
+  });
+  assert.equal((await h.handlers.get('ai:key-status')({})).chat.reasoning, 'high');
 
   assert.equal((await h.handlers.get('ai:set-provider-model')({}, {
     provider: 'nvidia', model: 'not-a-real-model',
@@ -1936,6 +1952,109 @@ test('a confirmed plan creates the category once, adds the product image and ver
   assert.equal(createProduct.body.category_name, 'Drinks');
   assert.equal(createProduct.body.image[0].name, '/uploads/item_images/pepsi.png');
   assert.equal(createProduct.body.cover_image, '/uploads/item_images/pepsi.png');
+});
+
+test('a stale attachment id is resolved to the only live image', async () => {
+  const { validatePlan } = require(path.join(ROOT, 'src/ai/actions/plan-schema'));
+  const live = { id: 'img_live', name: 'images (1).jpeg', mime: 'image/jpeg', size: 12 };
+  const attachments = {
+    describe(sessionID, ids) {
+      assert.equal(sessionID, 'conv-photo');
+      return ids[0] === live.id
+        ? { ok: true, attachments: [{ ...live, data: 'aGVsbG8=' }] }
+        : { ok: false, code: 'attachment_missing', message: 'An attached image is no longer available.' };
+    },
+    list(sessionID) {
+      assert.equal(sessionID, 'conv-photo');
+      return [live];
+    },
+  };
+  const api = {
+    async get() { return { data: { list: [], total: 0 } }; },
+    async post() { throw new Error('unexpected POST'); },
+    async put() { throw new Error('unexpected PUT'); },
+  };
+
+  const prepared = await validatePlan({
+    title: 'Add a product',
+    steps: [{
+      id: 'p1',
+      action: 'create_product',
+      fields: {
+        name: 'Sharp washing machine',
+        selling_price: 2000,
+        cost_price: 1800,
+        opening_stock: 10,
+      },
+      images: [{ attachmentId: 'img_expired', cover: true }],
+    }],
+  }, { api, sessionID: 'conv-photo', attachments });
+
+  assert.equal(prepared.ok, true);
+  assert.equal(prepared.plan.steps[0].images[0].attachmentId, 'img_live');
+  assert.equal(prepared.plan.steps[0].images[0].name, 'images (1).jpeg');
+});
+
+test('a stale attachment id is resolved by name when several images are live', async () => {
+  const { validatePlan } = require(path.join(ROOT, 'src/ai/actions/plan-schema'));
+  const live = [
+    { id: 'img_one', name: 'front.png', mime: 'image/png', size: 12 },
+    { id: 'img_two', name: 'side.png', mime: 'image/png', size: 12 },
+  ];
+  const attachments = {
+    describe(sessionID, ids) {
+      assert.equal(sessionID, 'conv-photo-two');
+      const found = live.find((item) => item.id === ids[0]);
+      return found
+        ? { ok: true, attachments: [{ ...found, data: 'aGVsbG8=' }] }
+        : { ok: false, code: 'attachment_missing', message: 'An attached image is no longer available.' };
+    },
+    list() { return live; },
+  };
+  const api = {
+    async get() { return { data: { list: [], total: 0 } }; },
+    async post() { throw new Error('unexpected POST'); },
+    async put() { throw new Error('unexpected PUT'); },
+  };
+
+  const prepared = await validatePlan({
+    title: 'Add a product',
+    steps: [{
+      id: 'p1',
+      action: 'create_product',
+      fields: {
+        name: 'Sharp washing machine',
+        selling_price: 2000,
+        cost_price: 1800,
+        opening_stock: 10,
+      },
+      images: [{ attachmentId: 'img_expired', name: 'side.png', cover: true }],
+    }],
+  }, { api, sessionID: 'conv-photo-two', attachments });
+
+  assert.equal(prepared.ok, true);
+  assert.equal(prepared.plan.steps[0].images[0].attachmentId, 'img_two');
+  assert.equal(prepared.plan.steps[0].images[0].name, 'side.png');
+});
+
+test('reading attachments keeps them alive between questions', () => {
+  const { createAttachmentStore } = require(path.join(ROOT, 'src/ai/attachments'));
+  let clock = 0;
+  const store = createAttachmentStore({ ttlMs: 100, now: () => clock });
+  const added = store.addMany('conv-live', [{
+    name: 'photo.png',
+    mime: 'image/png',
+    data: Buffer.from('hello').toString('base64'),
+  }]);
+  assert.equal(added.ok, true);
+  const id = added.attachments[0].id;
+
+  clock = 90;
+  assert.equal(store.list('conv-live').length, 1);
+  clock = 180;
+  assert.equal(store.get('conv-live', id).id, id);
+  clock = 300;
+  assert.equal(store.list('conv-live').length, 0);
 });
 
 test('an update without new images keeps the existing product cover', async () => {
@@ -3483,6 +3602,10 @@ test('an exact product duplicate becomes an update question without another mode
   assert.equal(h.state.sessionCount, 1);
   assert.equal(result.text, '');
 
+  assert.ok(
+    result.toolCalls.some((call) => call.name === 'posnic_search_products'),
+    'an exact duplicate keeps its result card',
+  );
   const clarify = result.toolCalls.find((call) => call.name === 'posnic_ask_user');
   assert.ok(clarify, 'a clarification card is returned');
   const payload = clarify.metadata.posnic;
@@ -3494,6 +3617,59 @@ test('an exact product duplicate becomes an update question without another mode
   assert.deepEqual(
     payload.options.map((option) => option.value),
     ['تعديل السعر', 'تعديل التكلفة', 'تعديل المخزون', 'إلغاء'],
+  );
+});
+
+test('an add request hides similar products and does not repeat the clarify question', async (t) => {
+  const question = 'هل تريد إضافة صورة للمنتج؟';
+  const h = await createRuntimeHarness(t, {
+    promptHook: () => ({
+      reply: question,
+      tools: [
+        {
+          name: 'posnic_search_products',
+          input: { query: 'غسالة شارب', limit: 8 },
+          metadata: { posnic: {
+            kind: 'product_search',
+            query: 'غسالة شارب',
+            count: 1,
+            results: [{
+              id: 'item-similar',
+              name: 'غسالة اتنين حصان',
+              sellingPrice: 5000,
+              stock: 1,
+            }],
+          } },
+        },
+        {
+          name: 'posnic_ask_user',
+          metadata: { posnic: {
+            kind: 'clarify',
+            question,
+            options: [],
+          } },
+        },
+      ],
+    }),
+  });
+
+  const result = await h.runtime.chat({
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-create-noise',
+    message: 'عايز اضيف منتج غسالة شارب',
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(result.text, '');
+  assert.equal(
+    result.toolCalls.some((call) => call.name === 'posnic_search_products'),
+    false,
+  );
+  assert.equal(
+    result.toolCalls.some((call) => call.name === 'posnic_ask_user'),
+    true,
   );
 });
 
@@ -3511,7 +3687,29 @@ test('a provider or model change is applied to the runtime before it restarts', 
     path.join(h.dir, 'opencode', 'config', 'opencode.json'),
     'utf8',
   ));
-  assert.equal(config.agents['posnic-assistant'].model, 'groq/openai/gpt-oss-20b');
+  assert.deepEqual(config.agents['posnic-assistant'].model, {
+    providerID: 'groq',
+    model: 'openai/gpt-oss-20b',
+    variant: 'medium',
+  });
+  assert.deepEqual(
+    config.providers.groq.models['openai/gpt-oss-20b'].variants.map((variant) => variant.id),
+    ['low', 'medium', 'high'],
+  );
+
+  const reply = await h.runtime.chat({
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-variant',
+    message: 'hello',
+  });
+  assert.equal(reply.success, true);
+  assert.deepEqual(h.state.sessionInputs[0].model, {
+    providerID: 'groq',
+    id: 'openai/gpt-oss-20b',
+    variant: 'medium',
+  });
 });
 
 test('the runtime hides an internal correction while the model retries', async (t) => {

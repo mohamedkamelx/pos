@@ -17,6 +17,7 @@ const {
   DEFAULT_PROVIDER,
   getModel,
   getProvider,
+  isReasoningLevel,
   listProviders,
 } = require('./ai/provider-registry');
 const {
@@ -124,6 +125,7 @@ function createAiIpc({
       providerLabel: provider.label,
       model: model.id,
       modelLabel: model.label,
+      reasoning: settings.reasoning,
     };
   }
 
@@ -395,7 +397,12 @@ function createAiIpc({
       return failure('model_unavailable', 'Choose a model this provider offers.');
     }
 
-    const next = keyStore.setSettings({ provider: provider.id, model: model.id });
+    const current = keyStore.getSettings();
+    const next = keyStore.setSettings({
+      provider: provider.id,
+      model: model.id,
+      reasoning: current.reasoning,
+    });
     if (typeof runtime.updateSettings === 'function') runtime.updateSettings(next);
     let restarted = false;
     let warning = '';
@@ -412,6 +419,35 @@ function createAiIpc({
       success: true,
       provider: next.provider,
       model: next.model,
+      reasoning: next.reasoning,
+      restarted,
+      ...(warning ? { warning } : {}),
+    };
+  });
+
+  ipcMain.handle('ai:set-reasoning', async (_event, payload) => {
+    const requested = String((payload && payload.reasoning) || '').trim().toLowerCase();
+    if (!isReasoningLevel(requested)) {
+      return failure('reasoning_invalid', 'Choose a valid thinking level.');
+    }
+
+    const current = keyStore.getSettings();
+    const next = keyStore.setSettings({ ...current, reasoning: requested });
+    if (typeof runtime.updateSettings === 'function') runtime.updateSettings(next);
+    let restarted = false;
+    let warning = '';
+    if (runtime.isRunning()) {
+      try {
+        await runtime.restart();
+        restarted = true;
+      } catch (error) {
+        warning = 'The thinking level was saved, but the assistant could not restart. Turn it off and on again.';
+        await stopRuntime();
+      }
+    }
+    return {
+      success: true,
+      reasoning: next.reasoning,
       restarted,
       ...(warning ? { warning } : {}),
     };

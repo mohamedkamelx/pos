@@ -121,7 +121,8 @@ PosnicPro.customers = {
                 $('#customers_list_paging').html('');
                 return;
             }
-            var html = '<div class="table-responsive"><table class="table table-borderless">'
+            var lbl = function (key, fallback) { return esc(PosnicPro.i18n.t(key, fallback)); };
+            var html = '<div class="table-responsive"><table class="table table-borderless m-cards customers-m-cards">'
                 + '<thead><tr><th><lang class="lang_name_title">Name</lang></th><th class="c-col-phone"><lang class="lang_phone_title">Phone</lang></th>'
                 + '<th class="c-col-email"><lang class="lang_email_title">Email</lang></th><th class="c-col-address"><lang class="lang_address_title">Address</lang></th><th class="text-center"><lang class="lang_dues">Dues</lang></th></tr></thead><tbody>';
             list.forEach(function (r) {
@@ -131,11 +132,11 @@ PosnicPro.customers = {
                     : '<span class="q-muted">-</span>';
                 html += '<tr class="md-row customers-row highlight-select' + (self._openDocId === String(r._id) ? ' is-active' : '') + '"'
                     + ' data-id="' + esc(r._id) + '" style="cursor:pointer;">'
-                    + '<td>' + esc(r.name) + '</td>'
-                    + '<td class="c-col-phone">' + esc(r.phone || '-') + '</td>'
-                    + '<td class="c-col-email">' + esc(r.email || '-') + '</td>'
-                    + '<td class="c-col-address">' + esc(r.address || '-') + '</td>'
-                    + '<td class="text-center">' + due + '</td>'
+                    + '<td class="m-card-name" data-label="' + lbl('lang_name_title', 'Name') + '">' + esc(r.name) + '</td>'
+                    + '<td class="c-col-phone m-card-phone" data-label="' + lbl('lang_phone_title', 'Phone') + '">' + esc(r.phone || '-') + '</td>'
+                    + '<td class="c-col-email" data-label="' + lbl('lang_email_title', 'Email') + '">' + esc(r.email || '-') + '</td>'
+                    + '<td class="c-col-address" data-label="' + lbl('lang_address_title', 'Address') + '">' + esc(r.address || '-') + '</td>'
+                    + '<td class="text-center m-card-dues" data-label="' + lbl('lang_dues', 'Dues') + '">' + due + '</td>'
                     + '</tr>';
             });
             html += '</tbody></table></div>';

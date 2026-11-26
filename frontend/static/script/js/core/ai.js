@@ -19,6 +19,7 @@
   var MAX_ATTACHMENTS = 8;
   var MAX_IMAGE_BYTES = 5 * 1024 * 1024;
   var IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/bmp'];
+  var REASONING_LEVELS = ['low', 'medium', 'high'];
 
   /* Used when the main process does not return a provider list yet. The ids
      are the contract's stable model ids, not display-only guesses. */
@@ -58,6 +59,7 @@
     cancelled: false,
     transcriptionBusy: false,
     providerBusy: false,
+    reasoningBusy: false,
     selectionSeq: 0,
     chatGeneration: 0,
     conversationId: '',
@@ -82,7 +84,8 @@
       unreadable: false,
       backupConfigured: false,
       backupSecure: true,
-      activeToken: 'primary'
+      activeToken: 'primary',
+      reasoning: 'medium'
     },
     providers: [],
     provider: '',
@@ -204,6 +207,7 @@
       provider_model_unavailable: modelEntry,
       model_unavailable: modelEntry,
       model_unavailable_chat: modelEntry,
+      reasoning_invalid: ['lang_ai_reasoning_invalid', 'Choose a valid thinking level.'],
       runtime_starting: ['lang_ai_runtime_starting', 'The assistant is still starting. Try again in a moment.'],
       runtime_failed: ['lang_ai_runtime_failed', 'The assistant could not start. Try again.'],
       runtime_error: ['lang_ai_runtime_failed', 'The assistant could not start. Try again.'],
@@ -227,7 +231,7 @@
       attachment_too_large: ['lang_ai_attachment_too_large', 'Each image must be 5 MB or smaller.'],
       attachments_too_large: ['lang_ai_attachment_too_large', 'Each image must be 5 MB or smaller.'],
       too_many_attachments: ['lang_ai_too_many_images', 'Attach up to 8 images.'],
-      attachment_missing: ['lang_ai_attach_failed', 'That image is no longer available. Attach it again.'],
+      attachment_missing: ['lang_ai_attachment_missing', 'That image is no longer available. Attach it again.'],
       plan_not_found: ['lang_ai_plan_expired', 'That change expired. Ask me to prepare it again.'],
       plan_expired: ['lang_ai_plan_expired', 'That change expired. Ask me to prepare it again.'],
       plan_running: ['lang_ai_plan_running', 'That change is already running.'],
@@ -470,6 +474,78 @@
     if (el.removeSettingsBackup) el.removeSettingsBackup.hidden = !configured;
   }
 
+  function reasoningLabel(level) {
+    if (level === 'low') return t('lang_ai_reasoning_low', 'Fast');
+    if (level === 'high') return t('lang_ai_reasoning_high', 'Thorough');
+    return t('lang_ai_reasoning_medium', 'Balanced');
+  }
+
+  function setReasoningState(text, isError) {
+    if (!el.reasoningState) return;
+    el.reasoningState.textContent = text || '';
+    el.reasoningState.className =
+      'small d-block mt-2 ' + (isError ? 'text-danger' : 'text-muted');
+  }
+
+  function renderReasoning() {
+    var index = REASONING_LEVELS.indexOf(state.chat.reasoning);
+    if (index < 0) index = 1;
+    if (el.reasoning) {
+      el.reasoning.value = String(index);
+      el.reasoning.disabled = !state.enabled || state.busy || state.reasoningBusy;
+    }
+    if (el.reasoningValue) {
+      el.reasoningValue.textContent = reasoningLabel(state.chat.reasoning);
+    }
+  }
+
+  function onReasoningInput() {
+    if (!el.reasoning) return;
+    var level = REASONING_LEVELS[Number(el.reasoning.value)] || 'medium';
+    if (el.reasoningValue) el.reasoningValue.textContent = reasoningLabel(level);
+  }
+
+  async function saveReasoning() {
+    if (!hasIpc() || !el.reasoning || state.reasoningBusy) return;
+    if (typeof api().setReasoning !== 'function') return;
+    var level = REASONING_LEVELS[Number(el.reasoning.value)] || 'medium';
+    if (level === state.chat.reasoning) {
+      renderReasoning();
+      return;
+    }
+    var previous = state.chat.reasoning;
+    state.reasoningBusy = true;
+    updateControls();
+    setReasoningState(t('lang_ai_reasoning_saving', 'Saving...'), false);
+    try {
+      var result = await api().setReasoning(level);
+      if (!result || result.success === false) {
+        state.chat.reasoning = previous;
+        renderReasoning();
+        setReasoningState(messageFor(result, 'chat'), true);
+        return;
+      }
+      state.chat.reasoning = REASONING_LEVELS.indexOf(result.reasoning) >= 0
+        ? result.reasoning
+        : level;
+      renderReasoning();
+      setReasoningState(
+        result.warning || t('lang_ai_reasoning_saved', 'Thinking level saved.'),
+        !!result.warning,
+      );
+    } catch (error) {
+      state.chat.reasoning = previous;
+      renderReasoning();
+      setReasoningState(
+        t('lang_ai_reasoning_failed', 'The thinking level could not be saved.'),
+        true,
+      );
+    } finally {
+      state.reasoningBusy = false;
+      updateControls();
+    }
+  }
+
   function updateSetupState() {
     var ready = credentialsReady();
     updateTranscriptionState();
@@ -507,6 +583,9 @@
     state.chat.backupConfigured = !!chat.backupConfigured;
     state.chat.backupSecure = chat.backupSecure !== false;
     state.chat.activeToken = chat.activeToken === 'backup' ? 'backup' : 'primary';
+    state.chat.reasoning = REASONING_LEVELS.indexOf(String(chat.reasoning)) >= 0
+      ? String(chat.reasoning)
+      : 'medium';
 
     state.providers = mergeProviders(status.providers);
     ensureProvider(state.chat.provider, state.chat.providerLabel, state.chat.model, state.chat.modelLabel);
@@ -521,6 +600,7 @@
 
     renderProviderOptions();
     renderModelOptions();
+    renderReasoning();
     updateSetupState();
   }
 
@@ -557,6 +637,7 @@
     setConnectionStatus('');
     renderMessages();
     renderAttachments();
+    renderReasoning();
     updateControls();
   }
 
@@ -2102,6 +2183,9 @@
     }
     el.send.disabled = state.busy || !state.enabled || !chatConfiguredForSelection();
     if (el.retry) el.retry.disabled = state.busy;
+    if (el.reasoning) {
+      el.reasoning.disabled = !state.enabled || state.busy || state.reasoningBusy;
+    }
     if (el.attach) {
       el.attach.disabled = state.busy || state.attachmentBusy || !state.enabled || !canAttach();
     }
@@ -2304,6 +2388,9 @@
     el.settingsBackupState = byId('ai_settings_backup_state');
     el.removeSettingsBackup = byId('ai_settings_backup_remove');
     el.turnOn = byId('ai_turn_on');
+    el.reasoning = byId('ai_reasoning');
+    el.reasoningValue = byId('ai_reasoning_value');
+    el.reasoningState = byId('ai_reasoning_state');
     el.connectionStatus = byId('ai_connection_status');
     el.disable = byId('ai_disable');
     el.removeKey = byId('ai_remove_key');
@@ -2361,6 +2448,10 @@
     }
     if (el.removeSettingsBackup) el.removeSettingsBackup.addEventListener('click', removeProviderBackup);
     el.turnOn.addEventListener('click', turnOn);
+    if (el.reasoning) {
+      el.reasoning.addEventListener('input', onReasoningInput);
+      el.reasoning.addEventListener('change', function () { saveReasoning(); });
+    }
     el.disable.addEventListener('click', disableFeature);
     el.removeKey.addEventListener('click', removeTranscription);
     el.removeProvider.addEventListener('click', removeProvider);

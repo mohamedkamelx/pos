@@ -262,7 +262,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_search_products',
           description:
-            'Search this branch by product name, SKU, barcode or partial text. Use it for a specific product, price or stock question. Returns up to 20 matches.',
+            'Search this branch by product name, SKU, barcode or partial text. Use it for a specific product, price or stock question. For an add or create request, search only the exact name or code to check for an exact duplicate; do not browse similar products. Returns up to 20 matches.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -300,7 +300,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_list_products',
           description:
-            'List this branch\'s products without a keyword. Use for all products, a whole category or another page. Do not use it for a specific product; use posnic_search_products.',
+            'List this branch\'s products without a keyword. Use for all products, a whole category or another page. Do not use it for a specific product; use posnic_search_products. Do not use it for an add or create request; it is for browsing existing stock.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -593,12 +593,13 @@ function createPosnicToolPlugin({
                     images: {
                       type: 'array',
                       maxItems: 8,
-                      description: 'Attachment ids; cover at most one. Existing images are kept.',
+                      description: 'Attachment ids from the latest notice; include the matching file name as a fallback. Cover at most one. Existing images are kept.',
                       items: {
                         type: 'object',
                         additionalProperties: false,
                         properties: {
                           attachmentId: { type: 'string' },
+                          name: { type: 'string' },
                           cover: { type: 'boolean' },
                         },
                         required: ['attachmentId'],

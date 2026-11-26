@@ -489,7 +489,8 @@ PosnicPro.items = {
                 return;
             }
             var cur = PosnicPro.local.get('currencySign');
-            var html = '<div class="table-responsive"><table class="table table-borderless">'
+            var lbl = function (key, fallback) { return esc(PosnicPro.i18n.t(key, fallback)); };
+            var html = '<div class="table-responsive"><table class="table table-borderless m-cards items-m-cards">'
                 + '<thead><tr><th style="width:44px;"></th><th><lang class="lang_name_title">Name</lang></th><th class="i-col-sku"><lang class="lang_sku_title">Item code</lang></th>'
                 + '<th class="i-col-category"><lang class="lang_newcategory_title">Category</lang></th><th class="i-col-supplier"><lang class="lang_newsupplier_title">Supplier</lang></th>'
                 + '<th class="text-right"><lang class="lang_stock">Stock</lang></th>'
@@ -526,15 +527,15 @@ PosnicPro.items = {
                     : '-';
                 html += '<tr class="md-row items-row highlight-select' + (self._openDocId === String(r._id) ? ' is-active' : '') + '"'
                     + ' data-id="' + esc(r._id) + '" style="cursor:pointer;">'
-                    + '<td>' + thumb + '</td>'
-                    + '<td>' + esc(r.name) + '</td>'
-                    + '<td class="i-col-sku">' + esc(r.itemid || '-') + '</td>'
-                    + '<td class="i-col-category">' + esc(r.category_name || '-') + '</td>'
-                    + '<td class="i-col-supplier">' + esc(r.supplier_name || '-') + '</td>'
-                    + '<td class="text-right">' + stockCell + '</td>'
-                    + '<td class="text-right i-col-cost q-muted">' + (cost > 0 ? cur + '&nbsp;' + cost.toFixed(2) : '-') + '</td>'
-                    + '<td class="text-right i-col-price">' + cur + '&nbsp;' + sell.toFixed(2) + '</td>'
-                    + '<td class="text-right i-col-margin">' + marginCell + '</td>'
+                    + '<td class="m-card-thumb">' + thumb + '</td>'
+                    + '<td class="m-card-name" data-label="' + lbl('lang_name_title', 'Name') + '">' + esc(r.name) + '</td>'
+                    + '<td class="i-col-sku" data-label="' + lbl('lang_sku_title', 'Item code') + '">' + esc(r.itemid || '-') + '</td>'
+                    + '<td class="i-col-category" data-label="' + lbl('lang_newcategory_title', 'Category') + '">' + esc(r.category_name || '-') + '</td>'
+                    + '<td class="i-col-supplier" data-label="' + lbl('lang_newsupplier_title', 'Supplier') + '">' + esc(r.supplier_name || '-') + '</td>'
+                    + '<td class="text-right m-card-stock" data-label="' + lbl('lang_stock', 'Stock') + '">' + stockCell + '</td>'
+                    + '<td class="text-right i-col-cost q-muted" data-label="' + lbl('lang_companyamount_title', 'Cost') + '">' + (cost > 0 ? cur + '&nbsp;' + cost.toFixed(2) : '-') + '</td>'
+                    + '<td class="text-right i-col-price m-card-price" data-label="' + lbl('lang_price_title', 'Price') + '">' + cur + '&nbsp;' + sell.toFixed(2) + '</td>'
+                    + '<td class="text-right i-col-margin" data-label="' + lbl('lang_margin', 'Margin') + '">' + marginCell + '</td>'
                     + '</tr>';
             });
             html += '</tbody></table></div>';

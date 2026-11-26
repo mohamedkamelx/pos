@@ -9,6 +9,24 @@ const path = require('path');
 const config = require('../config/config');
 const branchesRepository = require('../repositories/branch.repository');
 
+/*
+ * The canonical item image is written under POSNIC_UPLOADS_DIR. The older
+ * uploads-root and api/public copies are compatibility copies for legacy
+ * clients. A packaged install can mount its own resources read-only, so a
+ * failed compatibility copy must never fail the upload that already succeeded.
+ */
+function copyImageIfMissing(source, destination) {
+  try {
+    if (!fs.existsSync(destination)) fs.copyFileSync(source, destination);
+  } catch (error) {
+    console.warn(
+      'Optional item image copy skipped:',
+      destination,
+      error && (error.code || error.message),
+    );
+  }
+}
+
 /**
  * Item Service
  * Contains business logic for item operations
@@ -312,14 +330,10 @@ class ItemService {
         const s3Result = await this.uploadFileToS3(filename, fullPath);
 
         const rootUploadPath = path.join(uploadBaseDir, filename);
-        if (!fs.existsSync(rootUploadPath)) {
-          fs.copyFileSync(fullPath, rootUploadPath);
-        }
+        copyImageIfMissing(fullPath, rootUploadPath);
 
         const publicPath = path.join(publicDir, filename);
-        if (!fs.existsSync(publicPath)) {
-          fs.copyFileSync(fullPath, publicPath);
-        }
+        copyImageIfMissing(fullPath, publicPath);
 
         // Store the RELATIVE path, never a full URL.
         //

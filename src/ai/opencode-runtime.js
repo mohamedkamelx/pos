@@ -20,6 +20,8 @@ const {
   PROVIDERS,
   getModel,
   getProvider,
+  normaliseReasoning,
+  normaliseSettings,
   runtimeConfig,
 } = require('./provider-registry');
 const { providerTokenSlot } = require('./key-store');
@@ -157,7 +159,9 @@ function createOpenCodeRuntime({
      after a quota failure the backup slot stays active until the user saves a
      new primary token or removes the backup. */
   const activeTokenSlots = new Map();
-  let settings = keyStore ? keyStore.getSettings() : { provider: 'groq', model: 'openai/gpt-oss-120b' };
+  let settings = normaliseSettings(
+    keyStore ? keyStore.getSettings() : { provider: 'groq', model: 'openai/gpt-oss-120b' },
+  );
   let log = typeof logger === 'function' ? logger : () => {};
   const chatTimeout = Number(chatTimeoutMs) > 0 ? Number(chatTimeoutMs) : CHAT_TIMEOUT_MS;
   const toolContext = createContextStore();
@@ -190,8 +194,12 @@ function createOpenCodeRuntime({
     const config = runtimeConfig({
       providerID: settings.provider,
       modelID: settings.model,
+      reasoning: settings.reasoning,
     });
-    log(`[AI config] provider=${settings.provider} model=${settings.model}`);
+    log(
+      `[AI config] provider=${settings.provider} model=${settings.model} ` +
+      `reasoning=${settings.reasoning}`,
+    );
     fs.writeFileSync(
       path.join(configDir, 'opencode.json'),
       JSON.stringify(config, null, 2),
@@ -430,7 +438,7 @@ function createOpenCodeRuntime({
        saved selection so the new session is created with it. The draft,
        attachments and pending plans belong to the conversation, not to the
        old session, so keep them across the restart. */
-    if (keyStore) settings = keyStore.getSettings();
+    if (keyStore) settings = normaliseSettings(keyStore.getSettings());
     await stop({ preserveConversation: true });
     return start();
   }
@@ -460,7 +468,11 @@ function createOpenCodeRuntime({
     const session = await client.session.create({
       ...location,
       agent: AGENT_ID,
-      model: { providerID: provider.id, id: model.id },
+      model: {
+        providerID: provider.id,
+        id: model.id,
+        variant: normaliseReasoning(settings.reasoning),
+      },
       title: 'Posnic assistant',
       /* Belt and braces: the agent already denies every tool except the shop
          and local-note tools. Repeating the policy on the session keeps the
@@ -727,10 +739,10 @@ function createOpenCodeRuntime({
   function exactDuplicate(toolCalls, message) {
     const wanted = normalizeName(message);
     for (const call of Array.isArray(toolCalls) ? toolCalls : []) {
-      if (!call || call.name !== 'posnic_search_products') continue;
+      if (!call) continue;
       const result = call.metadata && call.metadata.posnic;
-      if (!result || result.kind !== 'product_search') continue;
-      const query = normalizeName(call.input && call.input.query);
+      if (!result || (result.kind !== 'product_search' && result.kind !== 'product_list')) continue;
+      const query = normalizeName(call.input && call.input.query) || wanted;
       for (const item of Array.isArray(result.results) ? result.results : []) {
         const name = normalizeName(item && item.name);
         if (!name) continue;
@@ -740,6 +752,41 @@ function createOpenCodeRuntime({
       }
     }
     return null;
+  }
+
+  const PRODUCT_READ_KINDS = new Set(['product_search', 'product_list']);
+
+  function isProductReadCall(call) {
+    const result = call && call.metadata && call.metadata.posnic;
+    return !!result && PRODUCT_READ_KINDS.has(result.kind);
+  }
+
+  function clarifyQuestions(toolCalls) {
+    const questions = [];
+    for (const call of Array.isArray(toolCalls) ? toolCalls : []) {
+      if (!call || call.name !== 'posnic_ask_user') continue;
+      const result = call.metadata && call.metadata.posnic;
+      if (!result || result.kind !== 'clarify' || !result.question) continue;
+      questions.push(String(result.question));
+    }
+    return questions;
+  }
+
+  /* The clarify card already asks the question. A prose bubble that repeats it
+     makes the same turn look like two questions, so drop the duplicate. */
+  function suppressRepeatedQuestion(text, toolCalls) {
+    const value = String(text || '').trim();
+    if (!value) return value;
+    const normalized = normalizeName(value);
+    if (!normalized) return value;
+    for (const question of clarifyQuestions(toolCalls)) {
+      const asked = normalizeName(question);
+      if (!asked) continue;
+      if (normalized === asked || normalized.includes(asked) || asked.includes(normalized)) {
+        return '';
+      }
+    }
+    return value;
   }
 
   function arabicDigits(value) {
@@ -1031,13 +1078,24 @@ function createOpenCodeRuntime({
     }
 
     reply.text = normalizeCurrencyText(reply.text);
+    reply.text = suppressRepeatedQuestion(reply.text, reply.toolCalls);
+    /* An explicit create request should not turn into a browse of similar
+       products. Keep the duplicate check internal: only an exact match keeps
+       its result card so the shop can see what was found. */
+    const createText = turn.writeRequest
+      ? message
+      : (turn.pendingAnswer && pending ? pending.text : '');
+    const hideProductReads = !!createText &&
+      isCreateRequest(createText) &&
+      !exactDuplicate(reply.toolCalls, createText);
     /* A self-correction returned by a tool is for the model. It must not
        appear as a failed shop action in the chat while the model retries. */
     const visibleToolCalls = (Array.isArray(reply.toolCalls) ? reply.toolCalls : [])
       .filter((call) => {
         const posnic = call && call.metadata && call.metadata.posnic;
         return !(posnic && posnic.internal === true);
-      });
+      })
+      .filter((call) => !hideProductReads || !isProductReadCall(call));
     const completed = memory.completeTurn(conversation, reply.text, visibleToolCalls);
     sessionTurns += correctionText ? 2 : 1;
     /* The provider reports the whole prompt plus the reply, so it is the
@@ -1192,7 +1250,7 @@ function createOpenCodeRuntime({
   }
 
   function updateSettings(next) {
-    settings = keyStore.setSettings(next);
+    settings = normaliseSettings(keyStore.setSettings(next));
     return settings;
   }
 
@@ -1201,6 +1259,7 @@ function createOpenCodeRuntime({
       running: !!client,
       provider: settings.provider,
       model: settings.model,
+      reasoning: normaliseReasoning(settings.reasoning),
     };
   }
 

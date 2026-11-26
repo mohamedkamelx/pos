@@ -98,6 +98,13 @@ function createAttachmentStore({ ttlMs = DEFAULT_TTL_MS, now = Date.now } = {}) 
     }
   }
 
+  /* A user can attach a photo, then answer several questions before asking
+     for the plan. Touching on every read keeps an attachment that is still
+     part of the live conversation from expiring between those turns. */
+  function touch(item) {
+    if (item) item.createdAt = now();
+  }
+
   function addMany(sessionID, rawList) {
     const entry = session(sessionID, true);
     if (!entry) return { ok: false, code: 'session_required', message: 'The chat session is missing.' };
@@ -157,18 +164,23 @@ function createAttachmentStore({ ttlMs = DEFAULT_TTL_MS, now = Date.now } = {}) 
   function list(sessionID) {
     const entry = session(sessionID, false);
     if (!entry) return [];
-    return Array.from(entry.items.values()).map((item) => ({
-      id: item.id,
-      name: item.name,
-      mime: item.mime,
-      size: item.size,
-    }));
+    return Array.from(entry.items.values()).map((item) => {
+      touch(item);
+      return {
+        id: item.id,
+        name: item.name,
+        mime: item.mime,
+        size: item.size,
+      };
+    });
   }
 
   function get(sessionID, id) {
     const entry = session(sessionID, false);
     if (!entry) return null;
-    return entry.items.get(String(id || '')) || null;
+    const item = entry.items.get(String(id || '')) || null;
+    touch(item);
+    return item;
   }
 
   function describe(sessionID, ids) {
@@ -211,7 +223,7 @@ function attachmentNotice(attachments) {
   return [
     '',
     '',
-    '[Attached images. Use these attachment ids in posnic_propose_plan when the user wants an image added to a product.]',
+    '[Attached images for this message. Use one of these attachment ids in posnic_propose_plan when the user wants an image added to a product. Do not reuse an id from an earlier message; it may have expired.]',
     ...attachments.map((item) => `- ${item.id}: ${item.name}`),
   ].join('\n');
 }

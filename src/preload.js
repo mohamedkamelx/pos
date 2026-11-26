@@ -217,6 +217,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveProviderKey: (provider, key, backup) => ipcRenderer.invoke('ai:save-provider-key', { provider, key, backup: !!backup }),
     clearProviderKey: (provider, backup) => ipcRenderer.invoke('ai:clear-provider-key', { provider, backup: !!backup }),
     setProviderModel: (provider, model) => ipcRenderer.invoke('ai:set-provider-model', { provider, model }),
+    setReasoning: (reasoning) => ipcRenderer.invoke('ai:set-reasoning', { reasoning }),
     resetChat: (payload) => ipcRenderer.invoke('ai:reset-chat', payload),
     attach: (payload) => ipcRenderer.invoke('ai:attach', payload),
     removeAttachment: (payload) => ipcRenderer.invoke('ai:remove-attachment', payload),

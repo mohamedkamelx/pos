@@ -468,6 +468,33 @@ function mergeShared(fields, shared, actionName) {
   return out;
 }
 
+/* The model occasionally repeats an attachment id from an earlier turn after
+   that image has expired. When the conversation still holds exactly one image,
+   or the id is really the file name, use the live attachment instead of
+   rejecting a plan the user can see is correct. Ambiguous multi-image turns
+   still fail so the wrong photo is never attached. */
+function describeAttachment(attachments, sessionID, attachmentId, requestedName = '') {
+  const described = attachments.describe(sessionID, [attachmentId]);
+  if (!described || described.ok || typeof attachments.list !== 'function') return described;
+  const current = attachments.list(sessionID);
+  if (!Array.isArray(current) || !current.length) return described;
+  const wanted = [requestedName, attachmentId]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean);
+  const byName = current.find(
+    (item) => item && wanted.includes(String(item.name || '').trim().toLowerCase()),
+  );
+  if (byName) {
+    const exact = attachments.describe(sessionID, [byName.id]);
+    if (exact && exact.ok) return exact;
+  }
+  if (current.length === 1) {
+    const only = attachments.describe(sessionID, [current[0].id]);
+    if (only && only.ok) return only;
+  }
+  return described;
+}
+
 async function validatePlan(raw, { api, sessionID, attachments, userText = '' } = {}) {
   const userWords = cleanText(userText, 4000);
   if (!api || typeof api.get !== 'function') {
@@ -556,11 +583,12 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
         if (!attachments || typeof attachments.describe !== 'function') {
           return error('attachment_missing', 'The attached image is no longer available. Attach it again.');
         }
-        const described = attachments.describe(sessionID, [attachmentId]);
+        const described = describeAttachment(attachments, sessionID, attachmentId, image && image.name);
         if (!described.ok) return error(described.code, described.message);
+        const resolved = described.attachments[0];
         images.push({
-          attachmentId,
-          name: described.attachments[0].name,
+          attachmentId: resolved.id,
+          name: resolved.name,
           cover: image && image.cover === true,
         });
       }

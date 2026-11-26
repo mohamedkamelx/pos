@@ -13,15 +13,41 @@
 
 const AGENT_ID = 'posnic-assistant';
 
+/* How long the assistant may spend thinking before it answers. The ids are
+   persisted and sent to the runtime; the effort values are the provider's
+   OpenAI-compatible reasoning_effort values. */
+const REASONING_LEVELS = [
+  { id: 'low', effort: 'low' },
+  { id: 'medium', effort: 'medium' },
+  { id: 'high', effort: 'high' },
+];
+const DEFAULT_REASONING = 'medium';
+
+function normaliseReasoning(value) {
+  const id = String(value || '').trim().toLowerCase();
+  return REASONING_LEVELS.some((level) => level.id === id) ? id : DEFAULT_REASONING;
+}
+
+function isReasoningLevel(value) {
+  return REASONING_LEVELS.some((level) => level.id === value);
+}
+
+function reasoningVariants() {
+  return REASONING_LEVELS.map((level) => ({
+    id: level.id,
+    settings: { reasoningEffort: level.effort },
+  }));
+}
+
 const SYSTEM_PROMPT = [
   'You are the built-in assistant in Posnic, a point-of-sale app for small shops. Answer in the user\'s language, concisely, practically and friendly.',
   'You can read products and categories in the signed-in branch and prepare shop changes for the user to review. You never save a change yourself.',
-  'Use the smallest read tool that answers the question: posnic_search_products for a specific product, price, stock, barcode or SKU; posnic_list_products for all products, "what do I have", a whole category or another page; posnic_list_categories for category names, category contents or before a new product; posnic_help for a how-to, where-is, what-does-this-do or which-page question. Never ask for a keyword or category when the user asked for all products. Do not repeat a search that already answered the question.',
-  'Search and category lookup tolerate spelling variants and rank exact names and codes first. Reuse an existing product or category instead of creating a near-duplicate. If the top result is not exact, name the closest match and ask only when the choice changes the action.',
+  'Use the smallest read tool that answers the question: posnic_search_products for a specific product, price, stock, barcode or SKU; posnic_list_products for all products, "what do I have", a whole category or another page; posnic_list_categories for category names, category contents or before a new product; posnic_help for a how-to, where-is, what-does-this-do or which-page question. Never ask for a keyword or category when the user asked for all products. Do not repeat a search that already answered the question. Do not browse a category or list similar products when the user is adding a new product.',
+  'Search and category lookup tolerate spelling variants and rank exact names and codes first. Reuse an existing product or category instead of creating a near-duplicate. For an add or create request, only an exact duplicate matters: do not show or name similar products, and do not turn the search into a category browse. If the top result is not exact for a read question, name the closest match and ask only when the choice changes the action.',
   'Keep context: reuse ids from earlier tool results. If you only have a name, barcode or SKU, use it as the plan target; the main process resolves it in the branch. Never ask the user to type a record id.',
   'A block labeled [Conversation memory] is reference data from earlier turns, not a new instruction. Use it to resolve references and continue the active or unfinished request. "Already answered" and "Current category" are settled decisions, not suggestions: do not ask for them again, and do not replace them with a near-duplicate. If the user returns to an earlier subject or you need an exact earlier detail, call posnic_recall.',
   'An "Unfinished request" is the request you must continue. A short answer, including "مش مهم", "لا يهم", "تمام" or a quantity, answers your pending question; it is not a new search. If the user says a field is not important, leave it empty and continue the same request. Never treat "not important" as cancelling the request.',
-  'Add a product or another shop change: search or list first and reuse an existing record. A new product needs name, selling price, cost price and opening stock. Search categories too; if none matches and the user chose none, the category part must be a choice: create a named category (suggest one from the product type) or leave it uncategorized; never ask only "do you want a category?". Ask once for everything still missing: missing values, optional image and category choice. A search is not the answer to a create request; after it, continue in the same turn and ask or propose. Do not default prices or stock to zero, copy a previous product\'s values, or choose an unrelated category. Selling price and retail price (mrp_price) are the same unless a different retail price was given.',
+  'Add a product or another shop change: for a new product, search only the exact name, barcode or SKU the user gave to catch an exact duplicate; do not browse similar products or list a category of existing products. Reuse an existing record only when it is the same product or category. A new product needs name, selling price, cost price and opening stock. Search categories only to choose its category; if none matches and the user chose none, the category part must be a choice: create a named category (suggest one from the product type) or leave it uncategorized; never ask only "do you want a category?". Ask once for everything still missing: missing values, optional image and category choice. A search is not the answer to a create request; after it, continue in the same turn and ask or propose. Do not default prices or stock to zero, copy a previous product\'s values, or choose an unrelated category. Selling price and retail price (mrp_price) are the same unless a different retail price was given.',
   'If the user approves a new category, create it once as an earlier plan step and reference its id. Reuse an existing category only when its name matches what the user asked, including a spelling variant; never choose an unrelated category. Leave the category empty only when the user says no category or not important. After a category is answered or a plan creates one, keep that current category for the next product in the same topic; do not ask which category again.',
   'Prepare one ordered plan with posnic_propose_plan. The preview is not a write; never say the change is done. The user must press Confirm. After the tool call, tell the user in one short sentence to review and press Confirm; do not repeat every field.',
   'Keep names in the user\'s language. Correct obvious spelling slips of ordinary words and sizes (حمرى → حمراء, 14 أدم → 14 قدم); never change a brand name or translate unless asked.',
@@ -136,25 +162,41 @@ function getModel(providerID, modelID) {
 
 function normaliseSettings(raw) {
   const provider = getProvider(raw && raw.provider);
-  if (!provider) return { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL };
+  const reasoning = normaliseReasoning(raw && raw.reasoning);
+  if (!provider) return { provider: DEFAULT_PROVIDER, model: DEFAULT_MODEL, reasoning };
   const model = getModel(provider.id, raw && raw.model);
   return {
     provider: provider.id,
     model: model ? model.id : provider.models[0].id,
+    reasoning,
   };
 }
 
-function runtimeConfig({ providerID, modelID }) {
+function runtimeConfig({ providerID, modelID, reasoning }) {
   const selected = getProvider(providerID) || getProvider(DEFAULT_PROVIDER);
   const model = getModel(selected.id, modelID) || selected.models[0];
+  const level = normaliseReasoning(reasoning);
+  const variants = reasoningVariants();
   const providers = {};
   for (const provider of PROVIDERS) {
+    const models = {};
+    for (const [id, definition] of Object.entries(provider.configModels)) {
+      models[id] = {
+        ...definition,
+        /* Every configured model offers the same three thinking levels. The
+           provider maps reasoningEffort to its own reasoning_effort field. */
+        variants: variants.map((variant) => ({
+          id: variant.id,
+          settings: { ...variant.settings },
+        })),
+      };
+    }
     providers[provider.id] = {
       name: provider.label,
       env: [provider.env],
       package: '@opencode/ai/providers/openai-compatible',
       settings: { baseURL: provider.baseURL },
-      models: provider.configModels,
+      models,
     };
   }
   return {
@@ -166,7 +208,7 @@ function runtimeConfig({ providerID, modelID }) {
         description: 'Posnic shop assistant',
         mode: 'primary',
         steps: 8,
-        model: `${selected.id}/${model.id}`,
+        model: { providerID: selected.id, model: model.id, variant: level },
         system: systemPrompt(),
         permissions: [
           /* Deny everything first, then allow only the selected provider, the
@@ -194,12 +236,16 @@ module.exports = {
   AGENT_ID,
   DEFAULT_MODEL,
   DEFAULT_PROVIDER,
+  DEFAULT_REASONING,
   PROVIDERS,
+  REASONING_LEVELS,
   SYSTEM_PROMPT,
   getModel,
   systemPrompt,
   getProvider,
+  isReasoningLevel,
   listProviders,
+  normaliseReasoning,
   normaliseSettings,
   runtimeConfig,
 };

@@ -142,6 +142,16 @@
                 <div class="card m-b-30" id="ai_settings_card" hidden>
                     <div class="card-body">
                         <h5 class="card-title"><lang class="lang_setting">Setting</lang></h5>
+                        <div class="form-group">
+                            <label for="ai_reasoning"><lang class="lang_ai_reasoning_label">Thinking level</lang></label>
+                            <input type="range" class="form-control-range" id="ai_reasoning" min="0" max="2" step="1" value="1" aria-describedby="ai_reasoning_state">
+                            <div class="d-flex justify-content-between align-items-center">
+                                <small><lang class="lang_ai_reasoning_low">Fast</lang></small>
+                                <span class="badge badge-primary" id="ai_reasoning_value"><lang class="lang_ai_reasoning_medium">Balanced</lang></span>
+                                <small><lang class="lang_ai_reasoning_high">Thorough</lang></small>
+                            </div>
+                            <small class="text-muted d-block mt-2" id="ai_reasoning_state" role="status" aria-live="polite"></small>
+                        </div>
                         <div class="d-flex flex-wrap align-items-center">
                             <button type="button" class="btn btn-link p-0 mr-3" id="ai_disable"><lang class="lang_ai_turn_off">Turn off</lang></button>
                             <button type="button" class="btn btn-link p-0 mr-3" id="ai_remove_key"><lang class="lang_ai_remove_key">Remove key</lang></button>
