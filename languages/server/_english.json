@@ -14,6 +14,9 @@
   "A print job needs a branch": [
     "src/repositories/print-job.repository.js"
   ],
+  "A purchase order with received items cannot be deleted": [
+    "src/repositories/purchase-order.repository.js"
+  ],
   "A supplier email already exists. Nothing was imported.": [
     "src/services/supplier.service.js"
   ],
@@ -533,9 +536,6 @@
   "Document Restored successfully": [
     "src/models/setting.model.js"
   ],
-  "Draft deleted": [
-    "src/repositories/purchase-order.repository.js"
-  ],
   "Duplicate key error": [
     "src/middleware/async.js"
   ],
@@ -556,6 +556,9 @@
   ],
   "Enter a payment amount greater than zero.": [
     "src/services/debt.service.js"
+  ],
+  "Enter a quantity greater than zero.": [
+    "src/services/sale.service.js"
   ],
   "Enter a valid email address": [
     "app.js"
@@ -1005,9 +1008,6 @@
   "Not valid Input": [
     "src/controllers/customer-categories.controller.js"
   ],
-  "Nothing left to cancel on this order": [
-    "src/repositories/purchase-order.repository.js"
-  ],
   "Nothing to receive - enter a quantity": [
     "src/models/receiving.model.js"
   ],
@@ -1019,15 +1019,6 @@
   ],
   "Offline recovery is unavailable here.": [
     "src/routes/recovery.routes.js"
-  ],
-  "Only a draft can be ordered": [
-    "src/repositories/purchase-order.repository.js"
-  ],
-  "Only draft or ordered purchase orders can be edited": [
-    "src/repositories/purchase-order.repository.js"
-  ],
-  "Only drafts can be deleted": [
-    "src/repositories/purchase-order.repository.js"
   ],
   "Only super admins can change the sale hard-delete setting": [
     "src/models/setting.model.js"
@@ -1155,10 +1146,13 @@
   "Purchase not found": [
     "src/models/receiving.model.js"
   ],
-  "Purchase order not found": [
+  "Purchase order created": [
     "src/repositories/purchase-order.repository.js"
   ],
-  "Purchase order placed": [
+  "Purchase order deleted": [
+    "src/repositories/purchase-order.repository.js"
+  ],
+  "Purchase order not found": [
     "src/repositories/purchase-order.repository.js"
   ],
   "Purchase order updated": [
@@ -1340,9 +1334,6 @@
   ],
   "Starter settings updated": [
     "src/controllers/settings.controller.js"
-  ],
-  "Stock changed at another billing counter. Please refresh the item and try again.": [
-    "src/services/sale.service.js"
   ],
   "Stock count": [
     "src/repositories/inventory-count.repository.js"
@@ -1702,9 +1693,6 @@
   "Unit not found or you do not have permission to delete it": [
     "src/models/setting.model.js"
   ],
-  "Unknown action": [
-    "src/repositories/purchase-order.repository.js"
-  ],
   "Unknown settings group": [
     "src/repositories/settings.repository.js"
   ],
@@ -1857,9 +1845,6 @@
   ],
   "Your password was recently changed. Please log in again.": [
     "src/middleware/auth.js"
-  ],
-  "Your sales item quantity is mismatched.": [
-    "src/services/sale.service.js"
   ],
   "Your session has expired. Please log in again.": [
     "src/middleware/auth.js"

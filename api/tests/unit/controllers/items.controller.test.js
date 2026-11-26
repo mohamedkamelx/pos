@@ -60,6 +60,7 @@ jest.mock('../../../src/services/item.service', () =>
     previewBulkUpdateStock: jest.fn(),
     getBulkStockUpdates: jest.fn(),
     getPriceHistory: jest.fn(),
+    searchItems: jest.fn(),
   }))
 );
 
@@ -300,6 +301,52 @@ describe('getAll', () => {
     const res = mockRes();
     await ctrl.getAll(req, res);
     expect(res.status).toHaveBeenCalledWith(500);
+  });
+});
+
+// =============================================================================
+// search
+// =============================================================================
+
+describe('search', () => {
+  test('forwards the query, branch scope and category context to the service', async () => {
+    svc.searchItems.mockResolvedValue({ status: true, data: [{ name: 'غسالة' }] });
+    const req = mockReq({
+      query: {
+        q: 'غسالات',
+        limit: '999',
+        context: 'غسالات, أجهزة',
+        category: 'غسالات',
+      },
+      user: adminUser(),
+      tenantContext: { branchId: VALID_BRANCH, licenseId: VALID_LIC },
+    });
+    const res = mockRes();
+    await ctrl.search(req, res);
+
+    expect(svc.searchItems).toHaveBeenCalledWith('غسالات', expect.objectContaining({
+      limit: 100,
+      contextTerms: ['غسالات', 'أجهزة'],
+      category: 'غسالات',
+    }));
+    const [, options] = svc.searchItems.mock.calls[0];
+    expect(options.branchId.toString()).toBe(VALID_BRANCH);
+    expect(options.licenseId.toString()).toBe(VALID_LIC);
+    expect(res.status).toHaveBeenCalledWith(200);
+  });
+
+  test('returns 400 without a search term and 403 without item read access', async () => {
+    const empty = mockReq({ query: { q: '   ' }, user: adminUser() });
+    const emptyRes = mockRes();
+    await ctrl.search(empty, emptyRes);
+    expect(emptyRes.status).toHaveBeenCalledWith(400);
+    expect(svc.searchItems).not.toHaveBeenCalled();
+
+    const restricted = mockReq({ query: { q: 'pepsi' }, user: restrictedUser() });
+    const restrictedRes = mockRes();
+    await ctrl.search(restricted, restrictedRes);
+    expect(restrictedRes.status).toHaveBeenCalledWith(403);
+    expect(svc.searchItems).not.toHaveBeenCalled();
   });
 });
 

@@ -138,6 +138,8 @@ function createPosnicToolPlugin({
     const result = askUser(input, {
       pendingText: pending && pending.text,
       pendingNote: pending && pending.note,
+      answered: pending && pending.answers,
+      currentCategory: pending && pending.category,
     });
     return textResult(result, formatAsk);
   }
@@ -268,6 +270,18 @@ function createPosnicToolPlugin({
               query: {
                 type: 'string',
                 description: 'The product name, barcode, SKU or partial words the user gave.',
+              },
+              category: {
+                type: 'string',
+                maxLength: 160,
+                description:
+                  'Optional category the conversation is currently working in. It ranks matching products; it never hides a product outside the category.',
+              },
+              context: {
+                type: 'string',
+                maxLength: 240,
+                description:
+                  'Optional other words from the current conversation, such as a brand or the category just created.',
               },
               limit: {
                 type: 'integer',

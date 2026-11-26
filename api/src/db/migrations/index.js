@@ -51,4 +51,9 @@ module.exports = [
     description: 'Build the normalized, typo-tolerant item search index and its indexes',
     up: require('./008-item-search-index'),
   },
+  {
+    id: '009-item-search-smart-index',
+    description: 'Rebuild the item search index with phonetic keys for sound-alike search',
+    up: require('./009-item-search-smart-index'),
+  },
 ];

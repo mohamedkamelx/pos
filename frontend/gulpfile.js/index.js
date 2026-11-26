@@ -216,6 +216,7 @@ function buildLangPacks(cb) {
     const outDir = pathx.join(process.cwd(), publicDir, "languages");
     fsx.mkdirSync(outDir, { recursive: true });
     const problems = [];
+    const expectedPacks = new Set(["index.json"]);
     /* A run of Latin-1 supplement characters is what UTF-8 read as
            Latin-1 looks like. Real translations never contain one. */
     const {
@@ -224,6 +225,7 @@ function buildLangPacks(cb) {
     const packs = {};
     for (const lang of languages) {
       if (lang === "en") continue;
+      expectedPacks.add(`${lang}.json`);
       const source = pathx.join(
         process.cwd(),
         "..",
@@ -269,6 +271,10 @@ function buildLangPacks(cb) {
       for (const file of fsx.readdirSync(serverDir)) {
         if (!/^[a-z]{2}(?:-[A-Za-z]{2,4})?[.]json$/.test(file)) continue;
         const lang = file.slice(0, -5);
+        /* Only the languages this build ships. English is the fallback the
+           server already sends, so it needs no pack of its own. */
+        if (!languages.includes(lang) || lang === 'en') continue;
+        expectedPacks.add(`msg-${lang}.json`);
         let says;
         try {
           says = JSON.parse(
@@ -294,6 +300,18 @@ function buildLangPacks(cb) {
           JSON.stringify(clean),
           "utf8",
         );
+      }
+    }
+    /* public/languages is build output, not a source tree. A previous build
+       that shipped more languages leaves packs the menu no longer offers and
+       the installer still carries; remove everything this build did not just
+       write so a slimmed language list also slims the artifact. */
+    for (const existing of fsx.readdirSync(outDir)) {
+      if (/^msg-[a-z]{2}(?:-[A-Za-z]{2,4})?[.]json$/.test(existing) ||
+          /^[a-z]{2}(?:-[A-Za-z]{2,4})?[.]json$/.test(existing)) {
+        if (!expectedPacks.has(existing)) {
+          fsx.rmSync(pathx.join(outDir, existing), { force: true });
+        }
       }
     }
     if (problems.length) {

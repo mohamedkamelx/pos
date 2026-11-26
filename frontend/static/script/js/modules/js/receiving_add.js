@@ -1573,10 +1573,9 @@ $("#receiving_add").submit(function (event) {
 });
 
 /*
- * Purchase orders (PO_LIFECYCLE_DESIGN.md): the plan that never touches
- * stock. List / form / view sections on one page; Receive opens the
- * ordinary receiving screen pre-filled with the outstanding quantities and
- * stamps source_po_id so the bridge can mirror what arrived.
+ * Purchase orders: the plan that never touches stock. The purchases page
+ * lists orders and receipts; a legacy order opens read-only, and the
+ * ordinary receiving screen is the one place that moves stock.
  */
 PosnicPro.purchaseorders = {
     _detail: null,
@@ -1646,15 +1645,6 @@ PosnicPro.purchaseorders = {
             key: 'receivings',
             onRefresh: function () { return PosnicPro.purchaseorders.loadList(); },
             partyFilter: 'suppliers',
-            primaryControls: function (row, state) {
-                var status = $('<select class="form-control lf-primary" aria-label="Status" data-t-aria-label="lang_userstatus">').appendTo(row);
-                status.append($('<option>').val('').text(PosnicPro.i18n.t('lang_report_all', 'All')));
-                status.append($('<option>').val('received').text(PosnicPro.i18n.t('lang_po_received', 'Received')));
-                status.append($('<option>').val('cancelled').text(PosnicPro.i18n.t('lang_cancelled', 'Cancelled')));
-                status.val(state.extra.status || '').on('change', function () {
-                    PosnicPro.listFilter.setExtra('receivings', 'status', this.value);
-                });
-            },
             rows: '#po_list_rows',
             container: '#purchases_filter_panel',
             appliedContainer: '#po_active_filters',
@@ -1678,27 +1668,9 @@ PosnicPro.purchaseorders = {
         PosnicPro.listExport.all({
             url:'purchaseOrders/history', filename:'purchases.csv',
             params:function (page,limit) { return Object.assign({},criteria,{page:page,limit:limit}); },
-            head:['No','Kind','Bill date','Created','Supplier','Status','Expected','Total'],
-            map:function (r) { return [r.no,r.kind,r.date,r.created,r.supplier,r.status,r.expected,r.total]; }
+            head:['No','Kind','Bill date','Created','Supplier','Expected','Total'],
+            map:function (r) { return [r.no,r.kind,r.date,r.created,r.supplier,r.expected,r.total]; }
         });
-    },
-    STATUS_PILL: { ordered: 'hold', partial: 'hold', draft: 'hold', received: 'paid', closed: 'paid', cancelled: 'unpaid', open: 'hold' },
-    STATUS_LABEL: { ordered: 'Legacy order', partial: 'Partially received', draft: 'Draft', received: 'Received', closed: 'Received', cancelled: 'Cancelled', open: 'Open' },
-    /* The list and the document are read in the shop's language, so the
-       status text must come from the same catalogue as the rest of the page. */
-    statusLabel: function (status) {
-        var key = String(status || '').toLowerCase();
-        var labels = {
-            ordered: ['lang_legacy_order', 'Legacy order'],
-            partial: ['lang_partially_received', 'Partially received'],
-            draft: ['lang_draft', 'Draft'],
-            received: ['lang_po_received', 'Received'],
-            closed: ['lang_po_received', 'Received'],
-            cancelled: ['lang_cancelled', 'Cancelled'],
-            open: ['lang_open', 'Open']
-        };
-        var pair = labels[key];
-        return pair ? PosnicPro.i18n.t(pair[0], pair[1]) : (this.STATUS_LABEL[key] || status || '');
     },
     // The server filters and sorts orders and receipts together before paging.
     loadList: function (page) {
@@ -1718,8 +1690,6 @@ PosnicPro.purchaseorders = {
         var size = self.PAGE_SIZE;
         var esc = function (t) { return $('<span>').text(t == null ? '' : t).html(); };
         var criteria = PosnicPro.listFilter.params('receivings');
-        var chip = criteria.status;
-        criteria.status = chip || '';
         criteria.sort = PosnicPro.listSort.value('purchases');
         $('#po_summary').empty();
         self._criteria = criteria;
@@ -1733,25 +1703,23 @@ PosnicPro.purchaseorders = {
             pageRows.forEach(function (r) { r.progress = r.ordered ? r.received + '/' + r.ordered : ''; });
             if (!pageRows.length && p > 1) { self.loadList(1); return; }
             if (!pageRows.length) {
-                var isFiltered = !!chip || PosnicPro.listFilter.activeCount('receivings') > 0;
+                var isFiltered = PosnicPro.listFilter.activeCount('receivings') > 0;
                 $('#po_list_rows').html('<div class="text-center text-muted p-t-20 p-b-20">'
                     + (isFiltered ? PosnicPro.i18n.t('lang_no_purchases_match_this_filter', 'No purchases match this filter.') : PosnicPro.i18n.t('lang_no_purchases_yet_press_new_purchase_to_rec', 'No purchases yet - press New Purchase to record the first.')) + '</div>');
                 $('#po_list_paging').html('');
                 return;
             }
             var d = function (v) { return v ? new Date(v).toLocaleDateString('en-IN') : '-'; };
-            var P = self.STATUS_PILL;
             var html = '<div class="table-responsive"><table class="table table-borderless">'
                 + '<thead><tr>'
                 + '<th class="p-col-num"><lang class="lang_purchase_2">Purchase #</lang></th><th><lang class="lang_newsupplier_title">Supplier</lang></th><th class="p-col-date"><lang class="lang_date_title">Date</lang></th><th class="p-col-created"><lang class="lang_created">Created</lang></th>'
-                + '<th class="text-right"><lang class="lang_total_title">Total</lang></th><th class="text-center"><lang class="lang_userstatus">Status</lang></th>'
+                + '<th class="text-right"><lang class="lang_total_title">Total</lang></th>'
                 + '</tr></thead><tbody>';
             pageRows.forEach(function (r) {
                 var key = r.kind + ':' + r.id;
                 var badges = '';
                 if (r.mismatch) { badges += ' <i class="feather icon-alert-triangle text-warning" title="Invoice total mismatch" data-t-title="lang_invoice_total_mismatch"></i>'; }
                 if (r.hasDoc) { badges += ' <i class="feather icon-paperclip text-muted"></i>'; }
-                var pill = '<span class="rs-pill ' + (P[r.status] || 'hold') + '">' + esc(self.statusLabel(r.status)) + '</span>';
                 html += '<tr class="md-row purchases-row highlight-select' + (self._openDocKey === key ? ' is-active' : '') + '"'
                     + ' data-kind="' + r.kind + '" data-id="' + esc(r.id) + '" style="cursor:pointer;">'
                     + '<td class="p-col-num">' + esc(r.no) + badges + '</td>'
@@ -1759,7 +1727,6 @@ PosnicPro.purchaseorders = {
                     + '<td class="p-col-date">' + d(r.date) + '</td>'
                     + '<td class="p-col-created">' + d(r.created) + '</td>'
                     + '<td class="text-right">' + PosnicPro.local.get('currencySign') + '&nbsp;' + (Number(r.total) || 0).toFixed(2) + '</td>'
-                    + '<td class="text-center">' + pill + '</td>'
                     + '</tr>';
             });
             html += '</tbody></table></div>';
@@ -1879,10 +1846,7 @@ PosnicPro.purchaseorders = {
         var money = function (v) { return PosnicPro.local.get('currencySign') + '&nbsp;' + (Number(v) || 0).toFixed(2); };
         var dt = function (v) { return v ? new Date(v).toLocaleDateString('en-IN') : '-'; };
         var real = function (v) { return v && v !== 'null' && v !== 'undefined' ? v : ''; };
-        var open = d.receiving_status === 'Open';
         var cancelled = d.receiving_status === 'Cancelled';
-        var partial = d.receiving_status === 'Partial';
-        var st = cancelled ? 'cancelled' : partial ? 'partial' : open ? 'ordered' : 'received';
         var logo = PosnicPro.local.get('branchimage');
         var seller = '<div class="q-seller">'
             + (logo && logo !== 'store.png' ? '<img loading="lazy" decoding="async" class="q-logo" src="' + esc(logo) + '" alt="">' : '')
@@ -1898,7 +1862,6 @@ PosnicPro.purchaseorders = {
             + '<div class="q-num">' + esc(d.receiving_id) + '</div>'
             + '<div class="q-muted">Bill date: ' + dt(d.date) + '</div>'
             + (d.expected_date ? '<div class="q-muted">Expected: ' + dt(d.expected_date) + '</div>' : '')
-            + '<div class="q-status" data-status="' + st + '">' + esc(PosnicPro.purchaseorders.statusLabel(open ? 'open' : st).toUpperCase()) + '</div>'
             + '</div>';
         var supplier = '<div class="q-billto"><div class="q-label"><lang class="lang_newsupplier_title">Supplier</lang></div>'
             + '<div class="q-cust">' + esc(d.supplier_name || '-') + '</div>'
@@ -2036,10 +1999,7 @@ PosnicPro.purchaseorders = {
         var real = function (v) { return v && v !== 'null' && v !== 'undefined' ? v : ''; };
         var open = d.receiving_status === 'Open';
         var cancelled = d.receiving_status === 'Cancelled';
-        var P = PosnicPro.purchaseorders.STATUS_PILL;
         var partial = d.receiving_status === 'Partial';
-        var st = cancelled ? 'cancelled' : partial ? 'partial' : open ? 'ordered' : 'received';
-        var chip = '<span class="rs-pill ' + P[st] + '">' + esc(PosnicPro.purchaseorders.statusLabel(open ? 'open' : st)) + '</span>';
         var mismatch = d.invoice_total_mismatch
             ? '<span class="rs-pill hold" title="Declared invoice total does not match the lines" data-t-title="lang_declared_invoice_total_does_not_match_the"><i class="feather icon-alert-triangle"></i> Mismatch</span>' : '';
         var more = '<div class="btn-group">'
@@ -2058,7 +2018,7 @@ PosnicPro.purchaseorders = {
             + '</div></div>';
         var toolbar = '<div class="p-doc-toolbar">'
             + '<button type="button" class="btn btn-sm btn-light" title="Show or hide the list" data-t-title="lang_show_or_hide_the_list" aria-label="Show or hide the list" data-t-aria-label="lang_show_or_hide_the_list" onclick="PosnicPro.masterDetail.toggleRail(\'#purchases_split\');"><i class="feather icon-sidebar"></i></button>'
-            + '<span class="p-doc-title">' + esc(d.receiving_id) + '</span>' + chip + mismatch
+            + '<span class="p-doc-title">' + esc(d.receiving_id) + '</span>' + mismatch
             + '<span class="ml-auto"></span>'
             + ((!open && !partial && !cancelled)
                 ? '<button type="button" class="btn btn-sm btn-light" data-module="receiving" data-access="write" onclick="hasher.setHash(\'receivings/' + esc(d._id) + '/edit\');"><i class="feather icon-edit-2 mr-1"></i>Edit</button>'
@@ -2109,7 +2069,6 @@ PosnicPro.purchaseorders = {
             PosnicPro.purchaseorders.renderAttachments(po.attachments || []);
             var currency = PosnicPro.local.get('currencySign');
             $('#po_view_id').text(po.po_id);
-            $('#po_view_status').text(po.status);
             $('#po_view_supplier').text(po.supplier_name);
             $('#po_view_date').text(String(po.order_date).slice(0, 10));
             $('#po_view_expected').text(po.expected_date ? String(po.expected_date).slice(0, 10) : '-');

@@ -24,7 +24,6 @@ module.exports = async function purchaseHistory(db, context, params) {
     no: '$po_id',
     date: asDate('$order_date'),
     total: asNumber('$grand_total'),
-    status: 1,
     ordered: { $sum: '$items.qty_ordered' },
     received: { $sum: '$items.qty_received' },
   };
@@ -48,9 +47,9 @@ module.exports = async function purchaseHistory(db, context, params) {
         },
       },
     }),
-    status: {
-      $cond: [{ $eq: ['$receiving_status', 'Open'] }, 'ordered', { $toLower: '$receiving_status' }],
-    },
+    /* Internal only: the list summary counts received purchases. It is
+       stripped from the response before the rows leave this service. */
+    _received: { $in: ['$receiving_status', ['Received', 'Closed']] },
     mismatch: '$invoice_total_mismatch',
     hasDoc: { $gt: [{ $size: { $cond: [{ $isArray: '$image' }, '$image', []] } }, 0] },
   };
@@ -69,13 +68,6 @@ module.exports = async function purchaseHistory(db, context, params) {
       Object.hasOwn(fields, params.field) ? [fields[params.field]] : Object.values(fields)
     ).map((k) => ({ [k]: regex }));
   }
-  if (params.status)
-    match.status =
-      params.status === 'ordered'
-        ? { $in: ['draft', 'ordered'] }
-        : params.status === 'received'
-          ? { $in: ['closed', 'received'] }
-          : String(params.status);
   for (const [key, field, op] of [
     ['from', 'date', '$gte'],
     ['to', 'date', '$lte'],
@@ -99,7 +91,7 @@ module.exports = async function purchaseHistory(db, context, params) {
   const limit = Math.min(100, Math.max(1, parseInt(params.limit) || 10)),
     page = Math.max(1, parseInt(params.page) || 1);
   const receivedPurchase = {
-    $and: [{ $eq: ['$kind', 'purchase'] }, { $in: ['$status', ['received', 'closed']] }],
+    $and: [{ $eq: ['$kind', 'purchase'] }, { $eq: ['$_received', true] }],
   };
   const [result] = await db
     .collection('purchase_orders')
@@ -116,7 +108,12 @@ module.exports = async function purchaseHistory(db, context, params) {
       { $set: { missingExpected: { $eq: ['$expected', null] } } },
       {
         $facet: {
-          list: [{ $sort: sort }, { $skip: (page - 1) * limit }, { $limit: limit }],
+          list: [
+            { $sort: sort },
+            { $skip: (page - 1) * limit },
+            { $limit: limit },
+            { $project: { _received: 0 } },
+          ],
           count: [
             {
               $group: {

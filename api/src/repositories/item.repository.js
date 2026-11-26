@@ -7,14 +7,13 @@ const {
   buildSearchIndex,
   compareSearchCandidates,
   escapeSearchRegex,
-  ngramsForToken,
   normalizeSearchText,
   scoreSearchCandidate,
   stripSearchIndex,
-  tokenizeSearchText,
   unique,
   withSearchIndex,
 } = require('../utils/item-search-index');
+const { expandQuery, smartRegexPattern } = require('../utils/smart-search');
 const { ensureIndexOnce } = require('../db/ensure-index');
 // src/repositories/item.repository.js
 const BaseModel = require('../models/base.model');
@@ -137,6 +136,7 @@ const SEARCH_CANDIDATE_PROJECTION = {
   variant_value: 1,
   search_tokens: 1,
   search_ngrams: 1,
+  search_phonetics: 1,
   updated_date: 1,
 };
 
@@ -1950,7 +1950,19 @@ class ItemRepository extends BaseModel {
     if (!raw) return [];
 
     const normalized = normalizeSearchText(raw);
-    const queryTokens = unique(tokenizeSearchText(normalized)).slice(0, 8);
+    const contextTerms = Array.isArray(context.contextTerms)
+      ? context.contextTerms
+      : typeof context.contextTerms === 'string'
+        ? context.contextTerms.split(/[,;]+/)
+        : [];
+    const expansion = expandQuery(raw, {
+      contextTerms: contextTerms
+        .map((term) => String(term || '').trim())
+        .filter(Boolean)
+        .slice(0, 8),
+      category: context.category ? String(context.category).trim().slice(0, 160) : '',
+    });
+    const queryTokens = expansion.tokens.slice(0, 8);
     if (!queryTokens.length) return [];
 
     const requestedLimit = parseInt(context.limit, 10);
@@ -1983,9 +1995,14 @@ class ItemRepository extends BaseModel {
         { license: 1, branch_id: 1, search_ngrams: 1 },
         { name: 'item_search_ngrams' }
       ),
+      ensureIndexOnce(
+        collection,
+        { license: 1, branch_id: 1, search_phonetics: 1 },
+        { name: 'item_search_phonetics' }
+      ),
     ]).catch(() => {});
 
-    const queryNgrams = unique(queryTokens.flatMap(ngramsForToken)).slice(0, 64);
+    const queryNgrams = expansion.ngrams;
 
     /* Barcodes and SKUs are exact identifiers. They stay exact so a scan does
        not rank a partial code above the real product. */
@@ -2003,24 +2020,42 @@ class ItemRepository extends BaseModel {
       );
     }
 
-    const tokenMust = queryTokens.map((token) => ({
-      search_tokens: { $regex: '^' + escapeSearchRegex(token) },
-    }));
     const exactOr = [...codeClauses];
-    if (tokenMust.length) exactOr.push({ $and: tokenMust });
+    /* The original words still have to be present together for a multi-word
+       query; the expanded forms are alternatives that let a plural, synonym
+       or Egyptian spelling reach the same row. */
+    if (queryTokens.length) {
+      exactOr.push({
+        $and: queryTokens.map((token) => ({
+          search_tokens: { $regex: '^' + escapeSearchRegex(token) },
+        })),
+      });
+    }
+    const formClauses = expansion.forms
+      .filter((form) => !form.includes(' '))
+      .slice(0, 24)
+      .map((form) => ({
+        search_tokens: { $regex: '^' + escapeSearchRegex(form) },
+      }));
+    if (formClauses.length) exactOr.push({ $or: formClauses });
+    if (expansion.phonetics.length) {
+      exactOr.push({ search_phonetics: { $in: expansion.phonetics } });
+    }
     const exactFilter = { $and: [scopeFilter, { $or: exactOr }] };
+
+    const fuzzyOr = [];
+    if (queryNgrams.length) fuzzyOr.push({ search_ngrams: { $in: queryNgrams } });
+    if (expansion.phonetics.length) fuzzyOr.push({ search_phonetics: { $in: expansion.phonetics } });
+    const fuzzyFilter = fuzzyOr.length ? { $and: [scopeFilter, { $or: fuzzyOr }] } : null;
 
     const [exactDocs, ngramDocs] = await Promise.all([
       collection
         .find(exactFilter, { projection: SEARCH_CANDIDATE_PROJECTION })
         .limit(SEARCH_CANDIDATE_LIMIT)
         .toArray(),
-      queryNgrams.length
+      fuzzyFilter
         ? collection
-            .find(
-              { $and: [scopeFilter, { search_ngrams: { $in: queryNgrams } }] },
-              { projection: SEARCH_CANDIDATE_PROJECTION }
-            )
+            .find(fuzzyFilter, { projection: SEARCH_CANDIDATE_PROJECTION })
             .limit(SEARCH_CANDIDATE_LIMIT)
             .toArray()
         : Promise.resolve([]),
@@ -2034,7 +2069,10 @@ class ItemRepository extends BaseModel {
     const scored = [...candidates.values()]
       .map((doc) => ({
         doc,
-        score: scoreSearchCandidate(doc, normalized, queryTokens, queryNgrams),
+        score: scoreSearchCandidate(doc, normalized, expansion, queryNgrams, {
+          contextForms: expansion.contextForms,
+          category: context.category,
+        }),
       }))
       .filter((entry) => entry.score > 0)
       .sort(compareSearchCandidates)
@@ -2052,13 +2090,25 @@ class ItemRepository extends BaseModel {
 
     /* Legacy fallback: a database that has not run the backfill yet still
        answers the old exact/substring query. The next write or the migration
-       puts the item on the new index. */
+       puts the item on the new index. Use the same tolerant regex here so a
+       pre-migration shop does not lose Arabic letter variants. */
+    const legacyTerms = unique([
+      raw,
+      ...expansion.forms.filter((form) => !form.includes(' ')),
+    ]).slice(0, 8);
+    const legacyTextClauses = legacyTerms.flatMap((term) => {
+      const pattern = smartRegexPattern(term);
+      return [
+        { name: { $regex: pattern, $options: 'i' } },
+        { category_name: { $regex: pattern, $options: 'i' } },
+        { stock_locations: { $regex: pattern, $options: 'i' } },
+        { 'translations.name': { $regex: pattern, $options: 'i' } },
+      ];
+    });
     const legacyClauses = [
       {
         $or: [
-          { name: { $regex: searchPattern(raw), $options: 'i' } },
-          { stock_locations: { $regex: searchPattern(raw), $options: 'i' } },
-          { 'translations.name': { $regex: searchPattern(raw), $options: 'i' } },
+          ...legacyTextClauses,
           { barcode_id: raw },
           { barcodes: raw },
         ],
@@ -2407,6 +2457,8 @@ class ItemRepository extends BaseModel {
         licenseId && ObjectId.isValid(licenseId) ? new ObjectId(licenseId) : licenseId || null;
 
       const regex = query ? new RegExp(searchPattern(query), 'i') : null;
+      const expansion = query ? expandQuery(query) : null;
+      const salesSearchFields = require('../helpers/sales-search-fields');
       const SettingsRepository = require('./settings.repository');
       const preferences = await new SettingsRepository().resolveGroup('preferences', {
         branchId,
@@ -2429,16 +2481,26 @@ class ItemRepository extends BaseModel {
         /^\d+$/.test(query) &&
         searchPreferences.sales_exact_numeric_codes === true
       ) {
-        searchConditions = require('../helpers/sales-search-fields').exactNumericCodes(
+        searchConditions = salesSearchFields.exactNumericCodes(
           query,
           searchPreferences.sales_search_fields
         );
         if (!searchConditions.length) return { status: true, data: [], message: 'success' };
       } else if (regex && Array.isArray(searchPreferences.sales_search_fields)) {
-        searchConditions = require('../helpers/sales-search-fields').conditions(
+        searchConditions = salesSearchFields.conditions(
           searchPreferences.sales_search_fields,
           query,
           regex
+        );
+        searchConditions.push(
+          ...salesSearchFields.smartConditions(
+            searchPreferences.sales_search_fields,
+            expansion
+          ),
+          ...salesSearchFields.fuzzyConditions(
+            searchPreferences.sales_search_fields,
+            expansion
+          )
         );
         if (!searchConditions.length) return { status: true, data: [], message: 'success' };
       } else if (regex) {
@@ -2467,6 +2529,10 @@ class ItemRepository extends BaseModel {
         if (/^\d{1,6}$/.test(String(query))) {
           searchConditions.push({ plu_code: String(query) });
         }
+        searchConditions.push(
+          ...salesSearchFields.smartConditions(salesSearchFields.DEFAULT_SEARCH, expansion),
+          ...salesSearchFields.fuzzyConditions(salesSearchFields.DEFAULT_SEARCH, expansion)
+        );
       }
 
       // Catalogue visibility is separate from permission to sell. Keep sold-out
@@ -3147,17 +3213,6 @@ class ItemRepository extends BaseModel {
         available_quantity: item.available_quantity || 0,
       }));
 
-      /* Incoming (PO step 3): what is already on an open order, so a shop
-         does not double-order it. Display-only, fail-safe to zero. */
-      const { incomingByItem } = require('../services/incoming-stock');
-      const incoming = await incomingByItem(
-        { branchId, licenseId },
-        list.map((row) => row.item_id)
-      );
-      for (const row of list) {
-        row.incoming = incoming[row.item_id] || 0;
-      }
-
       return { status: true, data: list, message: 'success' };
     } catch (error) {
       console.error('Error in ItemRepository.getItemsBySupplier:', error);
@@ -3833,18 +3888,50 @@ class ItemRepository extends BaseModel {
       const licenseObjectId =
         licenseId && ObjectId.isValid(licenseId) ? new ObjectId(licenseId) : licenseId;
 
-      const regex = query ? new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i') : null;
+      const rawQuery = String(query == null ? '' : query).trim().slice(0, 80);
+      const regex = rawQuery
+        ? new RegExp(searchPattern(rawQuery), 'i')
+        : null;
+      const expansion = rawQuery ? expandQuery(rawQuery) : null;
+      const smartTerms = expansion
+        ? [
+            ...new Set(
+              [
+                ...expansion.tokens,
+                ...expansion.forms.filter((form) => !form.includes(' ')),
+                ...expansion.phrases,
+              ].slice(0, 12)
+            ),
+          ]
+        : [];
+      const textClauses = smartTerms.flatMap((term) => {
+        const pattern = smartRegexPattern(term);
+        return [
+          { name: { $regex: pattern, $options: 'i' } },
+          { stock_locations: { $regex: pattern, $options: 'i' } },
+          { 'translations.name': { $regex: pattern, $options: 'i' } },
+        ];
+      });
+      const fuzzyClauses = expansion
+        ? [
+            ...(expansion.ngrams.length
+              ? [{ search_ngrams: { $in: expansion.ngrams } }]
+              : []),
+            ...(expansion.phonetics.length
+              ? [{ search_phonetics: { $in: expansion.phonetics } }]
+              : []),
+          ]
+        : [];
 
       const filter = {
         $and: [
           regex
             ? {
                 $or: [
-                  { name: regex },
-                  { stock_locations: regex },
-                  { 'translations.name': regex },
+                  ...textClauses,
                   { itemid: regex },
                   { barcode_id: regex },
+                  ...fuzzyClauses,
                 ],
               }
             : {},
@@ -3855,7 +3942,7 @@ class ItemRepository extends BaseModel {
         ].filter((f) => Object.keys(f).length > 0),
       };
 
-      const items = await collection.find(filter).limit(5).toArray();
+      const items = await collection.find(filter).limit(limit).toArray();
 
       const list = items.map((item) => ({
         item_id: item._id?.toString() || '',

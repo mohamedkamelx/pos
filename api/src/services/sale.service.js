@@ -263,6 +263,7 @@ const processSale = async (
     const itemRepository = new ItemRepository();
     const customerRepository = new CustomerRepository();
     const registerRepository = new RegisterRepository();
+    const saleStock = require('./sale-stock');
 
     if (data.register_id) {
       const registerSession = await registerRepository.validateSessionOwner(
@@ -318,6 +319,9 @@ const processSale = async (
     const existing_changes = [];
     const oldItemsData = {};
 
+    // Original stock the edited sale already holds, in base units. An edit may
+    // use that quantity plus whatever is still on the shelf.
+    const originalStockByItem = new Map();
     // Fetch Existing Sale if Edit
     let existingSale = null;
     if (id !== '') {
@@ -342,6 +346,19 @@ const processSale = async (
                 unit: oldItem.item_unit || 'qty',
                 status: oldItem.item_status || '',
               };
+              const held = Number(
+                require('../helpers/selling-units').stockQuantity(
+                  { unit_conversion: oldItem.unit_conversion },
+                  oldItem.item_quantity
+                )
+              );
+              if (Number.isFinite(held) && held > 0) {
+                const key = String(oldItem.item_id);
+                originalStockByItem.set(
+                  key,
+                  (originalStockByItem.get(key) || 0) + held
+                );
+              }
             }
           });
         }
@@ -383,6 +400,14 @@ const processSale = async (
     for (const item of items) {
       const itemQuantity = parseFloat(item.item_quantity);
       const itemId = item.item_id;
+
+      if (!Number.isFinite(itemQuantity) || itemQuantity <= 0) {
+        return {
+          status: false,
+          data: null,
+          message: 'Enter a quantity greater than zero.',
+        };
+      }
 
       // Fetch Item from DB via repository
       const document = await itemRepository.findItemById(itemId);
@@ -582,6 +607,7 @@ const processSale = async (
       if (changeQty > 0) {
         changes_items.push({
           item_id: itemId,
+          line_id: item.line_id || item.id || itemId,
           item_name: document.name,
           ...require('../utils/item-localization').snapshot(document),
           item_quantity: changeQty,
@@ -1131,83 +1157,48 @@ const processSale = async (
       if (existing) return await savedAnswer(existing._id, existing.sales_id, true);
     }
 
-    // Inventory Verification BEFORE Insert (PHP lines 653-690)
-    if (id === '' && !extensionStock) {
-      const insufficientItems = [];
-      for (const item of items) {
-        const doc = await itemRepository.findItemById(item.item_id);
-        if (doc && doc.track_inventory && !doc.negative_stock) {
-          const requiredStock = require('../helpers/selling-units').stockQuantity(
-            itemsale.find((line) => orderLine.key(line) === orderLine.key(item)),
-            item.item_quantity
-          );
-          if (doc.available_quantity < requiredStock) {
-            insufficientItems.push({
-              item_id: String(doc._id),
-              item_quantity: doc.available_quantity,
-            });
-          }
-        }
-      }
-      if (insufficientItems.length > 0) {
+    /*
+     * Reserve tracked stock before the sale row is written.
+     *
+     * Create reserves every sold line. Edit reserves only the positive delta,
+     * because the stock held by the original sale is already out of the item
+     * row. The reservation is an atomic conditional decrement, so a stale
+     * cart or two counters cannot both take the same final unit.
+     */
+    let stockReservations = new Map();
+    if (!extensionStock) {
+      const stockLines = id === '' ? itemsale : changes_items.filter(
+        (change) => change.process === 'add'
+      );
+      const reserved = await saleStock.reserve(stockLines, itemRepository);
+      stockReservations = reserved.reservations;
+      if (reserved.shortages.length) {
         return {
           status: false,
-          data: insufficientItems,
-          message: 'Your sales item quantity is mismatched.',
+          data: reserved.shortages.map((shortage) => {
+            const line = itemsale.find(
+              (candidate) => shortage.line_id
+                && (candidate.line_id === shortage.line_id || candidate.id === shortage.line_id)
+            ) || itemsale.find(
+              (candidate) => String(candidate.item_id) === String(shortage.item_id)
+            ) || changes_items.find(
+              (candidate) => String(candidate.item_id) === String(shortage.item_id)
+            );
+            const factor = Number(line?.unit_conversion?.factor) || 1;
+            const held = id === '' ? 0 : originalStockByItem.get(shortage.item_id) || 0;
+            const editable = shortage.available_quantity + held;
+            return {
+              ...shortage,
+              editable_quantity: editable,
+              /* The cart edits quantities in the line's selling unit. */
+              item_quantity: Math.max(
+                0,
+                Math.floor((editable / factor) * 1e6) / 1e6
+              ),
+            };
+          }),
+          message: saleStock.message(reserved.shortages),
         };
-      }
-    }
-
-    // Reserve tracked stock atomically before creating the sale. A normal
-    // read-then-update allows two counters to sell the same final quantity.
-    const stockReservations = new Map();
-    if (id === '' && !extensionStock) {
-      const stockRequests = new Map();
-      for (const item of items) {
-        const doc = await itemRepository.findItemById(item.item_id);
-        const qty = require('../helpers/selling-units').stockQuantity(
-          itemsale.find((line) => orderLine.key(line) === orderLine.key(item)),
-          item.item_quantity
-        );
-        const isTracked = doc && (doc.track_inventory === true || doc.track_inventory === 'true');
-        if (!isTracked || doc.negative_stock === true) continue;
-        const key = String(doc._id);
-        const request = stockRequests.get(key) || { doc, quantity: 0, itemName: '' };
-        request.quantity += qty;
-        request.itemName = request.itemName || item.item_name || doc.name || '';
-        stockRequests.set(key, request);
-      }
-
-      for (const request of stockRequests.values()) {
-        const reserved = await itemRepository.deductStockIfAvailable(
-          request.doc._id,
-          request.quantity
-        );
-        if (!reserved) {
-          for (const reservation of stockReservations.values()) {
-            await itemRepository.updateStock(reservation.itemId, reservation.quantity);
-          }
-          const latest = await itemRepository.findItemById(request.doc._id);
-          return {
-            status: false,
-            data: [
-              {
-                item_id: String(request.doc._id),
-                item_name: request.itemName,
-                requested_quantity: request.quantity,
-                item_quantity: Number(latest?.available_quantity || 0),
-              },
-            ],
-            message:
-              'Stock changed at another billing counter. Please refresh the item and try again.',
-          };
-        }
-        stockReservations.set(String(request.doc._id), {
-          itemId: request.doc._id,
-          quantity: request.quantity,
-          opening: Number(reserved.available_quantity) + request.quantity,
-          closing: Number(reserved.available_quantity),
-        });
       }
     }
 
@@ -1243,9 +1234,7 @@ const processSale = async (
           return salesRepository.generateSalesIdForBranch(branchId, { fallbackPrefix: pv });
         });
       } catch (error) {
-        for (const reservation of stockReservations.values()) {
-          await itemRepository.updateStock(reservation.itemId, reservation.quantity);
-        }
+        await saleStock.release(stockReservations, itemRepository);
         if (submissionDb && error.code === 11000) {
           const existing = await require('./desktop-submission').lookup(
             submissionDb,
@@ -1295,7 +1284,12 @@ const processSale = async (
             : storedValue;
       }
       doc.set(updateData);
-      result = await salesRepository.save(doc);
+      try {
+        result = await salesRepository.save(doc);
+      } catch (error) {
+        await saleStock.release(stockReservations, itemRepository);
+        throw error;
+      }
     }
 
     const saleId = id === '' ? result._id : new ObjectId(id);
@@ -1398,31 +1392,54 @@ const processSale = async (
       // If `process` is 'add' (qty increased), we subtract from stock.
       // If `process` is 'cancel' (qty decreased), we add to stock.
 
-      for (const change of changes_items) {
+      /* Put stock back before taking more out, so a line that is reduced and
+         another that is increased on the same bill reads as one sequence. */
+      const stockChanges = changes_items.slice().sort((left, right) => {
+        const leftOrder = left.process === 'cancel' ? 0 : 1;
+        const rightOrder = right.process === 'cancel' ? 0 : 1;
+        return leftOrder - rightOrder;
+      });
+
+      for (const change of stockChanges) {
         const doc = await itemRepository.findItemById(change.item_id);
-        const isTracked = doc && (doc.track_inventory === true || doc.track_inventory === 'true');
+        const isTracked = saleStock.tracksStock(doc);
         if (!isTracked) continue;
 
-        const qtyChange = change.stock_quantity ?? change.item_quantity;
-        const opening = doc.available_quantity;
+        const qtyChange = Number(change.stock_quantity ?? change.item_quantity);
+        if (!Number.isFinite(qtyChange) || qtyChange <= 0) continue;
+
+        const reservation = stockReservations.get(String(change.item_id));
+        const opening = reservation
+          ? reservation.opening - (reservation.loggedQuantity || 0)
+          : Number(doc.available_quantity) || 0;
         let newAvailable = opening;
         let action = '';
         let count = '';
+        let delta = 0;
 
         if (change.process === 'add') {
-          // Added more items -> Reduce Stock
+          // An increase was already reserved before the sale was written.
           newAvailable = opening - qtyChange;
           action = 'Subtract';
           count = `-${qtyChange}`;
-          // Apply the same numeric delta via repository
-          await itemRepository.updateStock(doc._id, -qtyChange);
+          if (reservation) {
+            reservation.loggedQuantity = (reservation.loggedQuantity || 0) + qtyChange;
+          } else {
+            delta = -qtyChange;
+          }
         } else {
-          // Cancelled/Reduced items -> Increase Stock
+          // Cancelled or reduced lines always return stock. A negative-stock
+          // item has no reservation and is changed here like any other.
           newAvailable = opening + qtyChange;
           action = 'Add';
           count = `+${qtyChange}`;
-          await itemRepository.updateStock(doc._id, qtyChange);
+          if (reservation) {
+            reservation.loggedQuantity = (reservation.loggedQuantity || 0) - qtyChange;
+          }
+          delta = qtyChange;
         }
+
+        if (delta) await itemRepository.updateStock(doc._id, delta);
 
         if (context.stockManagement) {
           const stockLogResult = await stockLogsRepository.createStockLog({

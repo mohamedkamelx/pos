@@ -330,23 +330,17 @@ PosnicPro.suppliers = {
                 return;
             }
             var html = '<table class="q-items s-doc-purchases-table"><thead><tr>'
-                + '<th><lang class="lang_purchase_2">Purchase #</lang></th><th><lang class="lang_userstatus">Status</lang></th><th class="text-right"><lang class="lang_date_title">Date</lang></th><th class="text-right"><lang class="lang_total_title">Total</lang></th>'
+                + '<th><lang class="lang_purchase_2">Purchase #</lang></th><th class="text-right"><lang class="lang_date_title">Date</lang></th><th class="text-right"><lang class="lang_total_title">Total</lang></th>'
                 + '</tr></thead><tbody>';
             list.slice(0, 5).forEach(function (r) {
                 var docId = r._id || r.id || '';
                 var no = r.receiving_id || r.po_id || '';
                 var purchaseDate = r.date || r.created_date || '';
                 var rowTotal = r.invoice_total_declared != null ? r.invoice_total_declared : (r.items_total != null ? r.items_total : r.total_amount);
-                var st = String(r.receiving_status || '').toLowerCase();
-                var pill = st
-                    ? '<span class="rs-pill ' + (st === 'received' ? 'paid' : st === 'cancelled' ? 'unpaid' : 'hold') + '">'
-                        + (st === 'open' ? 'Ordered' : esc(r.receiving_status)) + '</span>'
-                    : '';
                 html += '<tr class="s-doc-purchase-row"'
                     + (docId ? ' data-doc="' + esc(docId) + '" style="cursor:pointer;" title="Preview this purchase" data-t-title="lang_preview_this_purchase"' : '')
                     + '>'
                     + '<td>' + esc(no) + '</td>'
-                    + '<td>' + pill + '</td>'
                     + '<td class="text-right q-muted">' + esc(formatWhen(purchaseDate)) + '</td>'
                     + '<td class="text-right">' + cur + '&nbsp;' + (Number(rowTotal) || 0).toFixed(2) + '</td>'
                     + '</tr>';
@@ -390,7 +384,7 @@ PosnicPro.suppliers = {
         var open = $row.next('.s-doc-preview-tr');
         if (open.length) { open.remove(); return; }
         $('#suppliers_doc .s-doc-preview-tr').remove();
-        var $tr = $('<tr class="s-doc-preview-tr"><td colspan="4"><div class="s-doc-preview"><div class="text-muted" style="padding:16px;"><lang class="lang_loading_4">Loading ...</lang></div></div></td></tr>');
+        var $tr = $('<tr class="s-doc-preview-tr"><td colspan="3"><div class="s-doc-preview"><div class="text-muted" style="padding:16px;"><lang class="lang_loading_4">Loading ...</lang></div></div></td></tr>');
         $row.after($tr);
         var $box = $tr.find('.s-doc-preview');
         PosnicPro.get('receivings/' + docId, function (response) {

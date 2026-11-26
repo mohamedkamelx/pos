@@ -16,7 +16,7 @@ test('combined purchases filter both collections before whole-result sorting, co
   const context = { branchId: wall.branch_id, licenseId: wall.license };
   const settings = { supplier_id: String(supplier), sort: 'total_desc', page: 11, limit: 10 };
   await db.collection('purchase_orders').insertMany(Array.from({length:100}, (_,i) => ({
-    ...wall, ...party, po_id:'PO-'+i, grand_total:i+1, status:'ordered'
+    ...wall, ...party, po_id:'PO-'+i, grand_total:i+1
   })));
   const receipt = { ...wall, ...party, receiving_id:'R-1', items_total:'0.50', receiving_status:'Received' };
   await db.collection('receivings').insertMany([
@@ -28,7 +28,9 @@ test('combined purchases filter both collections before whole-result sorting, co
   assert.equal(result.purchases,1);
   assert.equal(result.purchaseAmount,0.5);
   assert.deepEqual(result.list.map(row=>[row.kind,row.no,row.total]),[['purchase','R-1',0.5]]);
-  const completed = await history(db,context,{status:'received', supplier_id:String(supplier)});
-  assert.equal(completed.total,1);
-  assert.equal(completed.list[0].no,'R-1');
+  assert.ok(!('status' in result.list[0]), 'the history row carries no order status');
+  const searched = await history(db,context,{search:'R-1', supplier_id:String(supplier)});
+  assert.equal(searched.total,1);
+  assert.equal(searched.list[0].no,'R-1');
+  assert.ok(!('status' in searched.list[0]), 'the filtered row carries no order status');
 });

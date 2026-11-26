@@ -1,10 +1,10 @@
 'use strict';
 
 /*
- * Purchase orders (PO_LIFECYCLE_DESIGN.md). ACL: the receiving permission -
- * POs belong to purchasing, and a shop that can record receipts can plan
- * them. Reads need receiving.read, anything that changes a PO needs
- * receiving.write. Stock is never touched here - see the repository header.
+ * Purchase orders. ACL: the receiving permission - POs belong to purchasing,
+ * and a shop that can record receipts can plan them. Reads need receiving.read,
+ * anything that changes a PO needs receiving.write. Stock is never touched
+ * here - see the repository header.
  */
 
 const PurchaseOrderRepository = require('../repositories/purchase-order.repository');
@@ -76,7 +76,6 @@ module.exports = {
         {
           page: req.query.page,
           limit: req.query.limit,
-          status: req.query.status,
           supplierId: req.query.supplier_id,
         },
         contextOf(req)
@@ -95,17 +94,6 @@ module.exports = {
       return r.status ? ok(res, r.data, r.message) : fail(res, r.message, 404);
     } catch (error) {
       console.error('Error in purchase-orders getById:', error);
-      return fail(res, error.message, 500);
-    }
-  },
-
-  async transition(req, res) {
-    try {
-      if (!can(req, 'write')) return fail(res, 'Unauthorized access', 403);
-      const r = await repository.transition(req.params.id, req.body?.action, contextOf(req));
-      return r.status ? ok(res, r.data, r.message) : fail(res, r.message);
-    } catch (error) {
-      console.error('Error in purchase-orders transition:', error);
       return fail(res, error.message, 500);
     }
   },

@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Purchase orders (PO_LIFECYCLE_DESIGN.md build step 1).
+ * Purchase orders.
  *
  * The one rule everything else leans on, pinned here: A PURCHASE ORDER
  * NEVER TOUCHES STOCK. The repository may only ever open its own
@@ -64,7 +64,6 @@ describe('PurchaseOrderRepository', () => {
 
   const validOrder = {
     supplier_name: 'New Supplier',
-    status: 'ordered',
     items: [{ item_id: ITEM, item_name: 'Oil', qty_ordered: 10, unit_cost: 25.5 }],
     additional_costs: [{ label: 'freight', amount: 100 }],
   };
@@ -78,6 +77,7 @@ describe('PurchaseOrderRepository', () => {
     expect(doc.additional_total).toBe(100);
     expect(doc.grand_total).toBe(355);
     expect(doc.items[0].qty_received).toBe(0);
+    expect(doc.status).toBeUndefined();
     expect(String(doc.branch_id)).toBe(BRANCH);
     expect(String(doc.license)).toBe(LICENSE);
     // THE invariant: only its own collection, ever.
@@ -93,7 +93,6 @@ describe('PurchaseOrderRepository', () => {
   test('editing keeps received history: qty_received re-attaches by item', async () => {
     col.findOne.mockResolvedValue({
       _id: PO_ID,
-      status: 'ordered',
       po_id: 'PO-000004',
       items: [{ item_id: ITEM, qty_received: 4 }],
     });
@@ -103,42 +102,34 @@ describe('PurchaseOrderRepository', () => {
     expect(set.items[0].qty_received).toBe(4);
   });
 
-  test('a partially received order refuses edits', async () => {
-    col.findOne.mockResolvedValue({ _id: PO_ID, status: 'partial', items: [] });
-    const r = await repo.upsertOrder(validOrder, PO_ID, ctx);
-    expect(r.status).toBe(false);
-    expect(col.updateOne).not.toHaveBeenCalled();
+  test('a legacy stored status is not returned', async () => {
+    col.findOne.mockResolvedValue({ _id: PO_ID, status: 'ordered', po_id: 'PO-1', items: [] });
+    const r = await repo.getOrder(PO_ID, ctx);
+    expect(r.status).toBe(true);
+    expect(r.data).not.toHaveProperty('status');
   });
 
-  test('transition order: only a draft can be placed', async () => {
-    col.findOne.mockResolvedValue({ _id: PO_ID, status: 'ordered', items: [] });
-    const r = await repo.transition(PO_ID, 'order', ctx);
-    expect(r.status).toBe(false);
+  test('list reads no order status', async () => {
+    const r = await repo.listOrders({}, ctx);
+    expect(r.status).toBe(true);
+    expect(col.find.mock.calls[0][0].status).toBeUndefined();
+    expect(col.countDocuments.mock.calls[0][0].status).toBeUndefined();
   });
 
-  test('cancel_remaining: nothing received -> cancelled, something -> closed', async () => {
-    col.findOne.mockResolvedValue({
-      _id: PO_ID,
-      status: 'partial',
-      items: [{ qty_ordered: 10, qty_received: 3 }],
-    });
-    const r = await repo.transition(PO_ID, 'cancel_remaining', ctx);
-    expect(r.data.status).toBe('closed');
-
-    col.findOne.mockResolvedValue({
-      _id: PO_ID,
-      status: 'ordered',
-      items: [{ qty_ordered: 10, qty_received: 0 }],
-    });
-    const r2 = await repo.transition(PO_ID, 'cancel_remaining', ctx);
-    expect(r2.data.status).toBe('cancelled');
-  });
-
-  test('delete is draft-only, enforced in the query itself', async () => {
+  test('delete refuses a purchase order with received items in the query itself', async () => {
     col.deleteOne.mockResolvedValue({ deletedCount: 0 });
     const r = await repo.deleteOrder(PO_ID, ctx);
     expect(r.status).toBe(false);
-    expect(col.deleteOne.mock.calls[0][0].status).toBe('draft');
+    const filter = col.deleteOne.mock.calls[0][0];
+    expect(filter.status).toBeUndefined();
+    expect(filter.items).toEqual({ $not: { $elemMatch: { qty_received: { $gt: 0 } } } });
+  });
+
+  test('delete removes a purchase order with nothing received', async () => {
+    col.deleteOne.mockResolvedValue({ deletedCount: 1 });
+    const r = await repo.deleteOrder(PO_ID, ctx);
+    expect(r.status).toBe(true);
+    expect(r.data.deleted).toBe(1);
   });
 
   test('every read carries the branch wall', async () => {

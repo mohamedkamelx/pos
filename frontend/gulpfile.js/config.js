@@ -13,31 +13,21 @@ const langDir = path.resolve(dir, '..', 'languages');
 const publicDir = `public`;
 const s = path.sep; // Separator short form to reduce line
 /*
- * The languages this build ships.
+ * The translation catalogue.
  *
- * Adding one is this list plus languages/<code>.json, and nothing else: no
- * per-language pages, no branches in the modules, no markup to edit. The
- * switcher in the header is rendered from this at runtime, which is what
- * stops a new language needing a hand-written <a> tag the way Tamil did.
+ * This remains the source list for translation tooling, but it is not the
+ * shipping list. The desktop build carries Arabic first and English second
+ * only; the other packs stay in the repository for contributors and are not
+ * emitted into the installer.
  *
- * `name` is written in the language itself - a Tamil speaker looking for their
- * language is looking for "தமிழ்", not for "Tamil". `flag` is the icon suffix
- * the header already uses. `dir: 'rtl'` marks a right-to-left script; the
- * runtime also derives direction from the code, so this is for the menu and
- * for anything that reads index.json without the runtime.
+ * `name` is written in the language itself - an Arabic speaker looking for
+ * their language is looking for "العربية", not for "Arabic". `flag` is the
+ * icon suffix the header already uses. `dir: 'rtl'` marks a right-to-left
+ * script; the runtime also derives direction from the code.
  *
  * `reviewed` says whether somebody who speaks the language has read the pack
- * on a real screen. EVERY language ships either way - owner's call,
- * 2026-09-02: a shopkeeper who can read their screen in their own language,
- * even imperfectly, is better off than one reading none of it; every missing
- * key still shows English; and a language nobody can see is a language nobody
- * will ever correct. What the flag changes is honesty, not availability: an
- * unreviewed language is marked "beta" in the menu, its coverage is published
- * beside it, and docs/TRANSLATING.md asks speakers to review exactly those
- * first. Flip it to true when a speaker has been through the common screens.
- *
- * POSNIC_REVIEWED_LANGUAGES_ONLY=1 builds with just the reviewed ones, for an
- * installer that wants the older, narrower menu.
+ * on a real screen. It remains metadata for the catalogue; it does not decide
+ * what ships.
  */
 const LANGUAGES = [
     { code: 'en', englishName: 'English', name: 'English', flag: 'us', reviewed: true },
@@ -107,12 +97,15 @@ const LANGUAGES = [
 
 ];
 
-/* Whether this build restricts the menu to reviewed languages. Off unless
-   asked for: the default build offers everything, honestly labelled. */
-const reviewedOnly = process.env.POSNIC_REVIEWED_LANGUAGES_ONLY === '1';
+/* Arabic is the primary language; English is the fallback. */
+const SHIPPED_CODES = ['ar', 'en'];
 
-/* What this build actually offers. */
-const shippedLanguages = LANGUAGES.filter((l) => !reviewedOnly || l.reviewed);
+/* What this build actually offers, in menu order. */
+const shippedLanguages = SHIPPED_CODES.map((code) => {
+    const language = LANGUAGES.find((entry) => entry.code === code);
+    if (!language) throw new Error(`Missing language catalogue entry for ${code}`);
+    return language;
+});
 
 /* Just the codes this build ships, for everything that only needs the list. */
 const languages = shippedLanguages.map((l) => l.code);
@@ -127,7 +120,6 @@ module.exports = {
     languages,
     LANGUAGES,
     shippedLanguages,
-    reviewedOnly,
     langDir,
     publicDir,
     s,

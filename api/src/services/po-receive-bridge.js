@@ -1,8 +1,7 @@
 'use strict';
 
 /*
- * The ONE bridge between purchase orders and receipts
- * (PO_LIFECYCLE_DESIGN.md step 2).
+ * The ONE bridge between purchase orders and receipts.
  *
  * Direction matters: receivings are the source of truth and the PO is the
  * mirror. This module READS receivings and WRITES purchase_orders - never
@@ -47,10 +46,11 @@ async function syncPoFromReceivings(poId, context = {}) {
         /*
          * Receiving lines store item_id and item_quantity - reading `item`
          * and `quantity` here meant every key was "undefined" and every
-         * count zero, so no PO ever moved off "ordered" however completely
-         * it was received. Found by the owner on the first live try; the
-         * fire-safe catch had been swallowing the no-op since the bridge
-         * shipped. The old names stay as fallbacks for any historic doc.
+         * count zero, so the mirror never showed what arrived however
+         * completely it was received. Found by the owner on the first live
+         * try; the fire-safe catch had been swallowing the no-op since the
+         * bridge shipped. The old names stay as fallbacks for any historic
+         * doc.
          */
         const key = String(line.item_id != null ? line.item_id : line.item);
         const qty = Number(line.item_quantity != null ? line.item_quantity : line.quantity) || 0;
@@ -59,36 +59,26 @@ async function syncPoFromReceivings(poId, context = {}) {
     }
 
     let outstanding = 0;
-    let anyReceived = false;
     const items = (po.items || []).map((line) => {
       const received = receivedByItem.get(String(line.item_id)) || 0;
       // Over-delivery is recorded as delivered, but fulfilment never
-      // exceeds the plan - the PO closes, it does not go negative.
+      // exceeds the plan - the mirror does not go negative.
       const counted = Math.min(received, Number(line.qty_ordered) || 0);
-      if (counted > 0) anyReceived = true;
       outstanding += Math.max((Number(line.qty_ordered) || 0) - counted, 0);
       return { ...line, qty_received: counted };
     });
-
-    /* Terminal states stay terminal: a cancelled or closed order's history
-       may re-sync (replays), but its status never reopens. */
-    let status = po.status;
-    if (!['cancelled', 'closed'].includes(po.status)) {
-      status = outstanding === 0 ? 'closed' : anyReceived ? 'partial' : po.status;
-    }
 
     await poCollection.updateOne(
       { _id: po._id },
       {
         $set: {
           items,
-          status,
           received_receiving_ids: receivings.map((r) => r._id),
           updated_date: new Date(),
         },
       }
     );
-    return { status: true, data: { status, outstanding } };
+    return { status: true, data: { outstanding } };
   } catch (error) {
     /* The bridge must never fail the receiving that triggered it - the
        receipt is real whatever happens to the mirror. */

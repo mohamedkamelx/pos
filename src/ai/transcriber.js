@@ -13,6 +13,22 @@ const GROQ_MODELS = `${GROQ_BASE}/models`;
 const TRANSCRIBE_MODEL = 'whisper-large-v3';
 const MAX_AUDIO_BYTES = 12 * 1024 * 1024;
 const MAX_KEY_LENGTH = 256;
+const MAX_PROMPT_TOKENS = 224;
+
+/*
+ * Whisper accepts at most 224 prompt tokens. This prompt is kept short on
+ * purpose: it describes the shop-floor mix of Egyptian Arabic, English and
+ * numbers, and the sound mappings that matter for product names. It biases
+ * spelling only; the transcript is still the model's output, never appended
+ * text.
+ */
+const TRANSCRIBE_PROMPT =
+  'Egyptian Arabic retail voice, mixed with English and numbers. ' +
+  'Write spoken numbers as digits: واحد 1، اتنين 2، تلاتة 3، خمسة 5، عشرة 10، مية 100. ' +
+  'Sound-alikes: شرب وشارب = sharp، بيبسي = Pepsi، كوكاكولا = Coca-Cola. ' +
+  'Keep brands and product names as spoken; do not translate Arabic names. ' +
+  'Words: سعر price، كمية quantity، مخزون stock، باركود barcode، صنف product، ' +
+  'فئة category، خصم discount، إجمالي total.';
 
 const ALLOWED_TYPES = new Set([
   'audio/webm',
@@ -177,10 +193,16 @@ async function transcribe({
     return { success: false, code: 'audio_unsupported', error: 'That audio format is not supported.' };
   }
 
+  const spokenLanguage =
+    typeof language === 'string' && /^[a-z]{2}$/i.test(language) ? language.toLowerCase() : 'ar';
+
   const form = new FormData();
   form.append('file', new Blob([buffer], { type }), `recording.${extensionFor(type)}`);
   form.append('model', TRANSCRIBE_MODEL);
-  form.append('language', typeof language === 'string' && /^[a-z]{2}$/i.test(language) ? language : 'ar');
+  form.append('language', spokenLanguage);
+  /* The prompt describes Egyptian Arabic, so it is only sent with an Arabic
+     request. Sending Arabic text with an English request biases the language. */
+  if (spokenLanguage === 'ar') form.append('prompt', TRANSCRIBE_PROMPT);
   form.append('response_format', 'json');
   form.append('temperature', '0');
 
@@ -206,7 +228,9 @@ module.exports = {
   ALLOWED_TYPES,
   MAX_AUDIO_BYTES,
   MAX_KEY_LENGTH,
+  MAX_PROMPT_TOKENS,
   TRANSCRIBE_MODEL,
+  TRANSCRIBE_PROMPT,
   groqFailure,
   transcribe,
   validateGroqKey,

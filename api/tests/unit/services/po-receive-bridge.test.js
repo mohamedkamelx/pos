@@ -3,9 +3,9 @@
 /*
  * The PO receive bridge, held to the field names receivings actually use.
  * The bug this pins against: reading line.item/line.quantity where lines
- * store item_id/item_quantity - every count was zero, no PO ever left
- * "ordered", and the fire-safe catch kept it invisible until the owner
- * received a full order and watched nothing move.
+ * store item_id/item_quantity - every count was zero, the mirror never
+ * showed what arrived, and the fire-safe catch kept it invisible until the
+ * owner received a full order and watched nothing move.
  */
 
 const { ObjectId } = require('mongodb');
@@ -26,7 +26,7 @@ const BaseModel = require('../../../src/models/base.model');
 const { syncPoFromReceivings } = require('../../../src/services/po-receive-bridge');
 
 describe('syncPoFromReceivings', () => {
-  test('a fully received order closes, counted through item_id/item_quantity', async () => {
+  test('a fully received order records quantities through item_id/item_quantity', async () => {
     const branchId = new ObjectId();
     const licenseId = new ObjectId();
     const poId = new ObjectId();
@@ -37,7 +37,6 @@ describe('syncPoFromReceivings', () => {
       _id: poId,
       branch_id: branchId,
       license: licenseId,
-      status: 'ordered',
       items: [
         { item_id: itemA, item_name: 'Bottle', qty_ordered: 4 },
         { item_id: itemB, item_name: 'Cups', qty_ordered: 5 },
@@ -72,18 +71,18 @@ describe('syncPoFromReceivings', () => {
     expect(r.status).toBe(true);
     expect(updated).toBeTruthy();
     const set = updated.$set;
-    expect(set.status).toBe('closed');
+    expect(set).not.toHaveProperty('status');
     expect(set.items.map((i) => i.qty_received)).toEqual([4, 5]);
+    expect(r.data.outstanding).toBe(0);
   });
 
-  test('a partial delivery moves to partial, never negative, never reopened', async () => {
+  test('a partial delivery records quantities, never negative', async () => {
     const branchId = new ObjectId();
     const poId = new ObjectId();
     const itemA = new ObjectId();
     const po = {
       _id: poId,
       branch_id: branchId,
-      status: 'ordered',
       items: [{ item_id: itemA, qty_ordered: 10 }],
     };
     let updated = null;
@@ -101,7 +100,8 @@ describe('syncPoFromReceivings', () => {
     };
     const r = await syncPoFromReceivings(String(poId), { branchId: String(branchId) });
     expect(r.status).toBe(true);
-    expect(updated.$set.status).toBe('partial');
+    expect(updated.$set).not.toHaveProperty('status');
     expect(updated.$set.items[0].qty_received).toBe(3);
+    expect(r.data.outstanding).toBe(7);
   });
 });

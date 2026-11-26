@@ -78,6 +78,13 @@ describe('item search index', () => {
         expect.arrayContaining(['pepsi', '1l', 'cold', 'drinks', 'بيبسي', '6221001', '6221002'])
       );
       expect(index.search_ngrams).toEqual(expect.arrayContaining(['pep', 'eps', 'psi']));
+      expect(Array.isArray(index.search_phonetics)).toBe(true);
+    });
+
+    test('stores a phonetic key for sound-alike names and leaves short keys out', () => {
+      expect(buildSearchIndex({ name: 'Sharp' }).search_phonetics).toContain('shrb');
+      expect(buildSearchIndex({ name: 'شرب' }).search_phonetics).toContain('shrb');
+      expect(buildSearchIndex({ name: 'Soup' }).search_phonetics).not.toContain('sb');
     });
 
     test('is derived data that can be removed at the read boundary', () => {
@@ -88,6 +95,7 @@ describe('item search index', () => {
       expect(indexed).not.toHaveProperty('search_text');
       expect(indexed).not.toHaveProperty('search_tokens');
       expect(indexed).not.toHaveProperty('search_ngrams');
+      expect(indexed).not.toHaveProperty('search_phonetics');
       expect(indexed).not.toHaveProperty('search_index_version');
       expect(indexed.name).toBe('Pepsi 1L');
     });

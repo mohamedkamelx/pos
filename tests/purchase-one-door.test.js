@@ -95,5 +95,17 @@ test('purchases are recorded immediately; legacy orders stay read-only', () => {
     );
     assert.match(view, /data-act="labels"/);
     assert.ok(!/data-act="(?:edit|delete|receive)"/.test(view), 'a legacy order still offers a write action');
-    assert.match(receivingJs, /ordered: \['lang_legacy_order', 'Legacy order'\]/);
+});
+
+test('purchase orders carry no order-status surface', () => {
+    /* Owner: "completely remove the status of order... no traces". The
+       purchases list, document and legacy view carry no status column,
+       filter, pill or badge. */
+    assert.ok(!poPage.includes('po_view_status'), 'the order-status badge is back');
+    assert.ok(!receivingJs.includes('STATUS_PILL'), 'the order-status pill map is back');
+    assert.ok(!receivingJs.includes('STATUS_LABEL'), 'the order-status label map is back');
+    assert.ok(!receivingJs.includes('statusLabel: function'), 'the order-status label helper is back');
+    assert.ok(!receivingJs.includes('lang_userstatus'), 'a purchase status column is back');
+    assert.ok(!receivingJs.includes("setExtra('receivings', 'status'"), 'the order-status filter is back');
+    assert.ok(!receivingJs.includes('q-status'), 'the purchase sheet status line is back');
 });

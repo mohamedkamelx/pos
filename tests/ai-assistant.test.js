@@ -494,6 +494,11 @@ test('the assistant needs both credentials, then transcribes and chats', async (
         assert.equal(init.body.get('model'), 'whisper-large-v3');
         assert.equal(init.body.get('language'), 'ar');
         assert.equal(init.body.get('temperature'), '0');
+        const prompt = String(init.body.get('prompt') || '');
+        assert.match(prompt, /شرب/);
+        assert.match(prompt, /اتنين 2/);
+        assert.ok(prompt.split(/\s+/).length < 224, 'Whisper prompt stays inside its token budget');
+        assert.ok(prompt.length < 900, 'Whisper prompt stays short');
         return response(200, { text: 'مرحبا بكم' });
       }
       throw new Error(`unexpected URL ${url}`);
@@ -1769,7 +1774,7 @@ test('a category the request already named is not asked for again', () => {
   assert.equal(named.code, 'category_already_given');
   assert.equal(named.internal, true);
   assert.match(named.message, /الاحزايا/);
-  assert.match(named.message, /closest active category/);
+  assert.match(named.message, /already settled/);
 
   const combined = askUser({
     ...question,
@@ -1798,6 +1803,25 @@ test('a category the request already named is not asked for again', () => {
     pendingText: 'ضيف برودكت جزمة حمرى في فئة الاحزايا وخلي الكمية خمسين',
   });
   assert.equal(priceQuestion.kind, 'clarify');
+
+  const answeredCategory = askUser(question, {
+    pendingText: 'ضيف برودكت جزمة حمرى',
+    answered: [{ question: 'أي فئة؟', answer: 'غسالات' }],
+    currentCategory: { name: 'غسالات' },
+  });
+  assert.equal(answeredCategory.kind, 'error');
+  assert.equal(answeredCategory.code, 'category_already_given');
+  assert.match(answeredCategory.message, /غسالات/);
+
+  const repeated = askUser({
+    question: 'ما سعر البيع؟',
+    missing: ['selling price'],
+  }, {
+    answered: [{ question: 'ما سعر البيع؟', answer: '100' }],
+  });
+  assert.equal(repeated.kind, 'error');
+  assert.equal(repeated.code, 'question_already_answered');
+  assert.match(repeated.message, /100/);
 });
 
 test('a confirmed plan creates the category once, adds the product image and verifies it', async () => {
@@ -3021,6 +3045,86 @@ test('conversation memory keeps an unfinished create request across short answer
   assert.equal(memory.pendingRequest(conversation), null);
 });
 
+test('an answered category is kept for the next product and is never asked again', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  const memory = createConversationMemoryStore({ now: () => 1000 });
+  const conversation = 'conv-category-carry';
+
+  memory.beginTurn(conversation, 'ضيف منتج غسالة');
+  memory.completeTurn(conversation, 'أي فئة تريد للمنتج؟', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        question: 'أي فئة تريد للمنتج؟',
+        options: [],
+        pending: 'إنشاء منتج غسالة; missing: category, selling price',
+        missing: ['category', 'selling price'],
+      },
+    },
+  }]);
+  const before = memory.pendingRequest(conversation);
+  assert.match(before.note, /missing: category/);
+  assert.equal(before.answers.length, 0);
+
+  const answered = memory.beginTurn(conversation, 'غسالات');
+  assert.equal(answered.pendingAnswer, true);
+  const after = memory.pendingRequest(conversation);
+  assert.equal(after.note, '', 'the stale draft note is dropped after the answer');
+  assert.equal(after.category.name, 'غسالات');
+  assert.equal(after.answers.at(-1).answer, 'غسالات');
+
+  const block = memory.contextFor(conversation, { full: false, message: 'غسالات' });
+  assert.match(block, /Current category: غسالات/);
+  assert.match(block, /غسالات/);
+
+  const nextProduct = memory.beginTurn(conversation, 'ضيف منتج تاني');
+  assert.equal(nextProduct.switched, false, 'the current category keeps the next product in the same topic');
+  assert.equal(nextProduct.writeRequest, true);
+  assert.equal(memory.pendingRequest(conversation).category.name, 'غسالات');
+});
+
+test('a category created by a plan becomes the current category', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  const memory = createConversationMemoryStore({ now: () => 1000 });
+  const conversation = 'conv-plan-category';
+
+  memory.beginTurn(conversation, 'ضيف منتج غسالة في فئة غسالات');
+  memory.completeTurn(conversation, 'راجع المعاينة.', [{
+    metadata: {
+      posnic: {
+        kind: 'write_plan',
+        plan: {
+          id: 'plan-cat',
+          status: 'pending',
+          steps: [
+            {
+              id: 'c1',
+              action: 'create_category',
+              label: 'Create category',
+              fields: { name: 'غسالات' },
+              resultId: 'cat-1',
+              resultName: 'غسالات',
+            },
+            {
+              id: 'p1',
+              action: 'create_product',
+              label: 'Create product',
+              fields: { name: 'غسالة سامسونج', category_id: 'cat-1', category_name: 'غسالات' },
+            },
+          ],
+        },
+      },
+    },
+  }]);
+
+  assert.equal(memory.pendingRequest(conversation), null);
+  const block = memory.contextFor(conversation, { full: false, message: 'ضيف منتج تاني' });
+  assert.match(block, /Current category: غسالات/);
+  assert.match(block, /id cat-1/);
+  const nextProduct = memory.beginTurn(conversation, 'ضيف منتج تاني');
+  assert.equal(nextProduct.switched, false);
+});
+
 test('a new write request replaces the pending draft while a short answer keeps it', () => {
   const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
   const memory = createConversationMemoryStore({ now: () => 1000 });
@@ -3145,6 +3249,62 @@ test('the runtime separates topics, keeps memory and recovers from a provider er
   assert.equal(third.memory.switched, true);
   assert.equal(h.state.sessionCount, 3);
   assert.match(h.state.prompts[3].text, /Earlier topics/);
+});
+
+test('a continuing session still receives the compact memory and current category', async (t) => {
+  let planCount = 0;
+  const h = await createRuntimeHarness(t, {
+    promptHook: () => {
+      planCount += 1;
+      return {
+        reply: 'راجع المعاينة.',
+        tools: [{
+          name: 'posnic_propose_plan',
+          metadata: { posnic: {
+            kind: 'write_plan',
+            plan: {
+              id: `plan-${planCount}`,
+              status: 'pending',
+              title: 'Add product',
+              steps: planCount === 1
+                ? [{
+                  id: 'c1',
+                  action: 'create_category',
+                  label: 'Create category',
+                  fields: { name: 'غسالات' },
+                  resultId: 'cat-1',
+                  resultName: 'غسالات',
+                }]
+                : [{
+                  id: 'p1',
+                  action: 'create_product',
+                  label: 'Create product',
+                  fields: { name: 'غسالة تانية', selling_price: 100, company_price: 70 },
+                }],
+            },
+          } },
+        }],
+      };
+    },
+  });
+  const base = {
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-context-every-turn',
+  };
+
+  const first = await h.runtime.chat({ ...base, message: 'ضيف منتج غسالة في فئة غسالات' });
+  assert.equal(first.success, true);
+  assert.equal(first.memory.switched, true);
+
+  const second = await h.runtime.chat({ ...base, message: 'ضيف منتج تاني' });
+  assert.equal(second.success, true);
+  assert.equal(second.memory.switched, false);
+  assert.equal(h.state.sessionCount, 1, 'the current category keeps the follow-up in one session');
+  assert.equal(h.state.prompts.length, 2);
+  assert.match(h.state.prompts[1].text, /\[Conversation memory\]/);
+  assert.match(h.state.prompts[1].text, /Current category: غسالات/);
 });
 
 test('a provider rate limit keeps its retry time and does not restart the session', async (t) => {

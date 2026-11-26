@@ -46,6 +46,9 @@ const APP_KEEP_JS = new Set([
 const API_KEEP_JS = new Set([
   'src/helpers/receipt-design.js',
   'src/helpers/sale-payment-summary.js',
+  /* The assistant loads the one shared search module from the API resource,
+     so it must stay plain JavaScript in the packaged API as well. */
+  'src/utils/smart-search.js',
 ]);
 
 /* Native files cannot be loaded from inside an asar archive. The repack below

@@ -2324,8 +2324,8 @@ receivingSchema.statics.receivingInsertUpdate = async function (data, id) {
       updateData.payment_due_date = dueDate ? new Date(dueDate) : null;
     }
 
-    /* PO receive bridge (PO_LIFECYCLE_DESIGN step 2): a receiving born from
-       a purchase order carries the PO's id, presence-gated - ordinary
+    /* PO receive bridge: a receiving born from a purchase order carries
+       the PO's id, presence-gated - ordinary
        receivings never gain the field, and an edit that omits it never
        clears an existing link. The PO write-back happens in the controller
        AFTER this commit, recomputed from all linked receivings. */

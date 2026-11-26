@@ -97,7 +97,7 @@ English labels with one translation blindly.
 
 The coverage baseline is a regression guard. Add new languages to it and raise
 existing values as coverage improves; never lower existing baselines to pass CI.
-`POSNIC_REVIEWED_LANGUAGES_ONLY=1` still builds only reviewed languages.
+The desktop installer ships Arabic first and English second; the other packs remain translation sources and are not emitted.
 
 ### Where the words came from
 
@@ -166,8 +166,9 @@ common screens above and says so in a PR. Flip `reviewed: false` to
 `reviewed: true` on its line in `frontend/gulpfile.js/config.js`. That one
 line is the difference.
 
-An installer that wants only reviewed languages in its menu can be built with
-`POSNIC_REVIEWED_LANGUAGES_ONLY=1`. The default build does not.
+The desktop installer ships Arabic first and English second. The other packs
+remain in the repository as translation sources; they are not emitted into the
+installer and do not appear in the language menu.
 
 ---
 

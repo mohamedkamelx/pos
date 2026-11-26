@@ -1314,31 +1314,49 @@ PosnicPro.sales = {
             item_description = $('<div>').html(item_description).text();
         }
         var item = PosnicPro.sales.searchItem(id);
-
-        if (item !== false) {
-            if (PosnicPro.sales.SaleAction === 'return') {
-                return false;
-            } else {
-                var lineqty = params.available_quantity - placedQty;
-                /*
-                 * parseFloat, not parseInt.
-                 *
-                 * Adding the same item twice adds the two quantities. With
-                 * parseInt, 0.300kg of onions already in the cart read as 0,
-                 * so scanning them again replaced the weight with a whole
-                 * number - the customer was billed 1kg for 600g.
-                 */
-                item_quantity = (lineqty === 0) ? item_quantity
-                    : parseFloat(item_quantity) + parseFloat($('#touchsale_item_qty' + id).val());
-            }
+        if (PosnicPro.sales.SaleAction === 'return' && item !== false) {
+            return false;
         }
-        if (params.track_inventory === true && params.negative_stock === false) {
-            var placedQty = $('#touchsale_item_qty' + id).val();
-            if (params.available_quantity <= placedQty) {
-                $('#touchsale_item_qty' + id).val(params.available_quantity);
-                PosnicPro.alert('error', PosnicPro.i18n.t('lang_some_items_are_out_of_stock', 'Some items are out of stock.'));
-                return false;
+
+        /*
+         * Count what the whole cart already asks for this product, not just
+         * the row the cashier happened to click. Repeated clicks and scan,
+         * tile, search and barcode all pass through here, so this is the one
+         * place that can stop the same item being added twice past stock.
+         *
+         * parseFloat, not parseInt: 0.300kg of onions already in the cart is
+         * a real quantity and must add to the next weight, not become 0.
+         */
+        var addQuantity = Number(item_quantity);
+        if (!Number.isFinite(addQuantity) || addQuantity <= 0) addQuantity = 0;
+        var productId = String(params.product_id || params.item_id || id);
+        var cartQuantity = 0;
+        var heldQuantity = 0;
+        $.each(PosnicPro.sales.SaleTableLineItems || {}, function (lineId, line) {
+            if (String(line.product_id || line.item_id) !== productId) return;
+            var current = Number($('#touchsale_item_qty' + lineId).val());
+            if (Number.isFinite(current) && current > 0) cartQuantity += current;
+            if (PosnicPro.sales.SaleAction === 'edit') {
+                heldQuantity += Number($('#returnItemChangeQuantityValue_' + lineId).text()) || 0;
             }
+        });
+        item_quantity = (item !== false ? cartQuantity : 0) + addQuantity;
+
+        var tracked = params.track_inventory === true || params.track_inventory === 'true'
+            || params.track_inventory === 1 || params.track_inventory === '1';
+        var negative = params.negative_stock === true || params.negative_stock === 'true'
+            || params.negative_stock === 1 || params.negative_stock === '1';
+        var capacity = Number(params.available_quantity);
+        if (!Number.isFinite(capacity)) capacity = 0;
+        /* An edited sale already holds its saved lines; live stock excludes
+           that held quantity. Loading those lines must still be allowed, so
+           the line being reconstructed counts as held too. */
+        if (PosnicPro.sales.SaleAction === 'edit') {
+            capacity += heldQuantity + (PosnicPro.sales._loadingSavedSale === true ? addQuantity : 0);
+        }
+        if (tracked && !negative && item_quantity > capacity + 1e-9) {
+            PosnicPro.alert('error', PosnicPro.i18n.t('lang_some_items_are_out_of_stock', 'Some items are out of stock.'));
+            return false;
         }
 
         /*While Refund Sale If Add New Item SalesExchange Should be True - Ordertype Set Into Exchange*/
@@ -2068,6 +2086,31 @@ PosnicPro.sales.guardDiscountApproval = function (params, proceed, checkedPendin
 
 /*********** START - ADD NEW SALES ***********/
 /***********  THIS FUNCTION HANDLE THE ADD NEW SALES ORDER ***********/
+/*
+ * The server owns the final stock decision. When it refuses a sale, its
+ * shortage rows carry the most this line may still take. Point them at the
+ * same line the cart used (`line_id` after an edit, product id otherwise)
+ * so both the new-sale and edit paths can show the correction.
+ */
+PosnicPro.sales.applyStockCorrections = function (response) {
+    var corrections = response && Array.isArray(response.data) ? response.data : [];
+    $.each(corrections, function (key, val) {
+        if (!val || !val.item_id || val.item_quantity == null ||
+            !Number.isFinite(Number(val.item_quantity)) || Number(val.item_quantity) < 0) return;
+        var rowId = val.line_id || val.item_id;
+        var row = "touch_row_" + rowId;
+        $("#" + row + '').removeAttr("style");
+        $("#" + row + '').addClass('table-highlight-row');
+        $("#touchsale_item_qty" + rowId).val(val.item_quantity);
+        setTimeout(function () {
+            $("#" + row + '').removeClass('table-highlight-row');
+        }, 500);
+    });
+    if (corrections.length && PosnicPro.sales.calculation) {
+        PosnicPro.sales.calculation.salesTableRowCart();
+    }
+};
+
 PosnicPro.sales.addSale = {
     /*Save Sales Order*/
     cartOrderSubmit: function (payment) {
@@ -2296,19 +2339,7 @@ PosnicPro.sales.addSale = {
                 } catch (error) { console.warn('Order rejection remains pending:', error.message); }
                 // A dropped connection has no stock correction payload. Keep
                 // the cart and retry identity intact instead of throwing here.
-                var corrections = response && Array.isArray(response.data) ? response.data : [];
-                $.each(corrections, function (key, val) {
-                    if (!val || !val.item_id || val.item_quantity == null ||
-                        !Number.isFinite(Number(val.item_quantity)) || Number(val.item_quantity) < 0) return;
-                    let row = "touch_row_" + val.item_id;
-                    $("#" + row + '').removeAttr("style");
-                    $("#" + row + '').addClass('table-highlight-row');
-                    let rowInput = "touchsale_item_qty" + val.item_id;
-                    $("#" + rowInput + '').val(val.item_quantity);
-                    setTimeout(function () {
-                        $("#" + row + '').removeClass('table-highlight-row');
-                    }, 500);
-                });
+                PosnicPro.sales.applyStockCorrections(response);
             });
             });
         }
@@ -2667,6 +2698,7 @@ PosnicPro.sales.editSale = {
                     return;
                 }
                 PosnicPro.alert(response.type, response.message);
+                PosnicPro.sales.applyStockCorrections(response);
 
                 // Reset payment-only flags and close tender appropriately on error
                 if (PosnicPro.sales.paymentOnlyMode === true) {
@@ -2891,33 +2923,40 @@ PosnicPro.sales.quantity = {
         if (action === 1) {
             value = parseFloat(oldValue) + unit.step;
             value = PosnicPro.sales.quantity.applyPrecision(value, unit);
-            var available_quantity = PosnicPro.sales.SaleTableLineItems[id].available_quantity;
-            if (track_inventory === 'true' && negative_stock === 'false' && $('#instantStatus_' + id).text() !== 'ok') {
+            var available_quantity = Number(PosnicPro.sales.SaleTableLineItems[id].available_quantity);
+            var tracked = track_inventory === true || track_inventory === 'true'
+                || track_inventory === 1 || track_inventory === '1';
+            var negative = negative_stock === true || negative_stock === 'true'
+                || negative_stock === 1 || negative_stock === '1';
+            if (tracked && !negative && $('#instantStatus_' + id).text() !== 'ok') {
+                /* The sale being edited already holds its saved quantity, so
+                   the line can use live stock plus that held amount. */
+                var held = PosnicPro.sales.SaleAction === 'edit'
+                    ? Number($('#returnItemChangeQuantityValue_' + id).text()) || 0
+                    : 0;
+                var capacity = (Number.isFinite(available_quantity) ? available_quantity : 0) + held;
+                if (value > capacity + 1e-9) {
+                    PosnicPro.alert('error', PosnicPro.i18n.t('lang_some_items_are_out_of_stock', 'Some items are out of stock.'));
+                    $('#touchsale_item_qty' + id).val(oldValue);
+                    return false;
+                }
                 if (PosnicPro.sales.SaleAction === 'edit') {
                     PosnicPro.get('items/' + id, function (response) {
                         if (response.type === 'success') {
-                            let available = response.data.available_quantity;
-                            let change = parseInt($('#returnItemChangeQuantityValue_' + id).text());
-                            if ((available + change) < value) {
+                            let available = Number(response.data.available_quantity) || 0;
+                            if ((available + held) < Number(value)) {
                                 PosnicPro.alert('error', PosnicPro.i18n.t('lang_items_not_available_in_the_stock', 'Items Not Available In The Stock!.'));
-                                $('#touchsale_item_qty' + id).val(change);
+                                $('#touchsale_item_qty' + id).val(oldValue);
                                 return false;
                             }
                         } else {
                             PosnicPro.alert(response.type, response.message);
                         }
                     }, function (xhr) {
-                        let change = parseInt($('#returnItemChangeQuantityValue_' + id).text());
                         PosnicPro.alert('error', PosnicPro.i18n.t('lang_items_not_available_in_the_stock', 'Items Not Available In The Stock!.'));
-                        $('#touchsale_item_qty' + id).val(change);
+                        $('#touchsale_item_qty' + id).val(oldValue);
                         return false;
                     });
-                } else {
-                    if (available_quantity < value) {
-                        PosnicPro.alert('error', PosnicPro.i18n.t('lang_some_items_are_out_of_stock', 'Some items are out of stock.'));
-                        $('#touchsale_item_qty' + id).val(PosnicPro.sales.SaleTableLineItems[id].available_quantity);
-                        return false;
-                    }
                 }
             }
         } else {
@@ -2965,23 +3004,42 @@ PosnicPro.sales.quantity = {
      * SALES LINE ITEMS QUANTITY INCREASE & QUANTITY BASED ON KEYDOWN OF THE TEXTBOX VALUE
      */
     textOnChange: function (id, track_inventory, negative_stock) {
-        var ItemQty = $('#touchsale_item_qty' + id).val();
-        var available_quantity = PosnicPro.sales.SaleTableLineItems[id].available_quantity;
-        if (track_inventory === 'true' && negative_stock === 'false') {
+        var ItemQty = Number($('#touchsale_item_qty' + id).val());
+        var available_quantity = Number(PosnicPro.sales.SaleTableLineItems[id].available_quantity);
+        var tracked = track_inventory === true || track_inventory === 'true'
+            || track_inventory === 1 || track_inventory === '1';
+        var negative = negative_stock === true || negative_stock === 'true'
+            || negative_stock === 1 || negative_stock === '1';
+        if (tracked && !negative) {
+            var held = PosnicPro.sales.SaleAction === 'edit'
+                ? Number($('#returnItemChangeQuantityValue_' + id).text()) || 0
+                : 0;
+            var capacity = (Number.isFinite(available_quantity) ? available_quantity : 0) + held;
+            if (!Number.isFinite(ItemQty) || ItemQty > capacity + 1e-9) {
+                ItemQty = Math.max(0, capacity);
+                $('#touchsale_item_qty' + id).val(ItemQty);
+                let lineMath = PosnicPro.sales.readLineTotals(id);
+                $('#addSalesLineTotal_' + id).text(lineMath.total.toFixed(2));
+                $('#addSalesDiscount_' + id).text(lineMath.discount.toFixed(2));
+                var itemRecord = [];
+                itemRecord.push({ name: $('#addSalesLineItemName_' + id).text(), qty: ItemQty, price: $('#addSalesLineItemPrice_' + id).text(), discount: $('#addSalesLineItemDiscount_' + id).text(), total: lineMath.total });
+                db.customerDisplay.put({ id: id, 'clear': 'yes', 'get': 'yes', items: itemRecord });
+                PosnicPro.sales.calculation.salesTableRowCart();
+                PosnicPro.alert('error', PosnicPro.i18n.t('lang_some_items_are_out_of_stock', 'Some items are out of stock.'));
+            }
 
             if (PosnicPro.sales.SaleAction === 'edit') {
                 PosnicPro.get('items/' + id, function (response) {
                     if (response.type === 'success') {
-                        let available = response.data.available_quantity;
-                        let change = parseInt($('#returnItemChangeQuantityValue_' + id).text());
-                        if ((available + change) < ItemQty) {
+                        let available = Number(response.data.available_quantity) || 0;
+                        if ((available + held) < ItemQty) {
                             PosnicPro.alert('error', PosnicPro.i18n.t('lang_items_not_available_in_the_stock', 'Items Not Available In The Stock!.'));
-                            $('#touchsale_item_qty' + id).val(change);
+                            $('#touchsale_item_qty' + id).val(held);
                             let lineMath = PosnicPro.sales.readLineTotals(id);
                             $('#addSalesLineTotal_' + id).text(lineMath.total.toFixed(2));
                             $('#addSalesDiscount_' + id).text(lineMath.discount.toFixed(2));
-                                                var itemRecord = [];
-                            itemRecord.push({ name: $('#addSalesLineItemName_' + id).text(), qty: change, price: $('#addSalesLineItemPrice_' + id).text(), discount: $('#addSalesLineItemDiscount_' + id).text(), total: lineMath.total });
+                            var itemRecord = [];
+                            itemRecord.push({ name: $('#addSalesLineItemName_' + id).text(), qty: held, price: $('#addSalesLineItemPrice_' + id).text(), discount: $('#addSalesLineItemDiscount_' + id).text(), total: lineMath.total });
                             db.customerDisplay.put({ id: id, 'clear': 'yes', 'get': 'yes', items: itemRecord });
                             PosnicPro.sales.calculation.salesTableRowCart();
                             return false;
@@ -2990,27 +3048,11 @@ PosnicPro.sales.quantity = {
                         PosnicPro.alert(response.type, response.message);
                     }
                 }, function (xhr) {
-                    let change = parseInt($('#returnItemChangeQuantityValue_' + id).text());
                     PosnicPro.alert('error', PosnicPro.i18n.t('lang_items_not_available_in_the_stock', 'Items Not Available In The Stock!.'));
-                    $('#touchsale_item_qty' + id).val(change);
+                    $('#touchsale_item_qty' + id).val(held);
                     return false;
                 });
-            } else {
-                if (available_quantity < ItemQty) {
-                    $('#touchsale_item_qty' + id).val(available_quantity);
-                    let lineMath = PosnicPro.sales.readLineTotals(id);
-                    $('#addSalesLineTotal_' + id).text(lineMath.total.toFixed(2));
-                    $('#addSalesDiscount_' + id).text(lineMath.discount.toFixed(2));
-                                var itemRecord = [];
-                    itemRecord.push({ name: $('#addSalesLineItemName_' + id).text(), qty: available_quantity, price: $('#addSalesLineItemPrice_' + id).text(), discount: $('#addSalesLineItemDiscount_' + id).text(), total: lineMath.total });
-                    db.customerDisplay.put({ id: id, 'clear': 'yes', 'get': 'yes', items: itemRecord });
-                    PosnicPro.sales.calculation.salesTableRowCart();
-                    PosnicPro.alert('error', PosnicPro.i18n.t('lang_some_items_are_out_of_stock', 'Some items are out of stock.'));
-                    return false;
-                }
             }
-
-
         }
 
         $('#touchsale_item_qty' + id).val(ItemQty);
@@ -5536,6 +5578,10 @@ PosnicPro.sales.recentMenu = {
             $("#" + row + '').addClass('table-highlight-row');
         }
         PosnicPro.sales.salesId = result.sales_id;
+        /* While the saved lines are being reconstructed, their quantity is
+           already held by the sale. Only a cashier adding more later has to
+           fit inside the stock that is still on the shelf. */
+        PosnicPro.sales._loadingSavedSale = PosnicPro.sales.SaleAction === 'edit';
         $.each(EditRecentSaleItems, function (key, val) {
             lineItem = {
                 "sale_inline_item_price": PosnicPro.sales.savedSellingPrice(val),
@@ -5566,6 +5612,7 @@ PosnicPro.sales.recentMenu = {
             };
             PosnicPro.sales.addSalesLineItems(lineItem);
         });
+        PosnicPro.sales._loadingSavedSale = false;
         $('#sales_description').val(PosnicPro.sales.EditRecentSaleParams.sales_description).hide();
 
         // If we arrived here via payment-only mode (Unpaid payment icon), directly

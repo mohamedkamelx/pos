@@ -38,6 +38,8 @@ const forceRebuild = process.argv.includes('--force');
 const EXCLUDE = [
   '-xr!*.map',        // source maps: 46 MB, read only by a debugger
   '-xr!*.ts',         // TypeScript sources and .d.ts: 29 MB, we run the .js
+  '-xr!*.mts',        // TypeScript modules, including .d.mts
+  '-xr!*.cts',        // TypeScript CommonJS modules, including .d.cts
   '-xr!*.md',         // 8 MB of documentation
   '-xr!*.flow',
   '-xr!LICENSE', '-xr!LICENCE', '-xr!LICENSE.*', '-xr!LICENCE.*',

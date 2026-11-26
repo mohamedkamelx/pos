@@ -71,6 +71,10 @@ module.exports = async function itemSearchIndex(db) {
     { license: 1, branch_id: 1, search_ngrams: 1 },
     { name: 'item_search_ngrams' }
   );
+  await items.createIndex(
+    { license: 1, branch_id: 1, search_phonetics: 1 },
+    { name: 'item_search_phonetics' }
+  );
 
   return { processed };
 };

@@ -48,11 +48,9 @@ notice is retained in its accompanying `src/fonts/<font>-OFL.txt` file.
 **Sources and checksums:** `src/fonts/manifest.json` records the Google Fonts
 source directory and SHA-256 of each unmodified font.
 
-Noto Sans, Noto Sans Arabic, Noto Sans Devanagari, Noto Sans Tamil, Noto Sans
-Telugu, Noto Sans Kannada, Noto Sans Malayalam, Noto Sans Sinhala and Noto Sans
-Thai, Bengali, Gujarati, Gurmukhi, Hebrew, Japanese, Korean, Simplified Chinese
-and Traditional Chinese render receipt text locally, including when Linux has no matching system
-fonts installed. No font is downloaded when a receipt prints.
+Noto Sans, Noto Sans Arabic, Noto Sans Hebrew and Noto Sans Thai render receipt
+text locally, including when Linux has no matching system fonts installed. No
+font is downloaded when a receipt prints.
 
 ## Node.js
 

@@ -68,7 +68,20 @@ function namedCategory(value) {
   return kept.join(' ').trim();
 }
 
-function askUser(input, { pendingText = '', pendingNote = '' } = {}) {
+function normaliseQuestion(value) {
+  return String(value || '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function askUser(input, {
+  pendingText = '',
+  pendingNote = '',
+  answered = [],
+  currentCategory = null,
+} = {}) {
   const question = text(input && input.question, MAX_QUESTION_CHARS);
   if (!question) {
     return {
@@ -106,9 +119,18 @@ function askUser(input, { pendingText = '', pendingNote = '' } = {}) {
     .filter(Boolean)
     .slice(0, MAX_MISSING);
 
+  const settled = (Array.isArray(answered) ? answered : [])
+    .filter((item) => item && item.question && item.answer)
+    .slice(-6);
+  const alreadyCategory = settled.find((item) => CATEGORY_WORD_RE.test(item.question));
+  const givenCategory = namedCategory(pendingText);
+  const knownCategory = alreadyCategory && alreadyCategory.answer
+    ? alreadyCategory.answer
+    : (currentCategory && currentCategory.name) || '';
+
   const mentionsCategory = CATEGORY_WORD_RE.test(question);
   const asksForCategory = missing.includes('category') || mentionsCategory;
-  const category = namedCategory(pendingText);
+  const category = givenCategory || knownCategory;
   if (asksForCategory && category) {
     const remaining = missing.filter((item) => !/(?:category|فئة|قسم)/i.test(item));
     const next = remaining.length
@@ -118,7 +140,23 @@ function askUser(input, { pendingText = '', pendingNote = '' } = {}) {
       kind: 'error',
       code: 'category_already_given',
       internal: true,
-      message: `The unfinished request already names the category "${category}". Use the closest active category from posnic_list_categories; do not ask the user for a category again.${next}`,
+      message: `The category is already settled as "${category}". Use it; do not ask the user for a category again.${next}`,
+    };
+  }
+
+  /* The same question, word for word, was already answered. A model that
+     loops on its clarification must be stopped here rather than in front of
+     the user; the answer is already in memory. */
+  const askedKey = normaliseQuestion(question);
+  const repeated = settled.find(
+    (item) => askedKey && normaliseQuestion(item.question) === askedKey
+  );
+  if (repeated) {
+    return {
+      kind: 'error',
+      code: 'question_already_answered',
+      internal: true,
+      message: `That question was already answered: ${repeated.question} -> ${repeated.answer}. Continue with that answer; do not ask it again.`,
     };
   }
 
@@ -146,7 +184,8 @@ function askUser(input, { pendingText = '', pendingNote = '' } = {}) {
   /* The optional image belongs to the same question. Asking it in a later
      turn annoys the user and hides that it was never required. */
   const imageMentioned = IMAGE_WORD_RE.test(question) || IMAGE_WORD_RE.test(pendingText);
-  const imageAlreadyAsked = /(?:optional image|صورة اختيارية)/i.test(pendingNote);
+  const imageAlreadyAsked = /(?:optional image|صورة اختيارية)/i.test(pendingNote) ||
+    settled.some((item) => IMAGE_WORD_RE.test(item.question));
   if (productDraft && !imageMentioned && !imageAlreadyAsked) {
     suffixes.push(arabic
       ? ' أرفق صورة إن وجدت.'

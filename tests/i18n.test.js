@@ -437,38 +437,24 @@ test('stylesheets are written once, not once per language', () => {
   assert.ok(!/languages\.forEach/.test(css), 'CSS is still written once per language');
 });
 
-/* --------------------------------------- every language ships, honestly --- */
+/* --------------------------------------- Arabic first, English second --- */
 
-test('every declared language ships by default, and says whether a speaker has read it', () => {
-  /*
-   * Owner, 2026-09-02: ship them all; the community improves them over time.
-   *
-   * A gate that hides a language until it is perfect is a language nobody
-   * will ever correct - the people who could fix it are exactly the people who
-   * would have picked it. What ships instead of the gate is honesty: every
-   * entry says whether a speaker has read it, and the menu turns that into a
-   * "beta" mark beside the name. Every missing word is still English.
-   */
+test('only Arabic and English ship, with Arabic first', () => {
   const config = require(path.join(FRONTEND, 'gulpfile.js', 'config.js'));
-  assert.ok(!config.reviewedOnly,
-    'POSNIC_REVIEWED_LANGUAGES_ONLY is set in the test environment, so this proves nothing');
-  assert.deepEqual(config.shippedLanguages.map((l) => l.code), config.LANGUAGES.map((l) => l.code),
-    'the default build leaves a declared language out');
+  assert.deepEqual(config.shippedLanguages.map((l) => l.code), ['ar', 'en']);
+  assert.deepEqual(config.languages, ['ar', 'en']);
+  assert.equal(config.shippedLanguages[0].dir, 'rtl', 'Arabic is not declared right-to-left');
   for (const l of config.LANGUAGES) {
     assert.equal(typeof l.reviewed, 'boolean', l.code + ' does not say whether it was reviewed');
   }
-  const reviewed = config.LANGUAGES.filter((l) => l.reviewed).map((l) => l.code);
-  assert.ok(reviewed.includes('en') && reviewed.includes('ta'), 'English and Tamil are the reviewed pair');
 });
 
-test('an installer can still ask for reviewed languages only', () => {
-  /* The env is read when config.js loads, so it has to be a fresh process. */
-  const r = spawnSync(process.execPath, ['-e',
-    'console.log(JSON.stringify(require(process.argv[1]).shippedLanguages.map((l) => l.code)))',
-    path.join(FRONTEND, 'gulpfile.js', 'config.js')],
-    { encoding: 'utf8', env: { ...process.env, POSNIC_REVIEWED_LANGUAGES_ONLY: '1' } });
-  assert.equal(r.status, 0, r.stderr);
-  assert.deepEqual(JSON.parse(r.stdout.trim()), ['en', 'ta']);
+test('the catalogue can keep source packs without shipping them', () => {
+  const config = require(path.join(FRONTEND, 'gulpfile.js', 'config.js'));
+  assert.ok(config.LANGUAGES.length > config.shippedLanguages.length,
+    'source catalogue does not retain the unshipped packs');
+  assert.ok(config.LANGUAGES.some((l) => l.code === 'ta'),
+    'Tamil source pack was lost while narrowing the shipped list');
 });
 
 test('the shipped list carries direction, review state and coverage', () => {

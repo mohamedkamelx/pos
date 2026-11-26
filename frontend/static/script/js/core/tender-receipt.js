@@ -313,7 +313,8 @@
                             paperWidth: layout,
                             symbolGlyphs: PosnicPro.local.get('receipt_symbol_glyphs') !== 'false'
                         }).then(function (doc) {
-                            if (current === revision) { mountRaw(box, doc, layout); }
+                            if (current !== revision) { return; }
+                            mountRaw(box, doc, layout);
                         }).catch(failed);
                     } catch (error) { failed(); }
                     return;

@@ -50,6 +50,7 @@ const itemSchema = new mongoose.Schema(
     search_text: { type: String, default: '', select: false },
     search_tokens: { type: [String], default: [], select: false },
     search_ngrams: { type: [String], default: [], select: false },
+    search_phonetics: { type: [String], default: [], select: false },
     search_index_version: { type: Number, default: 0, select: false },
   },
   {
@@ -74,6 +75,7 @@ itemSchema.index({ license: 1, branch_id: 1, updated_date: -1 });
 itemSchema.index({ license: 1, branch_id: 1, name: 1 });
 itemSchema.index({ license: 1, branch_id: 1, search_tokens: 1 }, { name: 'item_search_tokens' });
 itemSchema.index({ license: 1, branch_id: 1, search_ngrams: 1 }, { name: 'item_search_ngrams' });
+itemSchema.index({ license: 1, branch_id: 1, search_phonetics: 1 }, { name: 'item_search_phonetics' });
 
 const Item = defineModel('Item', itemSchema);
 

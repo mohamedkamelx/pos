@@ -55,10 +55,18 @@ async function searchProducts(input, { api } = {}) {
   }
 
   const limit = clampLimit(input && input.limit, DEFAULT_LIMIT, MAX_LIMIT);
+  const params = { q: query, limit };
+  /* Context is a ranking hint, never a filter. The user can ask for the
+     "other" product while a category is open, and the result must still be
+     found even when it sits outside that category. */
+  const category = text(input && input.category, 160);
+  const context = text(input && input.context, 240);
+  if (category) params.category = category;
+  if (context) params.context = context;
 
   let payload;
   try {
-    payload = await api.get('items/search', { q: query, limit });
+    payload = await api.get('items/search', params);
   } catch (error) {
     return {
       kind: 'error',

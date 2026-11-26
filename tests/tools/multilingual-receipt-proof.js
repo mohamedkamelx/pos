@@ -41,7 +41,7 @@ app.whenReady().then(async () => {
   const destination = process.env.POSNIC_PRINT_TEST_DIR;
   if (destination) fs.mkdirSync(destination, { recursive: true });
   const sale = {
-    storeName: 'POSNIC LANGUAGE TEST', title: '18 languages',
+    storeName: 'POSNIC LANGUAGE TEST', title: samples.length + ' languages',
     items: samples.map(sample => ({ name: `${sample.code}: ${sample.text}`, qty: 1, amount: 10 })),
     total: samples.length * 10, footer: 'PRINT TEST - NOT A SALE',
   };
@@ -80,6 +80,6 @@ app.whenReady().then(async () => {
     assert.ok(ink > 20, sample.code + ': product text printed blank');
     console.log(sample.code + ': glyphs rendered');
   }
-  console.log('All 18 languages passed; no print jobs sent.');
+  console.log('All ' + samples.length + ' bundled receipt languages passed; no print jobs sent.');
   app.exit(0);
 }).catch(error => { console.error(error.stack); app.exit(1); });

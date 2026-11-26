@@ -144,6 +144,7 @@
                 catch (error) { host.find('[data-print-status]').text(error.message); }
             })
             .on('click.documentPrint', '[data-print-remove]', function () { $(this).closest('tr').remove(); });
+
     }
     PosnicPro.printSettings = { ready: ready, get: get, mount: mount, features: features, save: save,
         saleFormat: function () { var value = get('sales')[0].pageSize; return ['58mm', '80mm', '112mm'].indexOf(value) !== -1 ? value.replace('mm', '') : value; } };

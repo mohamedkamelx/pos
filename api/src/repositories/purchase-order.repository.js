@@ -1,7 +1,7 @@
 'use strict';
 
 /*
- * Purchase orders (PO_LIFECYCLE_DESIGN.md, Loyverse study L4 flagship).
+ * Purchase orders.
  *
  * The governing rule, worth stating where the code lives: A PURCHASE ORDER
  * NEVER TOUCHES STOCK. Only receipts do. This repository must never import
@@ -9,13 +9,11 @@
  * movement ledger - a test pins that the only collection it touches is its
  * own. The PO is a plan; the receiving is the event; qty_received is written
  * back AFTER a receiving commits, recomputed from the linked receivings so
- * replays are idempotent (that bridge lives in build step 2).
+ * replays are idempotent.
  */
 
 const BaseModel = require('../models/base.model');
 const { ObjectId } = require('mongodb');
-
-const STATUSES = Object.freeze(['draft', 'ordered', 'partial', 'closed', 'cancelled']);
 
 class PurchaseOrderRepository extends BaseModel {
   constructor() {
@@ -84,8 +82,8 @@ class PurchaseOrderRepository extends BaseModel {
   }
 
   /*
-   * Create (id empty) or update (draft/ordered only - a partially received
-   * order's plan is history, not an editable document).
+   * Create (id empty) or update. Received quantities are preserved by item
+   * so an edit cannot erase what already arrived.
    */
   async upsertOrder(data = {}, id = '', context = {}) {
     try {
@@ -99,7 +97,6 @@ class PurchaseOrderRepository extends BaseModel {
           ? new ObjectId(String(data.supplier_id))
           : null;
 
-      const status = data.status === 'ordered' ? 'ordered' : 'draft';
       const parsed = this._normalizeLines(data.items);
       if (parsed.error) return { status: false, data: null, message: parsed.error };
       const additionalCosts = this._normalizeAdditionalCosts(data.additional_costs);
@@ -116,7 +113,6 @@ class PurchaseOrderRepository extends BaseModel {
         branch_name: String(context.branchName || '').trim(),
         supplier_id: supplierId,
         supplier_name: supplierName,
-        status,
         order_date: now,
         expected_date: data.expected_date ? new Date(data.expected_date) : null,
         notes: String(data.notes || '')
@@ -136,13 +132,6 @@ class PurchaseOrderRepository extends BaseModel {
       if (id && ObjectId.isValid(String(id))) {
         const existing = await collection.findOne({ _id: new ObjectId(String(id)), ...wall });
         if (!existing) return { status: false, data: null, message: 'Purchase order not found' };
-        if (existing.status !== 'draft' && existing.status !== 'ordered') {
-          return {
-            status: false,
-            data: null,
-            message: 'Only draft or ordered purchase orders can be edited',
-          };
-        }
         /* Editing keeps identity and any received history; the received
            quantities are re-attached by line item_id so an edit cannot
            erase what already arrived. */
@@ -170,7 +159,7 @@ class PurchaseOrderRepository extends BaseModel {
       return {
         status: true,
         data: { id: String(result.insertedId), po_id: doc.po_id },
-        message: status === 'draft' ? 'Draft saved' : 'Purchase order created',
+        message: 'Purchase order created',
       };
     } catch (error) {
       console.error('Error in PurchaseOrderRepository.upsertOrder:', error);
@@ -178,12 +167,11 @@ class PurchaseOrderRepository extends BaseModel {
     }
   }
 
-  async listOrders({ page = 1, limit = 10, status, supplierId } = {}, context = {}) {
+  async listOrders({ page = 1, limit = 10, supplierId } = {}, context = {}) {
     try {
       const wall = this._wall(context);
       if (!wall) return { status: false, data: null, message: 'Branch ID not found' };
       const filter = { ...wall };
-      if (status && STATUSES.includes(status)) filter.status = status;
       if (supplierId && ObjectId.isValid(String(supplierId))) {
         filter.supplier_id = new ObjectId(String(supplierId));
       }
@@ -203,7 +191,6 @@ class PurchaseOrderRepository extends BaseModel {
         order_date: po.order_date,
         expected_date: po.expected_date,
         supplier_name: po.supplier_name,
-        status: po.status,
         ordered_qty: (po.items || []).reduce((s, l) => s + (Number(l.qty_ordered) || 0), 0),
         received_qty: (po.items || []).reduce((s, l) => s + (Number(l.qty_received) || 0), 0),
         grand_total: po.grand_total || 0,
@@ -235,73 +222,16 @@ class PurchaseOrderRepository extends BaseModel {
       const collection = await this.getCollection(this.collectionName);
       const po = await collection.findOne({ _id: new ObjectId(String(id)), ...wall });
       if (!po) return { status: false, data: null, message: 'Purchase order not found' };
-      return { status: true, data: po, message: 'success' };
+      const data = { ...po };
+      delete data.status;
+      return { status: true, data, message: 'success' };
     } catch (error) {
       console.error('Error in PurchaseOrderRepository.getOrder:', error);
       return { status: false, data: null, message: error.message };
     }
   }
 
-  /*
-   * Status transitions that are legal WITHOUT a receiving:
-   *   draft -> ordered  (commit the plan; it starts counting as Incoming)
-   *   draft/ordered/partial -> cancelled/closed via cancel-remaining
-   *     (nothing received yet -> cancelled; something received -> closed).
-   * Receiving-driven transitions (ordered/partial -> partial/closed) belong
-   * to the receive bridge, not this method.
-   */
-  async transition(id, action, context = {}) {
-    try {
-      const wall = this._wall(context);
-      if (!wall) return { status: false, data: null, message: 'Branch ID not found' };
-      if (!ObjectId.isValid(String(id))) {
-        return { status: false, data: null, message: 'Invalid purchase order id' };
-      }
-      const collection = await this.getCollection(this.collectionName);
-      const po = await collection.findOne({ _id: new ObjectId(String(id)), ...wall });
-      if (!po) return { status: false, data: null, message: 'Purchase order not found' };
-
-      const now = new Date();
-      if (action === 'order') {
-        if (po.status !== 'draft') {
-          return { status: false, data: null, message: 'Only a draft can be ordered' };
-        }
-        await collection.updateOne(
-          { _id: po._id },
-          { $set: { status: 'ordered', order_date: now, updated_date: now } }
-        );
-        return { status: true, data: { status: 'ordered' }, message: 'Purchase order placed' };
-      }
-
-      if (action === 'cancel_remaining') {
-        if (!['draft', 'ordered', 'partial'].includes(po.status)) {
-          return { status: false, data: null, message: 'Nothing left to cancel on this order' };
-        }
-        const received = (po.items || []).reduce((s, l) => s + (Number(l.qty_received) || 0), 0);
-        const finalStatus = received > 0 ? 'closed' : 'cancelled';
-        await collection.updateOne(
-          { _id: po._id },
-          { $set: { status: finalStatus, updated_date: now } }
-        );
-        return {
-          status: true,
-          data: { status: finalStatus },
-          message:
-            finalStatus === 'closed'
-              ? 'Remaining items cancelled - order closed'
-              : 'Purchase order cancelled',
-        };
-      }
-
-      return { status: false, data: null, message: 'Unknown action' };
-    } catch (error) {
-      console.error('Error in PurchaseOrderRepository.transition:', error);
-      return { status: false, data: null, message: error.message };
-    }
-  }
-
-  /* Drafts are the only deletable state - an ordered PO was communicated to
-     a supplier and gets cancelled, not erased. */
+  /* A purchase order with received items is history and is not erased. */
   async deleteOrder(id, context = {}) {
     try {
       const wall = this._wall(context);
@@ -313,12 +243,16 @@ class PurchaseOrderRepository extends BaseModel {
       const result = await collection.deleteOne({
         _id: new ObjectId(String(id)),
         ...wall,
-        status: 'draft',
+        items: { $not: { $elemMatch: { qty_received: { $gt: 0 } } } },
       });
       if (result.deletedCount !== 1) {
-        return { status: false, data: null, message: 'Only drafts can be deleted' };
+        return {
+          status: false,
+          data: null,
+          message: 'A purchase order with received items cannot be deleted',
+        };
       }
-      return { status: true, data: { deleted: 1 }, message: 'Draft deleted' };
+      return { status: true, data: { deleted: 1 }, message: 'Purchase order deleted' };
     } catch (error) {
       console.error('Error in PurchaseOrderRepository.deleteOrder:', error);
       return { status: false, data: null, message: error.message };

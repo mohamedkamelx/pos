@@ -698,11 +698,13 @@ function createOpenCodeRuntime({
   }
 
   function buildPrompt(conversation, message, attached, { full = false, currencySign = '' } = {}) {
-    /* A continuing OpenCode session already holds the conversation. Only a
-       fresh session (new topic, compaction, recovery) needs the memory block;
-       repeating it every turn duplicates context and makes the model work
-       against two copies of the same conversation. */
-    const block = full ? memory.contextFor(conversation, { full, message }) : '';
+    /* The live session is the model's transcript, but it is not a reliable
+       place to keep a decision: a compaction, a topic switch or a retry can
+       drop the message that carried the user's last answer. The compact
+       memory block is reference data, not a second transcript, and is cheap
+       enough to send on every turn. It is what keeps the current category and
+       settled answers from being asked for again. */
+    const block = memory.contextFor(conversation, { full, message });
     const notice = attachmentNotice(attached);
     return [
       block,
@@ -817,6 +819,8 @@ function createOpenCodeRuntime({
   }
 
   function pendingCorrection(pending, message) {
+    const answered = Array.isArray(pending.answers) ? pending.answers : [];
+    const category = pending.category && pending.category.name;
     return [
       '[Correction from Posnic]',
       'The user just answered your pending question. Continue that unfinished request; do not search, list products or change topic.',
@@ -824,6 +828,14 @@ function createOpenCodeRuntime({
       pending.note ? `Recorded draft: ${pending.note}` : '',
       pending.question ? `You asked: ${pending.question}` : '',
       pending.missing && pending.missing.length ? `Still missing: ${pending.missing.join(', ')}` : '',
+      answered.length
+        ? `Already answered for this request (settled; do not ask again): ${answered
+          .map((item) => `${item.question} -> ${item.answer}`)
+          .join('; ')}`
+        : '',
+      category
+        ? `Current category: ${category}${pending.category.id ? ` | id ${pending.category.id}` : ''}. Use it unless the user named another category; never ask for it again or create a near-duplicate.`
+        : '',
       `The user answered: ${String(message || '').trim()}`,
       'If every required value is known and the image and category questions were answered, call posnic_propose_plan now. If anything is still missing or unanswered, call posnic_ask_user once for all remaining items together; never split them into separate turns or ask again for what was answered. Never use 0 for a price or cost the user did not give.',
     ].filter(Boolean).join('\n');
@@ -838,10 +850,12 @@ function createOpenCodeRuntime({
   }
 
   function writeCorrection(pending, message) {
+    const category = pending && pending.category && pending.category.name;
     return [
       '[Correction from Posnic]',
       'The user asked you to add or change a shop record. Do not stop at search results, do not ask the user to repeat the request, and do not change topic. Continue that request now.',
       pending.text ? `Request: ${pending.text}` : '',
+      category ? `Current category: ${category}. Use it unless the user named another category.` : '',
       `The user just wrote: ${String(message || '').trim()}`,
       'Use the search results you already have. Do not search again.',
       'If the user already named a category, use the closest active category; never create a near-duplicate and never ask which category to use.',

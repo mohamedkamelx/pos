@@ -56,10 +56,12 @@ describe('item search migration', () => {
     expect(updates).toHaveLength(2);
     expect(updates[0].updateOne.update.$set.search_index_version).toBe(SEARCH_INDEX_VERSION);
     expect(updates[0].updateOne.update.$set.search_tokens).toContain('pepsi');
+    expect(updates[0].updateOne.update.$set.search_phonetics).toEqual(expect.any(Array));
     expect(updates[1].updateOne.update.$set.search_tokens).toContain('بيبسي');
     expect(indexes.map((entry) => entry.options.name)).toEqual([
       'item_search_tokens',
       'item_search_ngrams',
+      'item_search_phonetics',
     ]);
   });
 

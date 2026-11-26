@@ -18,6 +18,14 @@ function covers(font, point) {
   return false;
 }
 
+/*
+ * Select from the fonts bundled in the installer.
+ *
+ * Latin, Arabic, Hebrew and Thai are the supported receipt scripts. Noto Sans
+ * is always first so digits, punctuation and mixed-language lines keep one
+ * base face; another bundled face is added only when the receipt contains a
+ * code point it covers.
+ */
 function fontsFor(text) {
   const selected = new Set([fonts[0]]);
   for (const character of new Set(String(text))) {
@@ -26,16 +34,20 @@ function fontsFor(text) {
     const font = fonts.find(candidate => covers(candidate, point));
     if (font) selected.add(font);
   }
-  return [...selected];
+  return [...selected].filter(Boolean);
 }
 
 function family(font) { return 'Posnic' + font.family; }
 
+function fontPath(font) {
+  return font.path || path.join(__dirname, 'fonts', font.file);
+}
+
 function cssFor(selected) {
   return selected.map(font => {
-    const url = pathToFileURL(path.join(__dirname, 'fonts', font.file)).href;
+    const url = pathToFileURL(fontPath(font)).href;
     return `@font-face{font-family:${family(font)};src:url("${url}") format('truetype');font-weight:100 900;}`;
   }).join('\n');
 }
 
-module.exports = { fonts, covers, fontsFor, family, cssFor };
+module.exports = { fonts, covers, fontsFor, family, fontPath, cssFor };

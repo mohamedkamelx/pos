@@ -2043,6 +2043,23 @@ class ItemsController extends BaseController {
       const limitParam = parseInt(req.query.limit, 10);
       const limit = Number.isFinite(limitParam) && limitParam > 0 ? Math.min(limitParam, 100) : 20;
 
+      /* Context never narrows the result set - a product outside the open
+         category must still be reachable. It only breaks ties, so the
+         assistant can say "the other one" while a category is open and the
+         sale-screen search can prefer the shelf being looked at. */
+      const contextTerms = String(
+        req.query.context ?? req.query.context_terms ?? req.query.categoryContext ?? ''
+      )
+        .trim()
+        .slice(0, 240)
+        .split(/[,;|]+/)
+        .map((entry) => entry.trim())
+        .filter(Boolean)
+        .slice(0, 8);
+      const category = String(req.query.category ?? '')
+        .trim()
+        .slice(0, 160);
+
       /* service.searchItems(query, context) already existed - this route was
          the only thing missing. Scoped to the branch and licence so a cashier
          is offered stock they can actually sell. */
@@ -2050,6 +2067,8 @@ class ItemsController extends BaseController {
         branchId: this.model?.branchId || null,
         licenseId: this.model?.licenseId || null,
         limit,
+        contextTerms,
+        category,
       });
 
       if (result.status === true) {

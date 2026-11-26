@@ -72,7 +72,7 @@ test('printed purchase sheet keeps the supplier payment history under its total'
   const w = dom.window;
   w.$ = w.jQuery = require('jquery')(w);
   w.PosnicPro = {
-    purchaseorders: { statusLabel: (value) => String(value || '') },
+    purchaseorders: {},
     local: {
       get: (key) => {
         if (key === 'currencySign') return '$';

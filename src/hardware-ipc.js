@@ -1,4 +1,4 @@
-const { ipcMain: rawIpcMain, app, BrowserWindow } = require('electron');
+const { ipcMain: rawIpcMain, app, BrowserWindow, dialog } = require('electron');
 /*
  * Every handler below is registered through the guard, which refuses a message
  * from any frame that is not one of this application's own pages. See

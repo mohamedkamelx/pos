@@ -286,6 +286,7 @@ function createConversationMemoryStore({
       plans: [],
       clarifications: [],
       pendingRequest: null,
+      currentCategory: null,
       summary: '',
     };
     conversation.topics.push(topic);
@@ -376,18 +377,54 @@ function createConversationMemoryStore({
     }
   }
 
+  /* The category a conversation is working in is a decision, not a guess. It
+     is set when the user answers a category question and when a plan creates
+     or names one. Follow-up products inherit it, so the assistant never has to
+     ask "which category?" again after it was already answered. */
+  function setCurrentCategory(topic, name, id) {
+    const cleanName = cleanText(name, 160);
+    if (!topic || !cleanName) return;
+    topic.currentCategory = {
+      id: cleanText(id, 80) || (topic.currentCategory && topic.currentCategory.id) || '',
+      name: cleanName,
+      at: current(),
+    };
+  }
+
+  function matchingCategory(topic, answer) {
+    const value = normalise(answer);
+    if (!value) return null;
+    for (const category of topic.categories.values()) {
+      const name = normalise(category.name);
+      if (!name || name.length < 2) continue;
+      if (value === name || value.includes(name) || name.includes(value)) return category;
+    }
+    return null;
+  }
+
+  function isCategoryAnswer(item) {
+    return /(?:فئة|قسم|تصنيف|category)/i.test(item.question || '') ||
+      (Array.isArray(item.missing) &&
+        item.missing.some((missing) => /(?:category|فئة|قسم|تصنيف)/i.test(missing)));
+  }
+
   function addPlan(topic, plan) {
     if (!plan || !plan.id) return;
-    const steps = (Array.isArray(plan.steps) ? plan.steps : []).map((step) => ({
-      id: step.id,
-      action: step.action,
-      label: step.label,
-      target: step.target,
-      name: step.fields && step.fields.name,
-      before: step.before && step.before.name,
-      resultId: step.resultId,
-      resultName: step.resultName,
-    }));
+    const steps = (Array.isArray(plan.steps) ? plan.steps : []).map((step) => {
+      const fields = (step && step.fields) || {};
+      return {
+        id: step.id,
+        action: step.action,
+        label: step.label,
+        target: step.target,
+        name: fields.name,
+        before: step.before && step.before.name,
+        resultId: step.resultId,
+        resultName: step.resultName,
+        categoryName: typeof fields.category_name === 'string' ? fields.category_name : '',
+        categoryId: typeof fields.category_id === 'string' ? fields.category_id : '',
+      };
+    });
     const existing = topic.plans.find((item) => item.id === plan.id);
     const record = {
       id: plan.id,
@@ -416,6 +453,10 @@ function createConversationMemoryStore({
           id: step.resultId || `plan:${plan.id}:${step.id}`,
           name: step.resultName || step.name,
         });
+        setCurrentCategory(topic, step.resultName || step.name, step.resultId);
+      }
+      if (step.categoryName && step.action !== 'create_category') {
+        setCurrentCategory(topic, step.categoryName, step.categoryId);
       }
     }
   }
@@ -467,6 +508,23 @@ function createConversationMemoryStore({
     if (pending.status === 'answered') {
       pending.answer = cleanText(message, 200);
       pending.answeredAt = current();
+
+      if (isCategoryAnswer(pending) && pending.answer) {
+        const known = matchingCategory(topic, pending.answer);
+        setCurrentCategory(topic, known ? known.name : pending.answer, known ? known.id : '');
+      }
+
+      /* The old draft note was written before this answer and can still say
+         "category not set" or list a field that has just been supplied. The
+         answer and the original request are the truth now; keeping the stale
+         note makes the model ask again. */
+      if (topic.pendingRequest) {
+        topic.pendingRequest.note = '';
+        topic.pendingRequest.answers = topic.clarifications
+          .filter((item) => item.status === 'answered' && item.answer)
+          .slice(-6)
+          .map((item) => ({ question: item.question, answer: item.answer }));
+      }
     }
   }
 
@@ -475,7 +533,18 @@ function createConversationMemoryStore({
       const result = call && call.metadata && call.metadata.posnic;
       if (!result) continue;
       if (result.kind === 'product_search' || result.kind === 'product_list') {
-        for (const item of Array.isArray(result.results) ? result.results : []) addProduct(topic, item);
+        const results = Array.isArray(result.results) ? result.results : [];
+        for (const item of results) addProduct(topic, item);
+        /* One product points at one category. A long search result does not:
+           its first row may be a coincidence, not the shelf being discussed. */
+        if (results.length === 1 && results[0] && results[0].category) {
+          const known = matchingCategory(topic, results[0].category);
+          setCurrentCategory(
+            topic,
+            known ? known.name : results[0].category,
+            known ? known.id : '',
+          );
+        }
       } else if (result.kind === 'category_list') {
         for (const item of Array.isArray(result.categories) ? result.categories : []) addCategory(topic, item);
       } else if (result.kind === 'write_plan') {
@@ -522,6 +591,9 @@ function createConversationMemoryStore({
     const categories = [...topic.categories.values()].slice(-4);
     if (categories.length) {
       parts.push(`Categories: ${categories.map((category) => category.name).join(', ')}`);
+    }
+    if (topic.currentCategory && topic.currentCategory.name) {
+      parts.push(`Current category: ${topic.currentCategory.name}`);
     }
     if (topic.plans.length) {
       parts.push(`Plans: ${topic.plans.slice(-3).map((plan) => `${plan.id} ${plan.status}`).join(', ')}`);
@@ -605,6 +677,14 @@ function createConversationMemoryStore({
       GREETING_RE.test(normalised);
     const actionFollowUp = isActionFollowUp(message, previous);
     const newEntity = hasPhrase(message, NEW_ENTITY_PHRASES);
+    /* A category the user already settled belongs to this topic, not to one
+       product. Adding the next product is a continuation while that category
+       is current, otherwise the assistant forgets the shelf it was just told
+       about and asks again. An explicit topic change is handled above. */
+    const carriedCategory = !!(
+      previous && previous.currentCategory && previous.currentCategory.name &&
+      !newSignal && !backSignal
+    );
     const cancellation = isCancellation(message);
     const wasPending = !!(previous && previous.pendingRequest);
     /* The first create/update request also creates a pending draft. Only a
@@ -637,11 +717,11 @@ function createConversationMemoryStore({
       switched = true;
       resumed = true;
       reason = 'related';
-    } else if (newEntity) {
+    } else if (newEntity && !carriedCategory) {
       topic = createTopic(conversation, message);
       switched = true;
       reason = 'new';
-    } else if (actionFollowUp || pendingAnswer) {
+    } else if (actionFollowUp || pendingAnswer || (newEntity && carriedCategory)) {
       reason = 'follow-up';
     } else if (!continuation && !actionFollowUp && activeScore <= 0 && forms.size >= 2 &&
       !GREETING_RE.test(normalised)) {
@@ -750,11 +830,25 @@ function createConversationMemoryStore({
         : 'Request in progress (search first for a duplicate, then continue):');
       if (topic.pendingRequest.text) lines.push(`- Request: ${topic.pendingRequest.text}`);
       if (topic.pendingRequest.note) lines.push(`- Draft: ${topic.pendingRequest.note}`);
+      const settled = (Array.isArray(topic.pendingRequest.answers) ? topic.pendingRequest.answers : [])
+        .slice(-6);
+      if (settled.length) {
+        lines.push('Answered for this request (settled; never ask again):');
+        for (const item of settled) lines.push(`- ${item.question} -> ${item.answer}`);
+      }
       const waiting = [...topic.clarifications].reverse().find((item) => item.status === 'pending');
       if (waiting) lines.push(`- Waiting for the answer to: ${waiting.question}`);
       if (resumed) {
         lines.push('A short answer, including "مش مهم", answers this request. It is not a reason to search or change topic.');
       }
+    }
+
+    if (topic.currentCategory && topic.currentCategory.name) {
+      lines.push(
+        `Current category: ${topic.currentCategory.name}` +
+        (topic.currentCategory.id ? ` | id ${topic.currentCategory.id}` : '') +
+        '. Use it for follow-up products in this topic unless the user names another category. Do not ask for it again.',
+      );
     }
 
     const points = topic.points
@@ -899,6 +993,15 @@ function createConversationMemoryStore({
       asked: !!topic.pendingRequest.asked,
       question: waiting ? waiting.question : '',
       missing: waiting && Array.isArray(waiting.missing) ? waiting.missing.slice() : [],
+      answers: (Array.isArray(topic.pendingRequest.answers) ? topic.pendingRequest.answers : [])
+        .slice(-6)
+        .map((item) => ({ question: item.question, answer: item.answer })),
+      category: topic.currentCategory && topic.currentCategory.name
+        ? {
+            id: topic.currentCategory.id || '',
+            name: topic.currentCategory.name,
+          }
+        : null,
     };
   }
 
@@ -934,6 +1037,7 @@ function createConversationMemoryStore({
         plans: topic.plans,
         clarifications: topic.clarifications,
         pendingRequest: topic.pendingRequest,
+        currentCategory: topic.currentCategory,
       })),
     };
   }
