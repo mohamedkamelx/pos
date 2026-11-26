@@ -59,7 +59,9 @@ jobs:
 
       - name: Start the packaged application
         if: matrix.name == 'Linux'
-        run: node scripts/check-app-boots.js dist/linux-unpacked/posnic
+        run: |
+          command -v xvfb-run >/dev/null || { sudo apt-get update && sudo apt-get install -y xvfb; }
+          xvfb-run -a node scripts/check-app-boots.js dist/linux-unpacked
 
       - name: Generate artifact SBOMs
         run: node scripts/generate-release-sboms.js --dist dist

@@ -15,7 +15,7 @@
  * of failure that only appears once it is packaged - this is the same idea,
  * one step further: start it and wait for it to answer.
  *
- *   node scripts/check-app-boots.js [dist/win-unpacked]
+ *   node scripts/check-app-boots.js [dist/win-unpacked | dist/linux-unpacked]
  *
  * WHAT COUNTS AS BOOTED. The API the app serves on its own port. That is the
  * last thing to come up and everything before it has to have worked, so one
@@ -32,8 +32,10 @@ const os = require('os');
 const path = require('path');
 
 const ROOT = path.join(__dirname, '..');
-const target = process.argv[2] || path.join(ROOT, 'dist', 'win-unpacked');
-const exe = path.join(target, 'Posnic.exe');
+const target = process.argv[2] || path.join(ROOT, 'dist', process.platform === 'win32' ? 'win-unpacked' : 'linux-unpacked');
+const exe = fs.existsSync(target) && fs.statSync(target).isFile()
+  ? target
+  : path.join(target, process.platform === 'win32' ? 'Posnic.exe' : 'posnic');
 
 /* Long enough for a cold first boot on a slow machine - MongoDB has to create
    its data directory - and short enough that a hang is still a failed build
@@ -41,7 +43,10 @@ const exe = path.join(target, 'Posnic.exe');
 const BOOT_TIMEOUT_MS = Number(process.env.POSNIC_BOOT_TIMEOUT_MS || 180_000);
 const PORT = Number(process.env.POSNIC_APP_PORT || 5555);
 
-const logPath = path.join(os.homedir(), 'AppData', 'Roaming', 'posnic', 'app.log');
+const userData = process.platform === 'win32'
+  ? path.join(os.homedir(), 'AppData', 'Roaming', 'posnic')
+  : path.join(os.homedir(), '.config', 'posnic');
+const logPath = path.join(userData, 'app.log');
 
 const say = (m) => console.log(m);
 /*
@@ -208,7 +213,7 @@ child.on('exit', (code) => {
       ? [
         '',
         '    Exiting 0 within seconds usually means one of two things:',
-        '    ELECTRON_RUN_AS_NODE is set in this shell, which makes Posnic.exe',
+        '    ELECTRON_RUN_AS_NODE is set in this shell, which makes the app',
         '    run as plain Node; or another copy holds the single-instance lock.',
       ].join('\n')
       : '';
