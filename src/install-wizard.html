@@ -812,6 +812,7 @@
 <div class="form-group"><label for="qPassword">Password *</label><input type="password" id="qPassword" autocomplete="new-password" minlength="8" placeholder="Minimum 8 characters" required></div>
 <div class="form-group"><label for="qConfirmPassword">Confirm password *</label><input type="password" id="qConfirmPassword" autocomplete="new-password" placeholder="Re-enter password" required></div>
 </div>
+<div class="form-group"><label for="qBusinessType">Shop type</label><select id="qBusinessType"><option value="">Select shop type</option><option value="electronics">Electronics &amp; mobiles</option><option value="appliances">Home appliances</option><option value="supermarket">Supermarket &amp; grocery</option><option value="pharmacy">Pharmacy &amp; health</option><option value="beauty">Beauty &amp; cosmetics</option><option value="fashion">Fashion &amp; shoes</option><option value="home">Home &amp; furniture</option><option value="kids">Kids &amp; toys</option><option value="sports">Sports &amp; fitness</option><option value="auto">Auto parts</option><option value="pets">Pet supplies</option><option value="books">Books &amp; stationery</option><option value="gifts">Gifts &amp; flowers</option></select></div>
 <section class="setup-region" aria-labelledby="regionTitle">
 <h3 id="regionTitle">Location &amp; regional settings</h3>
 <p class="field-hint" id="qRegionHint">Check these details for your shop. Device suggestions can be changed.</p>
@@ -939,6 +940,26 @@
                     <div class="form-group">
                         <label>Store/Branch Name <span class="required">*</span></label>
                         <input type="text" id="branchName" name="branchName" required>
+                    </div>
+
+                    <div class="form-group">
+                        <label>Shop type</label>
+                        <select id="businessType" name="businessType">
+                            <option value="">Select shop type</option>
+                            <option value="electronics">Electronics &amp; mobiles</option>
+                            <option value="appliances">Home appliances</option>
+                            <option value="supermarket">Supermarket &amp; grocery</option>
+                            <option value="pharmacy">Pharmacy &amp; health</option>
+                            <option value="beauty">Beauty &amp; cosmetics</option>
+                            <option value="fashion">Fashion &amp; shoes</option>
+                            <option value="home">Home &amp; furniture</option>
+                            <option value="kids">Kids &amp; toys</option>
+                            <option value="sports">Sports &amp; fitness</option>
+                            <option value="auto">Auto parts</option>
+                            <option value="pets">Pet supplies</option>
+                            <option value="books">Books &amp; stationery</option>
+                            <option value="gifts">Gifts &amp; flowers</option>
+                        </select>
                     </div>
 
                     <div class="form-group">
@@ -1610,6 +1631,7 @@ const form = document.getElementById('installForm');
                 register_companyname: businessName,
                 register_address: address,
                 register_fullnumber: '',
+                businessType: document.getElementById('qBusinessType').value,
                 ...region,
                 register_license: qObjectId(),
                 db_username: 'posnic_admin',
@@ -2067,6 +2089,7 @@ const form = document.getElementById('installForm');
                 register_timezone: document.getElementById('timezone').value,
                 register_city: '',
                 register_pincode: '',
+                businessType: (document.getElementById('businessType') || {}).value || '',
                 register_license: generateObjectId(),
                 // Database security credentials
                 db_username: dbUsername,

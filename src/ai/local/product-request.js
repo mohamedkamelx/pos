@@ -182,7 +182,16 @@ const ARTICLE_RE = /^(?:a|an|the)\s+/iu;
    such as "New Balance" keeps its first word. Arabic "جديد" before a name is
    an adjective ("new iPhone") and is safely removed. */
 const NEW_WORD_RE = /^(?:(?:جديد|جديدة|جديده)(?:\s*[:،,.]?\s+|\s*$)|new\s+(?:product|item)\b|new\s*$)/iu;
-const CALLED_RE = /^(?:اسمه|اسمها|الاسم|اسم|called|named|name\s+is|name)\s+/iu;
+/* A labelled name: "الاسم: قهوة سادة", "سمّيها X", "called X". The label is
+   what tells a rename apart from an instruction, so the punctuation form has
+   to match too - "الاسم: X" never matched before and the rename was ignored. */
+const CALLED_RE = /^(?:اسمه|اسمها|الاسم|اسم|سمّيها|سميها|سمّيه|سميه|غيّر\s+الاسم|غيّر\s+اسم|rename|change\s+the\s+name|call\s+it|called|named|name\s+is|name)(?:\s*[:：\-–]\s*|\s+)/iu;
+
+/* An instruction is never a name. "لا خليه موبايل سامسونج" is a rename and
+   "حط السعر ٥٠" is a field: taking either as the product's name is how a
+   command became a field value. The labelled and quoted forms are handled
+   above; this catches the rest. */
+const IMPERATIVE_NAME_RE = /^(?:لا|ممنوع|منفعش|مش|متحطش|حط|خلي|خلّي|سيب|امسح|لغي|ألغي|الغي|عدّل|غيّر|أغير|أعمل|اسأل|جرب)\s+/iu;
 const QUOTED_NAME_RE = /["“”«»']([^"“”«»']{2,120})["“”«»']/u;
 /* "for 15000", "at 15000" and "ب 15000" are weak price labels. They are
    accepted only when another amount field proves this is a price sentence. */
@@ -1230,6 +1239,7 @@ function extractName(text, { stripPrice = null, narrative = null } = {}) {
   if (!value || isFillerName(value)) return '';
   if (looksNumericOnly(value)) return '';
   if (/^\d+(?:[.,]\d+)?$/.test(value)) return '';
+  if (IMPERATIVE_NAME_RE.test(value)) return '';
   if (/^(?:منتج|صنف|برودكت|product|item|جديد|جديدة|جديده|new|تاني|تانية|آخر|اخر|another|next)$/iu.test(value)) {
     return '';
   }

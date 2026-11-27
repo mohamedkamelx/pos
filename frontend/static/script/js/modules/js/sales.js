@@ -724,7 +724,7 @@ PosnicPro.sales = {
                 html += '<tr class="md-row sales-row highlight-select' + (self._openDocId === String(r._id) ? ' is-active' : '') + '"'
                     + ' data-id="' + esc(r._id) + '" style="cursor:pointer;">'
                     + '<td>' + esc(r.sales_id) + '</td>'
-                    + '<td>' + esc(r.customer_name || 'Walk-in') + '</td>'
+                    + '<td>' + esc(r.customer_name || PosnicPro.i18n.t('lang_walk_in_customer', 'Walk-in customer')) + '</td>'
                     + '<td>' + esc(r.sold_by || '—') + '</td>'
                     + '<td class="sl-col-date">' + esc(historyTime ? PosnicPro.convertDate(historyTime) : '-') + '</td>'
                     + '<td class="text-right sl-col-items">' + esc(r.number_of_items != null ? r.number_of_items : (r.items || []).length) + '</td>'
@@ -873,7 +873,7 @@ PosnicPro.sales = {
             + '<div class="q-status" data-status="' + (cancelled ? 'cancelled' : /return/i.test(proc) ? 'returned' : unpaid ? 'unpaid' : 'paid') + '">' + esc(stamp) + '</div>'
             + '</div>';
         var billto = '<div class="q-billto"><div class="q-label"><lang class="lang_bill_to_2">Bill To</lang></div>'
-            + '<div class="q-cust">' + esc(d.customer_name || 'Walk-in customer') + '</div>'
+            + '<div class="q-cust">' + esc(d.customer_name || PosnicPro.i18n.t('lang_walk_in_customer', 'Walk-in customer')) + '</div>'
             + (real(d.customer_phone) ? '<div class="q-muted">Phone: ' + esc(d.customer_phone) + '</div>' : '')
             + (real(d.customer_email) ? '<div class="q-muted">' + esc(d.customer_email) + '</div>' : '')
             + '</div>';
@@ -5408,7 +5408,7 @@ PosnicPro.sales.recentMenu = {
                         if (when) { meta.push(when); }
                         listHtml += '<div class="rs-row highlight-select" id="recent_sales_table_row_' + id + '">' +
                             '<div class="rs-main">' +
-                            '<div class="rs-cust">' + esc(params.customer_name || 'Walk-in') + '</div>' +
+                            '<div class="rs-cust">' + esc(params.customer_name || PosnicPro.i18n.t('lang_walk_in_customer', 'Walk-in customer')) + '</div>' +
                             '<div class="rs-meta">' + meta.join(' &middot; ') + '</div>' +
                             '</div>' +
                             '<div class="rs-side">' +
@@ -5793,7 +5793,7 @@ PosnicPro.sales.parkedMenu = {
             $(rows).each(function (i, r) {
                 var waited = PosnicPro.sales.parkedAgo(r.parked_at);
                 html += '<tr>' +
-                    '<td>' + esc(r.customer_name || 'Walk-in') + '<br><small class="text-muted">' + esc(r.sales_id || '') + '</small></td>' +
+                    '<td>' + esc(r.customer_name || PosnicPro.i18n.t('lang_walk_in_customer', 'Walk-in customer')) + '<br><small class="text-muted">' + esc(r.sales_id || '') + '</small></td>' +
                     '<td class="text-center">' + esc(r.number_of_items) + '</td>' +
                     '<td class="text-center">' + currency + '&nbsp;' + Number(r.total_amount || 0).toFixed(2) + '</td>' +
                     '<td class="text-center"><span class="parked-ago' + (waited.stale ? ' stale' : '') + '" title="' + esc(waited.exact) + '">' + esc(waited.text) + '</span></td>' +
@@ -7268,7 +7268,7 @@ PosnicPro.sales.setCustomerPopup = function (open, returnFocus) {
     $('#sales_customer_btn').attr('aria-expanded', String(open));
     if (open) {
         $('#sales_customer_search').prop('hidden', true);
-        $('#sales_customer_detail_name').text($('#sales_new_customer_name').val() || 'Walk-in customer');
+        $('#sales_customer_detail_name').text($('#sales_new_customer_name').val() || PosnicPro.i18n.t('lang_walk_in_customer', 'Walk-in customer'));
         $('#sales_customer_status').text($('#sales_new_customer_id').val() ? '' : 'New customer will be saved with the sale.');
         $('#sales_new_customer_phone').trigger('focus');
     } else {

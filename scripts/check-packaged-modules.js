@@ -49,14 +49,26 @@ function scan(rel) {
   if (!fs.existsSync(abs)) return;
   const src = fs.readFileSync(abs, 'utf8');
 
-  // require('./thing') and require('./dir/thing') - relative, so it is ours.
-  // Resolved against the REQUIRING file's directory: the shell lives in src/,
-  // so src/main.js requiring './ipc-guard' means src/ipc-guard.js.
-  for (const m of src.matchAll(/require\(\s*['"](\.\/[A-Za-z0-9_./-]+)['"]\s*\)/g)) {
+  // require('./thing'), require('../thing') and require('./dir/thing') -
+  // relative, so it is ours. Both ./ and ../ count: a require that climbs out
+  // of src/ (or out of the package entirely) is exactly the kind that dies on
+  // a customer machine while working from source. Resolved against the
+  // REQUIRING file's directory: src/main.js requiring './ipc-guard' means
+  // src/ipc-guard.js.
+  for (const m of src.matchAll(/require\(\s*['"](\.\.?\/[A-Za-z0-9_./-]+)['"]\s*\)/g)) {
     const dir = path.posix.dirname(rel.replace(/\\/g, '/'));
     let target = path.posix.join(dir, m[1]);
     if (target.endsWith('.jsc')) target = target.replace(/\.jsc$/, '.js');
-    if (!/\.[a-z]+$/.test(target)) target += '.js';
+    if (!/\.[a-z]+$/.test(target)) {
+      // A bare require may name a directory with an index.js, the way
+      // require('../reference') resolves to src/ai/reference/index.js.
+      if (!fs.existsSync(path.join(ROOT, target + '.js')) &&
+        fs.existsSync(path.join(ROOT, target, 'index.js'))) {
+        target = target + '/index.js';
+      } else {
+        target += '.js';
+      }
+    }
     // extraResources cover files loaded by absolute path at runtime, not these.
     if (!isPackaged(target)) {
       missing.push({ from: rel, needs: target, exists: fs.existsSync(path.join(ROOT, target)) });

@@ -6,11 +6,27 @@
     var resizeObserver;
     var refreshTimer;
     var cartObserver;
+    /*
+     * The sale is saved: the success card has replaced the payment card and
+     * setDefaults is about to empty the cart. Repainting now would replace
+     * the bill the cashier just approved with an empty one, so keep the
+     * finished preview until the sidebar closes.
+     */
+    function saleComplete() {
+        return $('#newsalespage').is(':visible');
+    }
+    function canRefresh() {
+        return $('#tender_receipt_preview').is(':visible') && !saleComplete();
+    }
     function refreshVisible() {
-        if (!$('#tender_receipt_preview').is(':visible')) return;
+        if (!canRefresh()) return;
         ++revision; // Invalidate an older response as soon as the cart changes.
         clearTimeout(refreshTimer);
-        refreshTimer = setTimeout(function () { PosnicPro.tenderReceipt.show(); }, 120);
+        refreshTimer = setTimeout(function () {
+            // A change queued just before Save must not repaint the empty cart.
+            if (!canRefresh()) return;
+            PosnicPro.tenderReceipt.show();
+        }, 120);
     }
     function watchCart() {
         $(document).off('.tenderReceiptFresh').on('input.tenderReceiptFresh change.tenderReceiptFresh',
@@ -279,6 +295,7 @@
         rawData: rawData,
         mountRaw: mountRaw,
         show: function () {
+            if (saleComplete()) return;
             clearTimeout(refreshTimer);
             watchCart();
             var current = ++revision;
@@ -293,13 +310,13 @@
             box.empty().append(message).show();
             $('#tender_amount_list').hide();
             function failed() {
-                if (current !== revision) { return; }
+                if (current !== revision || saleComplete()) { return; }
                 box.empty().append($('<button type="button" class="btn btn-link">')
                     .text(PosnicPro.i18n.t('lang_preview_unavailable_retry', 'Preview unavailable. Retry')).on('click', PosnicPro.tenderReceipt.show));
                 $('#tender_amount_list').show();
             }
             PosnicPro.get({ url: 'branches/getOneStore', data: 'id=' + encodeURIComponent(PosnicPro.local.get('branch_id_set')) }, function (response) {
-                if (current !== revision) { return; }
+                if (current !== revision || saleComplete()) { return; }
                 if (!response || response.type !== 'success' || !response.data) { failed(); return; }
                 var branch = response.data;
                 var layout = branch.print_type === 'a4' ? 'a4' : (['58', '80', '112'].indexOf(branch.print_width) !== -1 ? branch.print_width : '80');
@@ -313,14 +330,14 @@
                             paperWidth: layout,
                             symbolGlyphs: PosnicPro.local.get('receipt_symbol_glyphs') !== 'false'
                         }).then(function (doc) {
-                            if (current !== revision) { return; }
+                            if (current !== revision || saleComplete()) { return; }
                             mountRaw(box, doc, layout);
                         }).catch(failed);
                     } catch (error) { failed(); }
                     return;
                 }
                 (designed || branch.receipt_designs ? $.Deferred().resolve('').promise() : styles(layout)).then(function (css) {
-                    if (current !== revision) { return; }
+                    if (current !== revision || saleComplete()) { return; }
                     try {
                         var data = cartData(branch);
                         mount(box, documentFor(branch, data, layout), css, layout);

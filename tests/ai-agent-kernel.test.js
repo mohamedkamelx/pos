@@ -75,6 +75,36 @@ test('a field settled by a clicked option is not listed as missing again', () =>
   assert.doesNotMatch(after.card, /Missing:/);
 });
 
+/* A decline is not an answer. It empties an optional field, but a required one
+   stays on the Missing line so the model may ask once more - the card must not
+   demand a price nobody will give, and the plan must not be built without one
+   either. */
+test('a declined required value stays missing', () => {
+  const kernel = createTaskKernel();
+  const pending = {
+    kind: 'create_product',
+    stage: 'collecting',
+    draft: { kind: 'create_product', name: 'كاتل', sellingPrice: 10 },
+    answers: [{
+      question: 'إيه السعر؟',
+      answer: 'بدون',
+      decision: { slot: 'price', kind: 'none', value: '', label: 'بدون' },
+    }],
+  };
+
+  const after = observeMessage(kernel, 'عدل سعر المنتج ده', { pending });
+  assert.match(after.card, /Missing: selling_price/);
+
+  /* And a value that arrives later still clears it. */
+  pending.answers.push({
+    question: 'إيه السعر؟',
+    answer: '50',
+    decision: { slot: 'price', kind: 'value', value: '50' },
+  });
+  const answered = observeMessage(kernel, 'عدل سعر المنتج ده', { pending });
+  assert.doesNotMatch(answered.card, /Missing:/);
+});
+
 test('an image-only edit asks for a chat attachment, not an attachment id', () => {
   const kernel = createTaskKernel();
   const { card } = observeMessage(kernel, 'غير صورة المنتج', {

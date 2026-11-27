@@ -155,6 +155,7 @@ async function compileUpdate(intent, {
   pending,
   attachments,
   userText,
+  memory,
   kernel,
 }) {
   const fieldsWanted = (intent.requestedFields || []).filter((field) => field !== 'image');
@@ -258,6 +259,7 @@ async function compileUpdate(intent, {
     sessionID: conversationId,
     attachments,
     userText,
+    lookups: { knownIds: knownIdsFor(memory, conversationId) },
   });
   if (!validated.ok) return { fallback: true };
   return { plan: validated.plan };
@@ -270,6 +272,7 @@ async function compileAdjust(intent, {
   pending,
   attachments,
   userText,
+  memory,
   kernel,
 }) {
   const targetQuery = clean(intent.query) ||
@@ -346,6 +349,7 @@ async function compileAdjust(intent, {
     sessionID: conversationId,
     attachments,
     userText,
+    lookups: { knownIds: knownIdsFor(memory, conversationId) },
   });
   if (!validated.ok) return { fallback: true };
   return { plan: validated.plan };
@@ -376,6 +380,16 @@ async function compileCreateCategory(intent, {
   });
   if (!validated.ok) return { fallback: true };
   return { plan: validated.plan };
+}
+
+/* The allow-list for raw id targets: the same interface on both paths, ids
+   this conversation has seen. The compiler normally targets a name it just
+   resolved, but an id that arrives in a field must pass the same test the
+   assistant's plan does. */
+function knownIdsFor(memory, conversationId) {
+  return memory && typeof memory.knownIds === 'function'
+    ? memory.knownIds(conversationId)
+    : null;
 }
 
 function currentCategoryFor(pending, memory, conversationId) {
@@ -566,7 +580,7 @@ async function compileMulti(intent, {
     sessionID: conversationId,
     attachments,
     userText,
-    lookups: { currentCategory: current },
+    lookups: { currentCategory: current, knownIds: knownIdsFor(memory, conversationId) },
   });
   if (!validated.ok) return { fallback: true };
   return { plan: validated.plan };

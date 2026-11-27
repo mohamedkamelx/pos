@@ -2,6 +2,7 @@
 
 const {
   editDistance,
+  editVariants,
   expandQuery,
   nameSimilarity,
   phoneticKey,
@@ -9,6 +10,7 @@ const {
   scoreNameMatch,
   smartRegexPattern,
 } = require('../../../src/utils/smart-name-search');
+const { buildSearchIndex, scoreSearchCandidate } = require('../../../src/utils/item-search-index');
 
 describe('smart name search', () => {
   describe('edit distance', () => {
@@ -95,6 +97,48 @@ describe('smart name search', () => {
       expect(phoneticKey('شرب')).toHaveLength(4);
       expect(phoneticKey('صابون')).not.toBe(phoneticKey('soup'));
     });
+
+    test('reaches an Arabic brand name from its English spelling', () => {
+      expect(expandQuery('ايفون').forms).toContain('iphone');
+      expect(scoreNameMatch('ايفون', 'iPhone 15')).toBeGreaterThanOrEqual(0.8);
+    });
+
+    test('adds Norvig-style one-edit candidates', () => {
+      expect(editVariants('ipohne')).toContain('iphone');
+      expect(editVariants('pepse')).toContain('peps');
+      expect(expandQuery('samsungh').phonetics).toContain(phoneticKey('samsung'));
+    });
+  });
+
+  describe('candidate scoring', () => {
+    const document = (name) => ({ name, ...buildSearchIndex({ name }) });
+
+    test('matches a prefix and a transposed typo in English', () => {
+      const iphone = document('iPhone 15 8GB RAM 32GB');
+      expect(scoreSearchCandidate(iphone, 'iph', expandQuery('iph'))).toBeGreaterThan(0);
+      expect(scoreSearchCandidate(iphone, 'ipohne', expandQuery('ipohne'))).toBeGreaterThan(0);
+    });
+
+    test('matches a prefix and a spelling slip in Arabic', () => {
+      const washer = document('غسالة توشيبا 8 كيلو');
+      expect(scoreSearchCandidate(washer, 'غس', expandQuery('غس'))).toBeGreaterThan(0);
+      expect(scoreSearchCandidate(washer, 'غسالا', expandQuery('غسالا'))).toBeGreaterThan(0);
+    });
+
+    test('matches a semi word in English and Arabic', () => {
+      expect(scoreSearchCandidate(document('Pepsi 1L'), 'pep', expandQuery('pep'))).toBeGreaterThan(
+        0
+      );
+      expect(
+        scoreSearchCandidate(document('بيبسي 1 لتر'), 'بيب', expandQuery('بيب'))
+      ).toBeGreaterThan(0);
+    });
+
+    test('finds an iPhone by its Arabic brand name', () => {
+      expect(
+        scoreSearchCandidate(document('iPhone 15 8GB RAM 32GB'), 'ايفون', expandQuery('ايفون'))
+      ).toBeGreaterThan(0);
+    });
   });
 
   describe('safe pattern', () => {
@@ -103,6 +147,12 @@ describe('smart name search', () => {
       expect(pattern.test('غسالات 8')).toBe(false);
       expect(pattern.test('غساله 8')).toBe(true);
       expect(smartRegexPattern('.*')).toBe('(?!)');
+    });
+
+    test('does not emit JavaScript unicode escapes that MongoDB PCRE2 rejects', () => {
+      const pattern = smartRegexPattern('غسالة 8');
+      expect(pattern).not.toMatch(/\\u[0-9a-f]{4}/i);
+      expect(pattern).toContain('\u064B');
     });
   });
 });

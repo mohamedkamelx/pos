@@ -67,6 +67,12 @@ function makeMemory({
     currentCategory() {
       return currentCategory;
     },
+    /* Strict on purpose: the compiler targets a name it resolved itself, so
+       a locally compiled plan must validate even against an allow-list that
+       accepts nothing - the id path is the assistant's, not the compiler's. */
+    knownIds() {
+      return { has: () => false };
+    },
   };
 }
 

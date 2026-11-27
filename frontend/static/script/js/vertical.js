@@ -23,7 +23,8 @@
             dashboard: /^#\/dashboard(?:\/|$)/.test(hash),
             sell: /^#\/sales\/new(?:\/|$)/.test(hash),
             items: /^#\/items(?:\/|$)/.test(hash),
-            customers: /^#\/customers(?:\/|$)/.test(hash)
+            customers: /^#\/customers(?:\/|$)/.test(hash),
+            ai: /^#\/ai(?:\/|$)/.test(hash)
         };
         var any = false;
         $.each(matches, function (tab, on) {

@@ -387,6 +387,35 @@ test('visible preview refreshes current customer and totals, rejecting an older 
     dom.window.close();
 });
 
+test('a completed sale keeps the approved preview instead of repainting an empty bill', async () => {
+    const { dom, win, $, branch, preview } = till();
+    $('body').append('<input id="sales_new_customer_name" value="Customer">' +
+        '<div id="newsalespage" style="display:none"></div>');
+    $.expr.pseudos.visible = (el) => el.id === 'tender_receipt_preview' ||
+        (el.id === 'newsalespage' && el.style.display !== 'none');
+    branch.receipt_designs = { defaultFormat: '80' };
+    let requests = 0;
+    win.PosnicPro.get = (_request, done) => { requests++; done({ type: 'success', data: branch }); };
+    win.PosnicPro.receiptDesigner = { render() { return '<section>Bill</section>'; } };
+    preview.show();
+    assert.equal(requests, 1);
+    // A refresh queued just before Save must not land on the empty cart.
+    $('#sales_new_customer_name').val('Customer 2').trigger('change');
+    $('#newsalespage').css('display', '');
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(requests, 1, 'a queued refresh repainted the approved preview');
+    // setDefaults empties the cart while the success card is on screen.
+    $('#sales_new_customer_name').val('').trigger('change');
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(requests, 1, 'completed sale repainted the approved preview');
+    // The next tender card must follow its new cart again.
+    $('#newsalespage').css('display', 'none');
+    $('#sales_new_customer_name').val('Next customer').trigger('change');
+    await new Promise(resolve => setTimeout(resolve, 200));
+    assert.equal(requests, 2);
+    dom.window.close();
+});
+
 test('Sale Summary uses the designed receipt when the branch has no saved design', async () => {
     const { dom, win, $, branch, preview } = till();
     delete branch.receipt_designs;

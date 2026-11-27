@@ -6,6 +6,7 @@ const router = express.Router();
 
 // Import all route files
 const activityLogRoutes = require('./activity-logs.routes');
+const aiRoutes = require('./ai.routes');
 const authRoutes = require('./auth.routes');
 const authUtilsRoutes = require('./auth-utils.routes');
 const baseRoutes = require('./base.routes');
@@ -58,6 +59,7 @@ const { enforceApiKeyAcl } = require('../middleware/api-key');
 router.use(enforceApiKeyAcl);
 
 // Mount routes with consistent naming
+router.use('/ai', aiRoutes);
 router.use('/activity-logs', activityLogRoutes);
 router.use('/auth', authRoutes);
 router.use('/auth-utils', authUtilsRoutes);

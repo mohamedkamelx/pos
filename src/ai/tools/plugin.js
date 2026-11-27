@@ -18,7 +18,12 @@ const { formatForModel: formatHelp, searchHelp } = require('./help');
 const { askUser, formatForModel: formatAsk } = require('./ask-user');
 const { recallConversation, formatForModel: formatRecall } = require('./recall');
 const { validatePlan } = require('../actions/plan-schema');
-const { presentClarification } = require('../ask-slots');
+const {
+  normaliseSlot,
+  presentClarification,
+  slotFromFields,
+  slotFromQuestion,
+} = require('../ask-slots');
 
 const TOOL_NAMES = [
   'posnic_search_products',
@@ -95,6 +100,20 @@ function createPosnicToolPlugin({
     }
   }
 
+  /* The model may act on an id in the very turn it read it, while memory only
+     records a turn when it closes. Remember what a read tool returned right
+     away, so the plan allow-list contains it by the time a plan is written. */
+  function noteSeenFrom(context, result) {
+    if (!memory || typeof memory.noteSeen !== 'function' || !result) return;
+    const session = sessionContext(store, context);
+    const conversationId = session && (session.conversationId || session.sessionID);
+    if (!conversationId) return;
+    const rows = result.kind === 'category_list'
+      ? (Array.isArray(result.categories) ? result.categories : [])
+      : (Array.isArray(result.results) ? result.results : []);
+    if (rows.length) memory.noteSeen(conversationId, rows);
+  }
+
   async function executeSearch(input, context) {
     const ready = apiFor(context);
     if (ready.error) return ready.error;
@@ -102,6 +121,7 @@ function createPosnicToolPlugin({
     if (result.kind === 'error') {
       log(`[AI tool] product search failed: ${result.code}`);
     }
+    noteSeenFrom(context, result);
     return textResult(result, formatProducts);
   }
 
@@ -112,6 +132,7 @@ function createPosnicToolPlugin({
     if (result.kind === 'error') {
       log(`[AI tool] product list failed: ${result.code}`);
     }
+    noteSeenFrom(context, result);
     return textResult(result, formatProductList);
   }
 
@@ -122,6 +143,7 @@ function createPosnicToolPlugin({
     if (result.kind === 'error') {
       log(`[AI tool] category list failed: ${result.code}`);
     }
+    noteSeenFrom(context, result);
     return textResult(result, formatCategories);
   }
 
@@ -134,11 +156,52 @@ function createPosnicToolPlugin({
      unrelated optional value produces compound options such as "no category,
      without a photo", and the operator's click then has to be re-read as
      prose - which is how a decline became a category name. Reject the shape
-     instead of letting one button carry two decisions. */
-  function askGate(input) {
+     instead of letting one button carry two decisions.
+
+     It may also not ask again for something this conversation already
+     decided. The prompt's ask-once sentence was the only defence before, and
+     a model that missed it asked for the same price twice. That check runs
+     before the options check, because the option-less number card is a second
+     question just as much as one with buttons. A decline is different from an
+     answer: an optional field stays settled-empty, a required one may be asked
+     for once more, and a second decline is the end of it. */
+  function askGate(input, pending) {
     const options = Array.isArray(input && input.options) ? input.options : [];
-    if (!options.length) return null;
     const missing = Array.isArray(input.missing) ? input.missing.filter(Boolean) : [];
+    /* The same derivation the card itself uses, so a question whose slot was
+       inferred from its wording is recognised as the same field. */
+    const slot = normaliseSlot(input && input.slot) || slotFromFields(missing) ||
+      slotFromQuestion(input && input.question);
+    if (slot) {
+      const answers = pending && Array.isArray(pending.answers) ? pending.answers : [];
+      const decided = new Map();
+      const declines = new Map();
+      for (const item of answers) {
+        const decision = item && item.decision;
+        if (!decision || !decision.slot) continue;
+        decided.set(decision.slot, decision.kind);
+        if (decision.kind === 'none') {
+          declines.set(decision.slot, (declines.get(decision.slot) || 0) + 1);
+        }
+      }
+      const kind = decided.get(slot);
+      const optional = slot === 'image';
+      const status = pending && pending.draft && pending.draft.image && pending.draft.image.status;
+      const imageDecided = slot === 'image' && (status === 'attached' || status === 'none');
+      if ((kind && (kind !== 'none' || optional)) || imageDecided) {
+        return {
+          code: 'ask_already_answered',
+          message: `The ${slot} has already been decided in this conversation. Use that decision instead of asking for it again; only a required value the operator declined may be asked for once more.`,
+        };
+      }
+      if ((declines.get(slot) || 0) >= 2) {
+        return {
+          code: 'ask_declined_twice',
+          message: `The operator declined the ${slot} twice. Do not ask for it again: report the plan as blocked instead.`,
+        };
+      }
+    }
+    if (!options.length) return null;
     if (missing.length > 1) {
       return {
         code: 'ask_missing_split',
@@ -168,13 +231,13 @@ function createPosnicToolPlugin({
   }
 
   async function executeAsk(input, context) {
-    const gate = askGate(input);
-    if (gate) return errorResult(gate.code, gate.message);
     const session = sessionContext(store, context);
     const conversationId = session && (session.conversationId || session.sessionID);
     const pending = conversationId && memory && typeof memory.pendingRequest === 'function'
       ? memory.pendingRequest(conversationId)
       : null;
+    const gate = askGate(input, pending);
+    if (gate) return errorResult(gate.code, gate.message);
     const result = askUser(input, {
       pendingText: pending && pending.text,
       pendingNote: pending && pending.note,
@@ -234,6 +297,11 @@ function createPosnicToolPlugin({
         lookups: {
           currentCategory: memory && typeof memory.currentCategory === 'function'
             ? memory.currentCategory(conversationId)
+            : null,
+          /* A raw id target is accepted only from this set: records this
+             conversation actually saw. A name resolves through the shop. */
+          knownIds: memory && typeof memory.knownIds === 'function'
+            ? memory.knownIds(conversationId)
             : null,
         },
       });

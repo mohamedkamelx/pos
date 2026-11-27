@@ -3977,6 +3977,633 @@ test('a clicked choice settles the question by its ids and carries the record it
   assert.equal(memory.pendingRequest(conversation).question, '');
 });
 
+/* An answer that carries card ids but decides nothing must leave the question
+   alone. Otherwise a click from a card the operator is no longer looking at,
+   or a value tagged with the wrong slot, retires the live card while deciding
+   nothing - a dead card and a flow that never moves again. */
+test('a click that decides nothing leaves the live card open', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  let clock = 1000;
+  const memory = createConversationMemoryStore({ now: () => clock++ });
+  const conversation = 'conv-unusable-click';
+
+  memory.beginTurn(conversation, 'ضيف منتج جديد');
+  memory.completeTurn(conversation, 'إيه اسم المنتج؟', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        id: 'c_live2',
+        slot: 'target',
+        action: 'record',
+        question: 'إيه اسم المنتج؟',
+        missing: ['name'],
+        options: [
+          {
+            id: 'o1',
+            label: 'Pepsi 1L',
+            value: 'Pepsi 1L',
+            none: false,
+            action: 'record',
+            record: { entity: 'product', id: 'item-9' },
+          },
+          { id: 'o2', label: 'إسم تاني', value: 'new', none: true, action: '', record: null },
+        ],
+      },
+    },
+  }]);
+
+  /* The words match an option exactly, but the ids belong to a card that no
+     longer exists. The live question must survive it. */
+  memory.beginTurn(conversation, 'Pepsi 1L', {
+    answer: { clarificationId: 'c_gone', optionId: 'o1' },
+  });
+  assert.equal(memory.pendingRequest(conversation).question, 'إيه اسم المنتج؟');
+
+  /* The live card still works afterwards. */
+  memory.beginTurn(conversation, 'Pepsi 1L', {
+    answer: { clarificationId: 'c_live2', optionId: 'o1' },
+  });
+  const settled = memory.pendingRequest(conversation);
+  assert.equal(settled.question, '');
+  assert.equal(settled.answers[settled.answers.length - 1].decision.id, 'item-9');
+});
+
+/* The question's own slot is the authority: a value tagged with a slot the
+   card never asked for decides nothing, and a value tagged with the right slot
+   settles exactly that field. */
+test('a value tagged with another slot settles nothing', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  let clock = 1000;
+  const memory = createConversationMemoryStore({ now: () => clock++ });
+  const conversation = 'conv-slot-mismatch';
+
+  memory.beginTurn(conversation, 'ضيف منتج خلاط');
+  memory.completeTurn(conversation, 'إيه السعر؟', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        id: 'c_price1',
+        slot: 'price',
+        action: 'number',
+        question: 'إيه السعر؟',
+        missing: ['price'],
+        options: [{ id: 'o1', label: '50', value: '50', none: false, action: '', record: null }],
+      },
+    },
+  }]);
+
+  memory.beginTurn(conversation, 'التكلفة 50', {
+    answer: { clarificationId: 'c_price1', optionId: '', slot: 'cost', value: '50' },
+  });
+  assert.equal(memory.pendingRequest(conversation).question, 'إيه السعر؟');
+
+  memory.beginTurn(conversation, '50', {
+    answer: { clarificationId: 'c_price1', optionId: '', slot: 'price', value: '50' },
+  });
+  const settled = memory.pendingRequest(conversation);
+  assert.equal(settled.question, '');
+  assert.equal(settled.answers[settled.answers.length - 1].decision.slot, 'price');
+  assert.equal(settled.answers[settled.answers.length - 1].decision.value, '50');
+});
+
+/* Two questions can be pending at once. The click settles the card it names
+   and leaves the other one open - matching only the newest card would kill
+   the wrong question. */
+test('a click settles the card it names when two questions are pending', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  let clock = 1000;
+  const memory = createConversationMemoryStore({ now: () => clock++ });
+  const conversation = 'conv-two-cards';
+
+  memory.beginTurn(conversation, 'ضيف منتج جديد');
+  memory.completeTurn(conversation, 'إيه اسم المنتج؟', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        id: 'c_first',
+        slot: 'target',
+        action: 'record',
+        question: 'إيه اسم المنتج؟',
+        missing: ['name'],
+        options: [
+          {
+            id: 'o1',
+            label: 'Pepsi 1L',
+            value: 'Pepsi 1L',
+            none: false,
+            action: 'record',
+            record: { entity: 'product', id: 'item-9' },
+          },
+          { id: 'o2', label: 'إسم تاني', value: 'new', none: true, action: '', record: null },
+        ],
+      },
+    },
+  }]);
+
+  /* A second question arrives while the first card is still open. */
+  memory.beginTurn(conversation, 'إيه الفئة؟');
+  memory.completeTurn(conversation, 'إيه الفئة؟', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        id: 'c_second',
+        slot: 'category',
+        action: 'record',
+        question: 'إيه الفئة؟',
+        missing: ['category'],
+        options: [
+          {
+            id: 'o1',
+            label: 'Drinks',
+            value: 'Drinks',
+            none: false,
+            action: 'record',
+            record: { entity: 'category', id: 'cat-1' },
+          },
+        ],
+      },
+    },
+  }]);
+  assert.equal(memory.pendingRequest(conversation).question, 'إيه الفئة؟');
+
+  memory.beginTurn(conversation, 'Pepsi 1L', {
+    answer: { clarificationId: 'c_first', optionId: 'o1' },
+  });
+
+  const pending = memory.pendingRequest(conversation);
+  assert.equal(pending.question, 'إيه الفئة؟', 'the newer card was retired by the older click');
+  const settledFirst = pending.answers.find((item) => item.decision && item.decision.id === 'item-9');
+  assert.ok(settledFirst, 'the card that was clicked was not settled');
+  assert.equal(settledFirst.decision.kind, 'record');
+});
+
+/* Ids are minted by the system and must never repeat: two cards minted in the
+   same millisecond would share an id, and a click on one would settle the
+   other. */
+test('clarification ids never collide', () => {
+  const { mintClarificationId } = require(path.join(ROOT, 'src/ai/ask-slots'));
+  const ids = new Set();
+  for (let index = 0; index < 500; index += 1) ids.add(mintClarificationId());
+  assert.equal(ids.size, 500);
+});
+
+/* A card may only name a record the operator has just seen, written the way
+   they saw it. An older search's label travels as words, two rows the same
+   name are not a name at all, and only a question about records may name one. */
+test('a record id is joined from the latest search only, and never when ambiguous', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  let clock = 1000;
+  const memory = createConversationMemoryStore({ now: () => clock++ });
+  const conversation = 'conv-record-join';
+  const search = (rows) => [{
+    metadata: { posnic: { kind: 'product_search', query: 'x', results: rows } },
+  }];
+
+  memory.beginTurn(conversation, 'دوّر على كحك');
+  memory.completeTurn(conversation, 'لقيت كحك العيد', search([
+    { id: 'item-1', name: 'كحك العيد' },
+    { id: 'item-2', name: 'كحك السفر' },
+  ]));
+
+  /* The latest search's rows resolve, whatever spelling was used for them. */
+  assert.deepEqual(memory.recordFor(conversation, 'كحك  العيد', 'target'),
+    { entity: 'product', id: 'item-1' });
+  assert.deepEqual(memory.recordFor(conversation, 'كحك السَّفَر', 'target'),
+    { entity: 'product', id: 'item-2' });
+
+  /* A label from an older search travels as words instead. */
+  memory.beginTurn(conversation, 'دوّر على قهوة');
+  memory.completeTurn(conversation, 'لقيت قهوة سادة', search([
+    { id: 'item-9', name: 'قهوة سادة' },
+  ]));
+  assert.equal(memory.recordFor(conversation, 'كحك العيد', 'target'), null);
+  assert.deepEqual(memory.recordFor(conversation, 'قهوة سادة', 'target'),
+    { entity: 'product', id: 'item-9' });
+
+  /* Two rows folding to one name are ambiguous, not first-wins. */
+  memory.beginTurn(conversation, 'دوّر على مياه');
+  memory.completeTurn(conversation, 'لقيت مياه', search([
+    { id: 'item-3', name: 'مياه معدنية' },
+    { id: 'item-4', name: 'مياه معدنيه' },
+  ]));
+  assert.equal(memory.recordFor(conversation, 'مياه معدنية', 'target'), null);
+
+  /* Only a question about records may name one: a value slot is a value. */
+  assert.equal(memory.recordFor(conversation, 'مياه معدنية', 'price'), null);
+  assert.equal(memory.recordFor(conversation, 'مياه معدنية', ''), null);
+});
+
+/* The vocabulary is closed and matched exactly, so a field it does not name
+   is never aliased to a near one: wholesale price is a selling price, not
+   "the price", and min_stock is not "the quantity". An unknown field simply
+   stays missing instead of being decided by the wrong question. */
+test('a field outside the slot vocabulary is never aliased to a near one', () => {
+  const { normaliseSlot, slotFromFields } = require(path.join(ROOT, 'src/ai/ask-slots'));
+  assert.equal(slotFromFields(['wholesale_price']), '');
+  assert.equal(slotFromFields(['min_stock']), '');
+  assert.equal(normaliseSlot('wholesale price'), '');
+  assert.equal(slotFromFields(['cost_price']), 'cost');
+  assert.equal(slotFromFields(['selling_price']), 'price');
+});
+
+/* The slot has to survive the round trip: the card declares it, memory stores
+   it, and the click that comes back with the card's own payload decides that
+   exact field. Nothing derives the slot a second time from wording. */
+test('a card built by the system settles the slot it declared', () => {
+  const { presentClarification } = require(path.join(ROOT, 'src/ai/ask-slots'));
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  let clock = 1000;
+  const memory = createConversationMemoryStore({ now: () => clock++ });
+  const conversation = 'conv-round-trip';
+
+  const card = presentClarification({
+    kind: 'clarify',
+    slot: 'price',
+    question: 'إيه السعر؟',
+    missing: ['price'],
+    options: [{ label: '50', value: '50' }],
+  });
+  assert.equal(card.slot, 'price');
+  assert.equal(card.options[0].id, 'o1');
+
+  memory.beginTurn(conversation, 'ضيف منتج خلاط');
+  memory.completeTurn(conversation, card.question, [{ metadata: { posnic: card } }]);
+
+  /* The option click, exactly as the page sends it. */
+  memory.beginTurn(conversation, '50', {
+    answer: { clarificationId: card.id, optionId: card.options[0].id },
+  });
+  let pending = memory.pendingRequest(conversation);
+  assert.equal(pending.question, '');
+  assert.equal(pending.answers[pending.answers.length - 1].decision.slot, 'price');
+
+  /* And the typed number, with the slot the card itself declared. */
+  memory.completeTurn(conversation, card.question, [{ metadata: { posnic: card } }]);
+  memory.beginTurn(conversation, '75', {
+    answer: { clarificationId: card.id, optionId: '', slot: card.slot, value: '75' },
+  });
+  pending = memory.pendingRequest(conversation);
+  const decision = pending.answers[pending.answers.length - 1].decision;
+  assert.equal(decision.slot, 'price');
+  assert.equal(decision.value, '75');
+});
+
+/* A plan may name a record by id only when this conversation was shown that
+   record. The search tool's own ids count immediately - before the turn
+   closes, because the model acts on them in the same turn - an id the model
+   produced on its own is refused at creation, and a name still resolves
+   through the shop exactly as before. */
+test('a plan target id must be one this conversation has seen', async (t) => {
+  const { createContextStore } = require(path.join(ROOT, 'src/ai/tools/context'));
+  const { createPosnicToolPlugin } = require(path.join(ROOT, 'src/ai/tools/plugin'));
+  const { createUserProfileStore } = require(path.join(ROOT, 'src/ai/user-profile'));
+  const { createPlanStore } = require(path.join(ROOT, 'src/ai/actions/plan-store'));
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  const profileDir = fs.mkdtempSync(path.join(os.tmpdir(), 'posnic-profile-'));
+  t.after(() => fs.rmSync(profileDir, { recursive: true, force: true }));
+
+  const seenId = '66f1c2a4e1b2c3d4e5f60718';
+  const unseenId = '66f1c2a4e1b2c3d4e5f60719';
+  const item = {
+    id: seenId,
+    name: 'جزمة حمراء',
+    selling_price: 500,
+    available_quantity: 12,
+    track_inventory: true,
+  };
+
+  const store = createContextStore();
+  store.set('session-1', {
+    apiBaseUrl: 'http://127.0.0.1:5555/',
+    token: 'jwt-session',
+    branchId: 'branch-9',
+    username: 'admin',
+    conversationId: 'conv-targets',
+  });
+
+  const memory = createConversationMemoryStore();
+  memory.beginTurn('conv-targets', 'دوّر على جزمة');
+
+  const plugin = createPosnicToolPlugin({
+    store,
+    profileStore: createUserProfileStore({ dir: profileDir }),
+    planStore: createPlanStore(),
+    memory,
+    attachments: { describe: () => ({ ok: true, attachments: [] }) },
+    logger: () => {},
+    fetchImpl: async (urlString) => {
+      const url = new URL(urlString);
+      if (url.pathname === '/api/items/search') {
+        return response(200, { data: { total: 1, list: [item] } });
+      }
+      if (url.pathname === '/api/items/' + seenId) return response(200, { data: item });
+      if (url.pathname === '/api/items/' + unseenId) {
+        return response(200, { data: { ...item, id: unseenId, name: 'حذاء أسود' } });
+      }
+      return response(200, { data: [] });
+    },
+  });
+
+  const tools = [];
+  await plugin.setup({
+    tool: {
+      async transform(callback) {
+        callback({ add: (tool) => tools.push(tool), list: () => tools });
+        return { dispose: async () => {} };
+      },
+    },
+  });
+  const byName = Object.fromEntries(tools.map((tool) => [tool.name, tool]));
+
+  /* The search's own id is targetable right away, in the same turn. */
+  const search = await byName.posnic_search_products.execute(
+    { query: 'جزمة' },
+    { sessionID: 'session-1' },
+  );
+  assert.equal(search.metadata.posnic.count, 1);
+
+  const updatePlan = (target) => ({
+    steps: [{ id: 'p1', action: 'update_product', target, fields: { selling_price: 525 } }],
+  });
+
+  const seen = await byName.posnic_propose_plan.execute(updatePlan(seenId), { sessionID: 'session-1' });
+  assert.equal(seen.metadata.posnic.kind, 'write_plan',
+    seen.content && seen.content[0] && seen.content[0].text);
+  assert.equal(seen.metadata.posnic.plan.steps[0].target, seenId);
+  assert.equal(seen.metadata.posnic.plan.steps[0].targetName, 'جزمة حمراء');
+
+  /* An id nothing showed this conversation is refused before it is fetched. */
+  const unseen = await byName.posnic_propose_plan.execute(updatePlan(unseenId), { sessionID: 'session-1' });
+  assert.equal(unseen.metadata.posnic.kind, 'error');
+  assert.equal(unseen.metadata.posnic.code, 'unknown_target');
+
+  /* The same id folded in from fields.product_id becomes the target, so it
+     is checked the same way instead of slipping past as a field. */
+  const folded = await byName.posnic_propose_plan.execute({
+    steps: [{ id: 'p1', action: 'update_product', fields: { product_id: unseenId, selling_price: 525 } }],
+  }, { sessionID: 'session-1' });
+  assert.equal(folded.metadata.posnic.kind, 'error');
+  assert.equal(folded.metadata.posnic.code, 'unknown_target');
+});
+
+/* An id the operator pasted is part of the conversation just as much as one
+   a tool returned; an id nobody showed is not. */
+test('an id the operator pasted is targetable and a longer hex run is not claimed', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  const memory = createConversationMemoryStore({ now: () => 1000 });
+  const pasted = '66f1c2a4e1b2c3d4e5f60718';
+
+  memory.beginTurn('conv-paste', `شوف المنتج ${pasted} وسعره`);
+  const known = memory.knownIds('conv-paste');
+  assert.equal(known.has(pasted), true);
+  assert.equal(known.has(pasted.toUpperCase()), true);
+  assert.equal(known.has('66f1c2a4e1b2c3d4e5f60719'), false);
+
+  /* A 32-character hex run is one string, not two ids: neither window counts. */
+  memory.beginTurn('conv-hexrun', 'الكود 66f1c2a4e1b2c3d4e5f6071866f1c2a4');
+  const runKnown = memory.knownIds('conv-hexrun');
+  assert.equal(runKnown.has('66f1c2a4e1b2c3d4e5f60718'), false);
+  assert.equal(runKnown.has('66f1c2a4e1b2c3d4e5f6071866f1c2a4'), false);
+});
+
+/* The plan preview names the record it was approved against. If the live
+   record no longer carries that name it changed after the preview, and the
+   executor refuses instead of writing to a record the operator never saw. */
+test('execution refuses a record whose name changed after the preview', async () => {
+  const { executePlan } = require(path.join(ROOT, 'src/ai/actions/plan-executor'));
+
+  const api = {
+    async get(pathname) {
+      if (pathname === 'items/66f1c2a4e1b2c3d4e5f60718') {
+        return { data: { _id: '66f1c2a4e1b2c3d4e5f60718', name: 'حذاء أسود' } };
+      }
+      throw new Error(`unexpected GET ${pathname}`);
+    },
+    async put() {
+      throw new Error('the write must not happen');
+    },
+  };
+
+  const plan = {
+    id: 'plan-rename',
+    warnings: [],
+    steps: [{
+      id: 'p1',
+      action: 'update_product',
+      status: 'pending',
+      target: '66f1c2a4e1b2c3d4e5f60718',
+      targetName: 'جزمة حمراء',
+      fields: { selling_price: 525 },
+    }],
+  };
+  const executed = await executePlan(plan, { api, sessionID: 'conv-rename' });
+  assert.equal(executed.steps[0].status, 'failed');
+  assert.match(executed.steps[0].message, /changed since the preview/);
+});
+
+/* One number rule, one file: the page reads the operator's digits with the
+   same function the server validates with, so the bubble, the preview and
+   the stored answer can never disagree about what was entered. */
+test('numbers are read the same way by the card and the server', () => {
+  const { parseNumberInput } = require(path.join(
+    ROOT, 'frontend/static/script/js/core/numeric-input'));
+  const cases = [
+    ['٧٥', '75'],            // Arabic-Indic digits
+    ['۵۰', '50'],            // Persian digits
+    ['٣٫٥', '3.5'],          // Arabic decimal separator
+    ['١٬٥٠٠', '1500'],       // Arabic thousands separator
+    ['1,500', '1500'],       // English thousands
+    ['1.500', '1.500'],      // a dot on its own is a decimal
+    [' 42 ', '42'],
+    ['1,234.56', '1234.56'],
+    ['1.234,56', '1234.56'],
+    ['abc', null],
+    ['-5', null],
+    ['', null],
+  ];
+  for (const [raw, want] of cases) {
+    const parsed = parseNumberInput(raw);
+    assert.equal(parsed.ok ? parsed.value : null, want, JSON.stringify(raw));
+  }
+});
+
+/* The slot vocabulary decides what is a number, and barcode and sku are
+   never it: their leading zeros are part of the value. */
+test('only the slots whose card shows a field are numeric', () => {
+  const { NUMERIC_SLOTS, SLOT_ACTIONS } = require(path.join(ROOT, 'src/ai/ask-slots'));
+  assert.deepEqual([...NUMERIC_SLOTS].sort(), ['cost', 'price', 'quantity']);
+  assert.equal(NUMERIC_SLOTS.has('barcode'), false);
+  assert.equal(NUMERIC_SLOTS.has('sku'), false);
+  for (const slot of NUMERIC_SLOTS) assert.equal(SLOT_ACTIONS[slot], 'number');
+});
+
+/* The server has the last word on a number: the canonical Latin string is
+   stored, and a value the normaliser cannot read settles nothing - the card
+   stays pending and can still be answered. */
+test('a numeric answer is stored canonical and an unreadable one settles nothing', () => {
+  const { presentClarification } = require(path.join(ROOT, 'src/ai/ask-slots'));
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  let clock = 1000;
+  const memory = createConversationMemoryStore({ now: () => clock++ });
+  const conversation = 'conv-numbers';
+
+  const card = presentClarification({
+    kind: 'clarify',
+    slot: 'price',
+    question: 'إيه السعر؟',
+    missing: ['price'],
+    options: [],
+  });
+  memory.beginTurn(conversation, 'ضيف منتج');
+  memory.completeTurn(conversation, card.question, [{ metadata: { posnic: card } }]);
+
+  memory.beginTurn(conversation, '٧٥', {
+    answer: { clarificationId: card.id, optionId: '', slot: card.slot, value: '٧٥' },
+  });
+  let pending = memory.pendingRequest(conversation);
+  const decision = pending.answers[pending.answers.length - 1].decision;
+  assert.equal(decision.slot, 'price');
+  assert.equal(decision.value, '75');
+  assert.equal(pending.question, '');
+  const answeredSoFar = pending.answers.length;
+
+  /* An unreadable value settles nothing: the question stays pending. */
+  const second = presentClarification({
+    kind: 'clarify',
+    slot: 'price',
+    question: 'إيه السعر؟',
+    missing: ['price'],
+    options: [],
+  });
+  memory.completeTurn(conversation, second.question, [{ metadata: { posnic: second } }]);
+  memory.beginTurn(conversation, 'abc', {
+    answer: { clarificationId: second.id, optionId: '', slot: second.slot, value: 'abc' },
+  });
+  pending = memory.pendingRequest(conversation);
+  assert.equal(pending.answers.length, answeredSoFar);
+  assert.equal(pending.question, second.question);
+
+  /* And the live card still takes a good answer. */
+  memory.beginTurn(conversation, '90', {
+    answer: { clarificationId: second.id, optionId: '', slot: second.slot, value: '90' },
+  });
+  pending = memory.pendingRequest(conversation);
+  const settled = pending.answers[pending.answers.length - 1].decision;
+  assert.equal(settled.value, '90');
+});
+
+/* The id is time plus counter plus a random tail. With the clock frozen and
+   the random stubbed, only the counter differs - which is exactly what proves
+   two cards minted in the same instant can never share an id, so a click on
+   one can never settle the other. */
+test('the counter alone separates ids minted in the same instant', () => {
+  const { mintClarificationId } = require(path.join(ROOT, 'src/ai/ask-slots'));
+  const realNow = Date.now;
+  const realRandom = Math.random;
+  Date.now = () => 1700000000000;
+  Math.random = () => 0.25;
+  try {
+    const first = mintClarificationId();
+    const second = mintClarificationId();
+    const stamp = `c${(1700000000000).toString(36)}`;
+    const tail = (0.25).toString(36).slice(2, 8);
+    assert.ok(first.startsWith(stamp), first);
+    assert.ok(second.startsWith(stamp), second);
+    assert.ok(first.endsWith(tail) && second.endsWith(tail), `${first} / ${second}`);
+    /* Everything except the counter is identical between the two ids. */
+    assert.equal(
+      first.slice(0, stamp.length) + first.slice(-tail.length),
+      second.slice(0, stamp.length) + second.slice(-tail.length),
+    );
+    assert.notEqual(first, second);
+  } finally {
+    Date.now = realNow;
+    Math.random = realRandom;
+  }
+});
+
+/* A newer question supersedes the older one, but the older card stays on
+   screen. A click naming it must settle that card's slot and leave the live
+   question pending; then the live card must still take its own answer. */
+test('a click on the superseded card settles that card and leaves the live one open', () => {
+  const { presentClarification } = require(path.join(ROOT, 'src/ai/ask-slots'));
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  let clock = 1000;
+  const memory = createConversationMemoryStore({ now: () => clock++ });
+  const conversation = 'conv-two-cards';
+
+  const older = presentClarification({
+    kind: 'clarify',
+    slot: 'price',
+    question: 'إيه السعر؟',
+    missing: ['price'],
+    options: [{ label: '٥٠', value: '50' }],
+  });
+  const newer = presentClarification({
+    kind: 'clarify',
+    slot: 'cost',
+    question: 'إيه التكلفة؟',
+    missing: ['cost'],
+    options: [{ label: '٣٠', value: '30' }],
+  });
+  assert.notEqual(older.id, newer.id);
+
+  memory.beginTurn(conversation, 'ضيف منتج جديد');
+  memory.completeTurn(conversation, older.question, [{ metadata: { posnic: older } }]);
+  memory.completeTurn(conversation, newer.question, [{ metadata: { posnic: newer } }]);
+
+  /* The payload is the one the card sends: ids only, never wording. */
+  memory.beginTurn(conversation, older.options[0].label, {
+    answer: { clarificationId: older.id, optionId: older.options[0].id },
+  });
+  let pending = memory.pendingRequest(conversation);
+  assert.equal(pending.question, newer.question, 'the live card must stay open');
+  const decided = pending.answers[pending.answers.length - 1].decision;
+  assert.equal(decided.slot, 'price');
+  assert.equal(decided.value, '50');
+
+  /* And the live card still works afterwards. */
+  memory.beginTurn(conversation, newer.options[0].label, {
+    answer: { clarificationId: newer.id, optionId: newer.options[0].id },
+  });
+  pending = memory.pendingRequest(conversation);
+  assert.equal(pending.question, '');
+  const settled = pending.answers[pending.answers.length - 1].decision;
+  assert.equal(settled.slot, 'cost');
+  assert.equal(settled.value, '30');
+});
+
+/* An upload answers a picture question that is still open, and never
+   overwrites one that was already decided - the draft is what the plan reads. */
+test('an upload answers an open image question and never overwrites a decided one', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  let clock = 1000;
+  const memory = createConversationMemoryStore({ now: () => clock++ });
+  const conversation = 'conv-image-unset';
+
+  memory.beginTurn(conversation, 'ضيف منتج خلاط');
+  memory.noteDraft(conversation, { kind: 'create_product', name: 'خلاط' });
+  memory.noteImage(conversation, 'pending', []);
+  assert.deepEqual(memory.pendingRequest(conversation).draft.image, {
+    status: 'pending',
+    attachmentIds: [],
+  });
+
+  /* The question was open, so this upload is its answer. */
+  memory.noteImage(conversation, 'attached', ['att-1'], { onlyIfUnset: true });
+  assert.deepEqual(memory.pendingRequest(conversation).draft.image, {
+    status: 'attached',
+    attachmentIds: ['att-1'],
+  });
+
+  /* It is decided now: a later upload is not offered to the same request. */
+  memory.noteImage(conversation, 'attached', ['att-9'], { onlyIfUnset: true });
+  assert.deepEqual(memory.pendingRequest(conversation).draft.image, {
+    status: 'attached',
+    attachmentIds: ['att-1'],
+  });
+});
+
 /* The image answer is written to the draft the plan is built from, so the
    picture is asked for once and only an attached image reaches the plan. */
 test('an image choice writes the draft image status the plan reads', () => {
@@ -4456,6 +5083,150 @@ test('the recall tool searches only this conversation memory', async () => {
   );
   assert.equal(otherConversation.metadata.posnic.kind, 'conversation_recall');
   assert.deepEqual(otherConversation.metadata.posnic.topics, []);
+});
+
+/* One option set may not ask again for something this conversation already
+   decided. The prompt's ask-once sentence was the only defence before, and a
+   model that missed it asked for the same price twice. A decline is not an
+   answer: a required value may be asked for once more, an optional one may
+   not. */
+test('a question whose value is already decided is refused instead of asked again', async () => {
+  const { createPosnicToolPlugin } = require(path.join(ROOT, 'src/ai/tools/plugin'));
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  const { createContextStore } = require(path.join(ROOT, 'src/ai/tools/context'));
+
+  const store = createContextStore();
+  const sessions = [
+    { id: 'session-decided', conversation: 'conv-decided' },
+    { id: 'session-declined', conversation: 'conv-declined' },
+    { id: 'session-twice', conversation: 'conv-twice' },
+    { id: 'session-no-image', conversation: 'conv-no-image' },
+  ];
+  for (const entry of sessions) {
+    store.set(entry.id, {
+      apiBaseUrl: 'http://127.0.0.1:5555',
+      token: 'jwt-session',
+      branchId: 'branch-9',
+      username: 'admin',
+      conversationId: entry.conversation,
+    });
+  }
+
+  const memory = createConversationMemoryStore({ now: () => 1000 });
+  const card = (id, slot, options) => [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        id,
+        slot,
+        question: 'سؤال',
+        missing: [slot],
+        options,
+      },
+    },
+  }];
+
+  /* The price was answered. */
+  memory.beginTurn('conv-decided', 'ضيف منتج خلاط');
+  memory.completeTurn('conv-decided', 'إيه السعر؟', card('c_decided', 'price', [
+    { id: 'o1', label: '50', value: '50', none: false, action: '', record: null },
+  ]));
+  memory.beginTurn('conv-decided', '50', {
+    answer: { clarificationId: 'c_decided', optionId: 'o1' },
+  });
+
+  /* The image was declined. */
+  memory.beginTurn('conv-no-image', 'ضيف منتج خلاط');
+  memory.completeTurn('conv-no-image', 'صورة المنتج؟', card('c_no_image', 'image', [
+    { id: 'o1', label: 'أرفق صورة', value: 'attach', none: false, action: 'attach', record: null },
+    { id: 'o2', label: 'بدون صورة', value: 'none', none: true, action: '', record: null },
+  ]));
+  memory.beginTurn('conv-no-image', 'بدون صورة', {
+    answer: { clarificationId: 'c_no_image', optionId: 'o2' },
+  });
+
+  /* A required value declined twice: the model must stop asking and report
+     the plan as blocked, or the operator is asked forever. */
+  memory.beginTurn('conv-twice', 'ضيف منتج خلاط');
+  memory.completeTurn('conv-twice', 'إيه السعر؟', card('c_twice_1', 'price', [
+    { id: 'o1', label: 'بدون سعر', value: 'none', none: true, action: '', record: null },
+  ]));
+  memory.beginTurn('conv-twice', 'بدون سعر', {
+    answer: { clarificationId: 'c_twice_1', optionId: 'o1' },
+  });
+  memory.completeTurn('conv-twice', 'إيه السعر؟', card('c_twice_2', 'price', [
+    { id: 'o1', label: 'من غير سعر', value: 'none', none: true, action: '', record: null },
+  ]));
+  memory.beginTurn('conv-twice', 'من غير سعر', {
+    answer: { clarificationId: 'c_twice_2', optionId: 'o1' },
+  });
+
+  const plugin = createPosnicToolPlugin({
+    store,
+    memory,
+    planStore: { add: () => {} },
+    attachments: { describe: () => ({ ok: true, attachments: [] }) },
+    logger: () => {},
+  });
+  const tools = [];
+  await plugin.setup({
+    tool: {
+      async transform(callback) {
+        callback({ add: (tool) => tools.push(tool), list: () => tools });
+        return { dispose: async () => {} };
+      },
+    },
+  });
+  const ask = tools.find((tool) => tool.name === 'posnic_ask_user');
+  assert.ok(ask);
+
+  const repeated = await ask.execute({
+    question: 'إيه السعر؟',
+    options: [{ label: '75', value: '75' }],
+    missing: ['price'],
+  }, { sessionID: 'session-decided' });
+  assert.equal(repeated.metadata.posnic.kind, 'error');
+  assert.equal(repeated.metadata.posnic.code, 'ask_already_answered');
+
+  /* The option-less number card is a second question just as much: it used to
+     slip past the gate because the gate returned early with no options. */
+  const repeatedNumber = await ask.execute({
+    question: 'إيه السعر الجديد؟',
+    missing: ['price'],
+  }, { sessionID: 'session-decided' });
+  assert.equal(repeatedNumber.metadata.posnic.kind, 'error');
+  assert.equal(repeatedNumber.metadata.posnic.code, 'ask_already_answered');
+
+  const repeatedImage = await ask.execute({
+    question: 'صورة المنتج؟',
+    options: [{ label: 'أرفق صورة', value: 'attach' }],
+    missing: ['image'],
+  }, { sessionID: 'session-no-image' });
+  assert.equal(repeatedImage.metadata.posnic.kind, 'error');
+  assert.equal(repeatedImage.metadata.posnic.code, 'ask_already_answered');
+
+  /* A declined required value is still missing, so it may be asked once more. */
+  memory.beginTurn('conv-declined', 'ضيف منتج خلاط');
+  memory.completeTurn('conv-declined', 'إيه السعر؟', card('c_declined', 'price', [
+    { id: 'o1', label: 'بدون سعر', value: 'none', none: true, action: '', record: null },
+  ]));
+  memory.beginTurn('conv-declined', 'بدون سعر', {
+    answer: { clarificationId: 'c_declined', optionId: 'o1' },
+  });
+  const declinedThenAsked = await ask.execute({
+    question: 'إيه السعر؟',
+    options: [{ label: '75', value: '75' }],
+    missing: ['price'],
+  }, { sessionID: 'session-declined' });
+  assert.equal(declinedThenAsked.metadata.posnic.kind, 'clarify');
+
+  const twiceDeclined = await ask.execute({
+    question: 'إيه السعر؟',
+    options: [{ label: '75', value: '75' }],
+    missing: ['price'],
+  }, { sessionID: 'session-twice' });
+  assert.equal(twiceDeclined.metadata.posnic.kind, 'error');
+  assert.equal(twiceDeclined.metadata.posnic.code, 'ask_declined_twice');
 });
 
 test('the runtime separates topics, keeps memory and recovers from a provider error', async (t) => {

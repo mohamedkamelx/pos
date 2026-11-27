@@ -15,6 +15,26 @@ const path = require('path');
 const recoveryCodes = require('../utils/recovery-codes');
 const { WALK_IN_NAME, GENERAL_SUPPLIER_NAME } = require('../utils/default-parties');
 
+/*
+ * The shop type chosen on the registration form. A cloud signup sends
+ * `businessType`; the local setup may omit it. Store one short value, or a
+ * comma-separated list when the form allows more than one choice. The
+ * assistant reads this later to keep its category vocabulary relevant.
+ */
+function storeTypeFromInstall(data) {
+  const value = data && (data.businessType !== undefined ? data.businessType : data.business_type);
+  if (Array.isArray(value)) {
+    return value
+      .map((entry) => String(entry == null ? '' : entry).trim())
+      .filter(Boolean)
+      .join(', ')
+      .slice(0, 80);
+  }
+  return String(value == null ? '' : value)
+    .trim()
+    .slice(0, 80);
+}
+
 /**
  * Install Service
  * Contains business logic for installation operations
@@ -504,6 +524,7 @@ class InstallService {
     const branchData = {
       theme: DEFAULTS.THEME,
       branch_name: data.register_companyname.trim(),
+      business_type: storeTypeFromInstall(data),
       store_address: (data.register_address || '').trim(),
       store_email: data.register_useremail.trim(),
       store_telephone: (data.register_fullnumber || '').trim(),

@@ -69,7 +69,7 @@ const TXT = "[A-Z][A-Za-z0-9 #&;.,!?()/:%-]{1,90}";
 const isWords = (t) => /[A-Za-z]{2,}/.test(t) && !/[{}'"+`]/.test(t);
 /* Ternaries that pick a VALUE, not a label: a select's option value, an order
    type the API stores, an HTTP method, a date format, a CSV export cell. */
-const DENY = new Set(['Add|Edit', 'Received|Open', 'Partial|Received', 'Active|Inactive', 'PUT|POST',
+const DENY = new Set(['Add|Edit', 'Received|Open', 'Partial|Received', 'Active|Inactive', 'PUT|POST', 'GET|POST',
   'FullReturn|PartialReturn', 'PartialReturn|FullReturn', 'MM/DD/YYYY|DD/MM/YYYY',
   /* PosnicPro.alert picks its ICON from the heading - 'Information' and
      'Alert' mean info, anything else is used as the class name itself and

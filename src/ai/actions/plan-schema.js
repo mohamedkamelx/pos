@@ -604,6 +604,12 @@ async function validatePlan(raw, {
         name: cleanText(preloaded.currentCategory.name, 200),
       }
     : null;
+  /* The allow-list for raw id targets. Absent means the caller has no memory
+     to consult (a unit test, an older caller) and the id path is unchecked,
+     exactly as it was; the assistant and the compiler both pass it. */
+  const knownIds = preloaded.knownIds && typeof preloaded.knownIds.has === 'function'
+    ? preloaded.knownIds
+    : null;
   if (!api || typeof api.get !== 'function') {
     return error('configuration_error', 'The shop data service is not available.');
   }
@@ -791,6 +797,18 @@ async function validatePlan(raw, {
         }
         const targetID = id(targetText);
         if (targetID) {
+          /* An id is legitimate only when this conversation was shown that
+             record - a model must not name a record nobody discussed, and a
+             preview cannot warn about a target it never expected. A name still
+             resolves through the shop below, so nothing an operator said has
+             to change. Ids folded in from fields.product_id land here too. */
+          if (knownIds && !knownIds.has(targetID)) {
+            return error(
+              'unknown_target',
+              `Step "${stepID}" targets a record this conversation has not seen. ` +
+              'Search for it first, or use the product or category name from the search result.',
+            );
+          }
           step.target = targetID;
         } else {
           const resolveTarget = actionName === 'update_category'
@@ -1064,6 +1082,10 @@ async function validatePlan(raw, {
           const current = await fetchItem(api, step.target);
           if (!current) return error('not_found', 'That product was not found in this branch.');
           step.before = beforeProduct(current);
+          /* The name this plan was made against, from the record itself: the
+             executor re-reads it before writing and refuses if the record it
+             finds is no longer the one that was previewed. */
+          step.targetName = cleanText(current.name, 200);
         } catch (caught) {
           if (caught.code === 'not_found') return error('not_found', 'That product was not found in this branch.');
           return error(caught.code || 'request_failed', caught.message || 'The product could not be loaded.');
@@ -1204,6 +1226,7 @@ async function validatePlan(raw, {
           const current = await fetchCategory(api, step.target);
           if (!current) return error('not_found', 'That category was not found in this branch.');
           step.before = beforeCategory(current);
+          step.targetName = cleanText(current.name, 200);
         } catch (caught) {
           if (caught.code === 'not_found') return error('not_found', 'That category was not found in this branch.');
           return error(caught.code || 'request_failed', caught.message || 'The category could not be loaded.');
@@ -1222,6 +1245,7 @@ async function validatePlan(raw, {
           const current = await fetchItem(api, step.target);
           if (!current) return error('not_found', 'That product was not found in this branch.');
           step.before = beforeProduct(current);
+          step.targetName = cleanText(current.name, 200);
         } catch (caught) {
           if (caught.code === 'not_found') return error('not_found', 'That product was not found in this branch.');
           return error(caught.code || 'request_failed', caught.message || 'The product could not be loaded.');

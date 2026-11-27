@@ -94,6 +94,20 @@ function sameNumber(left, right) {
   return Math.abs(number(left) - number(right)) < 0.005;
 }
 
+/* The plan named its target by the name the record carried when the operator
+   approved it. If the live record no longer carries that name it was renamed
+   after the preview: refuse rather than write to a record the operator never
+   saw. A step with no recorded name (an older plan, a target that is a
+   reference to an earlier step in this same plan) has nothing to check. */
+function assertSameTarget(step, name) {
+  const expected = cleanText(step && step.targetName, 200);
+  if (!expected) return;
+  const actual = cleanText(name, 200);
+  if (actual && !sameText(actual, expected)) {
+    throw new Error('This record changed since the preview was made. Review the change again.');
+  }
+}
+
 function imageRows(images) {
   return (Array.isArray(images) ? images : []).map((image) => ({
     name: cleanText(image && image.name, 300),
@@ -301,6 +315,7 @@ async function executeStep(step, { api, attachments, sessionID, results, registe
        restore what is there at execution time. */
     const current = await fetchCategory(api, target);
     if (!current) throw new Error('The category was not found in this branch.');
+    assertSameTarget(step, current.name);
     const restore = {
       name: cleanText(current.name, 200),
       description: cleanText(current.description, 1000),
@@ -355,6 +370,7 @@ async function executeStep(step, { api, attachments, sessionID, results, registe
   if (step.action === 'update_product') {
     const current = await fetchItem(api, target);
     if (!current) throw new Error('The product was not found in this branch.');
+    assertSameTarget(step, current.name);
     const before = step.before || {
       name: current && current.name,
       images: Array.isArray(current && current.multi_image) ? current.multi_image.length : 0,
@@ -402,6 +418,7 @@ async function executeStep(step, { api, attachments, sessionID, results, registe
        ran - restoring a preview-time number would put sold units back. */
     const before = await fetchItem(api, target);
     if (!before) throw new Error('The product was not found in this branch.');
+    assertSameTarget(step, before.name);
     const expected = expectedStock(before, fields);
     const response = await api.post('items/stockAdjustment', {
       reason: fields.reason,

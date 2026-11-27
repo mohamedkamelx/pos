@@ -1356,8 +1356,20 @@ function createOpenCodeRuntime({
       memory.seed(conversation, history);
     }
 
+    /* The card's attachment ids only count if this conversation actually holds
+       them: a forged or foreign id must never become the draft's image, so the
+       list is checked against the store before it is resolved. */
+    const stored = attachmentStore.list(conversation);
+    const storedIds = stored.map((item) => item && item.id).filter(Boolean);
+    const safeAnswer = answer && typeof answer === 'object'
+      ? (Array.isArray(answer.attachmentIds)
+        ? Object.assign({}, answer, {
+          attachmentIds: answer.attachmentIds.filter((id) => storedIds.indexOf(id) !== -1),
+        })
+        : answer)
+      : null;
     const turn = memory.beginTurn(conversation, message, {
-      answer: answer && typeof answer === 'object' ? answer : null,
+      answer: safeAnswer,
     });
     if (!turn) {
       throw runtimeError('conversation_missing', 'The chat session is missing. Reload the page and try again.');
@@ -1365,17 +1377,31 @@ function createOpenCodeRuntime({
 
     const sentImages = (Array.isArray(attachedIds) ? attachedIds : [])
       .map((id) => (typeof id === 'string' ? id.trim().slice(0, 80) : ''))
-      .filter(Boolean)
+      .filter((id) => storedIds.indexOf(id) !== -1)
       .slice(0, 8);
-    /* The model is offered exactly the ids this message carried - never the
-       session's whole list, so an image used for one product cannot be
-       written into the plan of the next one. */
-    const attached = attachmentStore.list(conversation)
-      .filter((item) => sentImages.includes(item && item.id));
     if (sentImages.length) {
       memory.noteImage(conversation, 'attached', sentImages, { onlyIfUnset: true });
     }
     const pending = memory.pendingRequest(conversation);
+    /* What the model may write into a plan is decided by the draft, not by
+       the queue. A recorded picture is the only one offered; a decline
+       advertises nothing - unless this very message carried a fresh upload,
+       which overrides it; and only an undecided slot falls back to this
+       message's uploads, so a chip left over from an earlier turn is never
+       offered for a product whose picture the operator already refused. */
+    const imageState = pending && pending.draft && pending.draft.image;
+    const imageStatus = imageState && imageState.status;
+    const answerIds = safeAnswer && Array.isArray(safeAnswer.attachmentIds)
+      ? safeAnswer.attachmentIds
+      : [];
+    const allowedImages = imageStatus === 'attached' && Array.isArray(imageState.attachmentIds) &&
+      imageState.attachmentIds.length
+      ? imageState.attachmentIds
+      : (imageStatus === 'none' && !answerIds.length ? [] : sentImages);
+    /* The model is offered exactly those ids - never the session's whole
+       list, so an image used for one product cannot be written into the plan
+       of the next one. */
+    const attached = stored.filter((item) => allowedImages.indexOf(item && item.id) !== -1);
     const token = typeof authToken === 'string' ? authToken : '';
     const activeBranchId = typeof branchId === 'string' ? branchId : '';
 

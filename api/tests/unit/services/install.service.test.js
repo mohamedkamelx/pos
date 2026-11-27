@@ -702,6 +702,56 @@ describe('InstallService', () => {
   });
 
   // ══════════════════════════════════════════════════════════════════════════
+  // _createBranch
+  // ══════════════════════════════════════════════════════════════════════════
+  describe('_createBranch', () => {
+    const licenseId = { _mockedId: LICENSE_ID, toString: () => LICENSE_ID };
+    const now = new Date('2026-01-01T00:00:00.000Z');
+
+    test('stores the shop type chosen at registration', async () => {
+      repo.insertBranch.mockResolvedValue(BRANCH_ID);
+
+      const result = await service._createBranch(
+        validInstallData({ businessType: 'Electronics' }),
+        licenseId,
+        USER_ID,
+        now,
+        'A4',
+        'Thermal'
+      );
+
+      expect(result).toBe(BRANCH_ID);
+      const [branchData] = repo.insertBranch.mock.calls[0];
+      expect(branchData.business_type).toBe('Electronics');
+    });
+
+    test('accepts the snake_case field and a list of types', async () => {
+      repo.insertBranch.mockResolvedValue(BRANCH_ID);
+
+      await service._createBranch(
+        validInstallData({ business_type: ['fashion', 'kids'] }),
+        licenseId,
+        USER_ID,
+        now,
+        'A4',
+        'Thermal'
+      );
+
+      const [branchData] = repo.insertBranch.mock.calls[0];
+      expect(branchData.business_type).toBe('fashion, kids');
+    });
+
+    test('leaves the shop type empty when registration did not choose one', async () => {
+      repo.insertBranch.mockResolvedValue(BRANCH_ID);
+
+      await service._createBranch(validInstallData(), licenseId, USER_ID, now, 'A4', 'Thermal');
+
+      const [branchData] = repo.insertBranch.mock.calls[0];
+      expect(branchData.business_type).toBe('');
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
   // _insertDefaultCategoryAndItem
   // ══════════════════════════════════════════════════════════════════════════
 

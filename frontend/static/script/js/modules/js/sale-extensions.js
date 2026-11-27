@@ -151,7 +151,7 @@
       back.onclick=function(){close();};
       var content=document.createElement('div');content.textContent='Loading sale actions…';header.append(back);dialog.append(header,content);document.body.append(dialog);
       PosnicPro.HideSideBarModal();
-      PosnicPro.extensions.showDetails(selected.id, {container:content,onClose:close,workspace:{version:1,presentation:compact?'compact':'workspace',action:action,page:page,lines:lines,context:!page?resumeContext:null,customer:String($('#sales_new_customer_name').val()||'Walk-in customer').slice(0,120)},onError:function(){refreshStock();},onBusy:function(busy){back.disabled=busy;},onCommand:function(result,commandType){
+      PosnicPro.extensions.showDetails(selected.id, {container:content,onClose:close,workspace:{version:1,presentation:compact?'compact':'workspace',action:action,page:page,lines:lines,context:!page?resumeContext:null,customer:String($('#sales_new_customer_name').val()||PosnicPro.i18n.t('lang_walk_in_customer','Walk-in customer')).slice(0,120)},onError:function(){refreshStock();},onBusy:function(busy){back.disabled=busy;},onCommand:function(result,commandType){
         if(result)refreshStock();
         if (!transferred && lines.length && result && selected.salesWorkspace.clearCartOn?.includes(commandType)) {
           transferred=true;

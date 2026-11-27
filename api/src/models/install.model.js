@@ -117,6 +117,11 @@ class InstallModel extends BaseModel {
       const branchInsertResult = await branchCollection.insertOne({
         theme: 'blue',
         branch_name: data.register_companyname.trim(),
+        business_type: String(
+          (data.businessType !== undefined ? data.businessType : data.business_type) || ''
+        )
+          .trim()
+          .slice(0, 80),
         store_address: (data.register_address || '').trim(),
         store_email: data.register_useremail.trim(),
         store_telephone: (data.register_fullnumber || '').trim(),

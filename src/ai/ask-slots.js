@@ -57,6 +57,12 @@ const SLOT_ACTIONS = {
 
 const SLOT_KEYS = Object.keys(SLOT_WORDS);
 
+/* Slots whose answer is a number the card's field collects. barcode and sku
+   are deliberately absent: their leading zeros are part of the value. Stock
+   stays included - weighed units are fractional, so only the API decides
+   whether an integer was meant. */
+const NUMERIC_SLOTS = new Set(SLOT_KEYS.filter((key) => SLOT_ACTIONS[key] === 'number'));
+
 let minted = 0;
 
 function cleanText(value, max) {
@@ -135,7 +141,11 @@ function slotAction(slot) {
    so a click is never re-read from its wording. */
 function mintClarificationId() {
   minted += 1;
-  return `c${Date.now().toString(36)}${minted.toString(36)}`;
+  /* The counter alone collides when two cards are minted in the same
+     millisecond - two cards would then share an id and a click on one would
+     settle the other. The random tail keeps ids unique across processes too. */
+  const tail = Math.random().toString(36).slice(2, 8);
+  return `c${Date.now().toString(36)}${minted.toString(36)}${tail}`;
 }
 
 function recordFor(recordOf, label, slot) {
@@ -161,6 +171,10 @@ function presentClarification(result, { id = '', recordOf = null } = {}) {
   const slot = normaliseSlot(result.slot) ||
     slotFromFields(result.missing) ||
     slotFromQuestion(result.question);
+  /* Ids are only joined on a slot the ask itself declared, never on the
+     substring guess from the question's wording: a label that merely appears
+     next to the word "منتج" is not evidence that it names a record. */
+  const recordSlot = normaliseSlot(result.slot) || slotFromFields(result.missing);
   const action = slotAction(slot);
   const clarificationId = cleanText(id, 60) || mintClarificationId();
   const options = (Array.isArray(result.options) ? result.options : []).slice(0, 4)
@@ -168,7 +182,7 @@ function presentClarification(result, { id = '', recordOf = null } = {}) {
       const label = cleanText(option && option.label, 80);
       const none = !!(option && option.none);
       const given = option && option.record && option.record.id ? option.record : null;
-      const record = none ? null : (given || recordFor(recordOf, label, slot));
+      const record = none ? null : (given || (recordSlot ? recordFor(recordOf, label, recordSlot) : null));
       return {
         id: `o${index + 1}`,
         label,
@@ -186,6 +200,7 @@ function presentClarification(result, { id = '', recordOf = null } = {}) {
 }
 
 module.exports = {
+  NUMERIC_SLOTS,
   SLOT_ACTIONS,
   SLOT_KEYS,
   SLOT_WORDS,

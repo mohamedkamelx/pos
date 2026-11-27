@@ -20,6 +20,8 @@ const MAX_QUERY_FORMS = 48;
 const MAX_QUERY_PHRASES = 12;
 const MAX_CONTEXT_FORMS = 24;
 const MAX_PHONETICS = 32;
+const MAX_PHONETIC_VARIANTS = 8;
+const MAX_EDIT_VARIANTS = 12;
 const MAX_QUERY_NGRAMS = 96;
 
 const ARABIC_DIACRITICS = /[\u064B-\u0652\u0670\u0640]/g;
@@ -288,6 +290,29 @@ const SYNONYM_GROUPS = [
   ['تلفزيون', 'تليفزيون', 'تلفزيونات', 'tv', 'television'],
   ['موبايل', 'محمول', 'هاتف', 'تليفون', 'phone', 'mobile', 'cellphone'],
   ['لابتوب', 'كمبيوتر', 'computer', 'laptop'],
+  ['ايفون', 'iphone'],
+  ['سامسونج', 'سامسونغ', 'samsung'],
+  ['توشيبا', 'toshiba'],
+  ['شاومي', 'شياومي', 'xiaomi'],
+  ['هواوي', 'huawei'],
+  ['لينوفو', 'lenovo'],
+  ['نوكيا', 'nokia'],
+  ['اوبو', 'oppo'],
+  ['سوني', 'sony'],
+  ['ال جي', 'lg'],
+  ['ديل', 'dell'],
+  ['اتش بي', 'hp'],
+  ['كانون', 'canon'],
+  ['ابسون', 'epson'],
+  ['بنسونيك', 'باناسونيك', 'panasonic'],
+  ['شارب', 'sharp'],
+  ['بوش', 'bosch'],
+  ['فيليبس', 'philips'],
+  ['فريش', 'fresh'],
+  ['تورنيدو', 'tornado'],
+  ['زانوسي', 'zanussi'],
+  ['وايت ويل', 'white whale'],
+  ['اريستون', 'ariston'],
   ['مروحه', 'مراوح', 'fan', 'fans'],
   ['مكواه', 'iron'],
   ['خلاط', 'blender'],
@@ -434,6 +459,48 @@ function phoneticKey(value) {
     if (skeleton) keys.push(skeleton);
   }
   return keys.join('');
+}
+
+/* Norvig-style one-letter deletions on the sound key. A user who drops or
+   adds one letter in a brand ("samsungh") still reaches the stored key
+   ("smsng"). Variants are only candidate keys; the normal score still decides
+   whether the row is relevant. */
+function phoneticVariants(key) {
+  const chars = Array.from(String(key || ''));
+  if (chars.length < 4) return [];
+  const variants = new Set();
+  for (let index = 0; index < chars.length; index += 1) {
+    const variant = chars
+      .slice(0, index)
+      .concat(chars.slice(index + 1))
+      .join('');
+    if (variant.length >= 3 && !/^[0-9]+$/.test(variant)) variants.add(variant);
+  }
+  return [...variants].slice(0, MAX_PHONETIC_VARIANTS);
+}
+
+/* Norvig-style one-edit candidates: a dropped letter and an adjacent
+   transposition. "ipohne" becomes "iphone", "pepse" becomes "peps", and an
+   Arabic word keeps the same treatment. The variants are only extra search
+   forms; the normal score still decides whether a row is relevant. */
+function editVariants(token) {
+  const chars = Array.from(String(token || ''));
+  if (chars.length < 3) return [];
+  const variants = new Set();
+  for (let index = 0; index < chars.length; index += 1) {
+    const deletion = chars
+      .slice(0, index)
+      .concat(chars.slice(index + 1))
+      .join('');
+    if (deletion.length >= 2) variants.add(deletion);
+  }
+  for (let index = 0; index < chars.length - 1; index += 1) {
+    if (chars[index] === chars[index + 1]) continue;
+    const copy = chars.slice();
+    [copy[index], copy[index + 1]] = [copy[index + 1], copy[index]];
+    variants.add(copy.join(''));
+  }
+  return [...variants].slice(0, MAX_EDIT_VARIANTS);
 }
 
 function tokenMatchForms(value) {
@@ -585,6 +652,11 @@ function expandQuery(value, options = {}) {
       if (text.includes(' ')) phrases.add(text);
     }
   }
+  /* One-edit variants reach a typo that shares too few n-grams, such as
+     "ipohne" for "iphone" or a dropped letter in a short Arabic word. */
+  for (const token of tokens) {
+    for (const variant of editVariants(token)) addTokenForms(forms, variant);
+  }
 
   const contextForms = new Set();
   const contextTerms = [
@@ -598,9 +670,14 @@ function expandQuery(value, options = {}) {
   }
 
   const tokenForms = [...forms].filter((form) => !form.includes(' '));
-  const phonetics = unique([...tokens.map(phoneticKey), ...tokenForms.map(phoneticKey)])
-    .filter((key) => key.length >= 3 && !/^[0-9]+$/.test(key))
-    .slice(0, MAX_PHONETICS);
+  const exactPhonetics = unique([
+    ...tokens.map(phoneticKey),
+    ...tokenForms.map(phoneticKey),
+  ]).filter((key) => key.length >= 3 && !/^[0-9]+$/.test(key));
+  const phonetics = unique([...exactPhonetics, ...exactPhonetics.flatMap(phoneticVariants)]).slice(
+    0,
+    MAX_PHONETICS
+  );
   const ngrams = unique(tokenForms.flatMap(ngramsForToken)).slice(0, MAX_QUERY_NGRAMS);
 
   return {
@@ -644,7 +721,10 @@ function smartRegexPattern(value) {
       continue;
     }
     const base = ARABIC_CLASSES.get(char) || escapeRegexChar(char);
-    parts.push(`${base}[\\u064B-\\u0652\\u0670\\u0640]*`);
+    /* MongoDB compiles $regex with PCRE2, which rejects JavaScript's \uXXXX
+       escape. Emit the combining marks themselves so the same pattern works
+       in both a JavaScript RegExp and a database query. */
+    parts.push(`${base}[\u064B-\u0652\u0670\u0640]*`);
   }
   return parts.join('');
 }
@@ -656,12 +736,14 @@ module.exports = {
   bigramSimilarity,
   canonicalNumberToken,
   editDistance,
+  editVariants,
   expandQuery,
   foldDigits,
   nameSimilarity,
   ngramsForToken,
   normalizeSearchText,
   phoneticKey,
+  phoneticVariants,
   rankNameMatches,
   rootKey,
   scoreNameMatch,

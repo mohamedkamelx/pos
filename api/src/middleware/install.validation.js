@@ -66,6 +66,12 @@ const validateInstallation = [
       return true;
     }),
 
+  // The shop type selected at registration. It is optional for the local
+  // quick setup, but a cloud signup sends it so the assistant can keep its
+  // category suggestions relevant to this shop.
+  body('businessType').optional().trim().isLength({ max: 80 }),
+  body('business_type').optional().trim().isLength({ max: 80 }),
+
   body('register_firstname').optional().trim(),
   body('register_lastname').optional().trim(),
   body('register_address').optional().trim(),

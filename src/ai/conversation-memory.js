@@ -20,7 +20,10 @@
 'use strict';
 
 const { isHowToQuestion } = require('./text-match');
-const { normaliseSlot, slotForClarification } = require('./ask-slots');
+const { normaliseSlot, slotForClarification, NUMERIC_SLOTS } = require('./ask-slots');
+const { foldName } = require('./text-fold');
+/* One copy of the number rule, shared with the card that collects it. */
+const { parseNumberInput } = require('../../frontend/static/script/js/core/numeric-input');
 
 const MAX_CONVERSATIONS = 40;
 const MAX_TOPICS = 40;
@@ -32,6 +35,9 @@ const MAX_CATEGORIES = 24;
 const MAX_PLANS = 8;
 const MAX_CLARIFICATIONS = 8;
 const MAX_KEYWORDS = 32;
+/* Ids a tool showed this conversation, remembered for one reason only: a plan
+   may target a record by id only when that id was actually seen here. */
+const MAX_SEEN_IDS = 200;
 const MAX_CONTEXT_CHARS = 6000;
 const MAX_SHORT_CONTEXT_CHARS = 2200;
 const MAX_SUMMARY_CHARS = 700;
@@ -334,6 +340,11 @@ function createConversationMemoryStore({
       turns: [],
       products: new Map(),
       categories: new Map(),
+      /* Ids the tools returned for this topic, in arrival order. Separate from
+         the product rows: a search whose results are not recorded as rows
+         (a duplicate check kept internal) still showed the model real ids,
+         and those ids must be targetable all the same. */
+      seenIds: new Map(),
       plans: [],
       clarifications: [],
       pendingRequest: null,
@@ -396,6 +407,11 @@ function createConversationMemoryStore({
     if (!item) return;
     const id = cleanText(item.id, 80);
     if (!id) return;
+    /* Delete then set, so a re-seen row moves to the end: the map's order is
+       recency, and the row evicted when the cache is full is the one nobody
+       has looked at lately. seenTurn is what recordFor joins on - only the
+       latest search for a product can name one. */
+    topic.products.delete(id);
     topic.products.set(id, {
       id,
       name: cleanText(item.name, 160),
@@ -406,6 +422,7 @@ function createConversationMemoryStore({
       unit: cleanText(item.unit, 40),
       barcode: cleanText(item.barcode, 80),
       sku: cleanText(item.sku, 80),
+      seenTurn: topic.ingestSeq || 0,
     });
     if (topic.products.size > MAX_PRODUCTS) {
       const oldest = topic.products.keys().next().value;
@@ -417,11 +434,13 @@ function createConversationMemoryStore({
     if (!item) return;
     const id = cleanText(item.id, 80);
     if (!id) return;
+    topic.categories.delete(id);
     topic.categories.set(id, {
       id,
       name: cleanText(item.name, 160),
       description: cleanText(item.description, 240),
       itemCount: item.itemCount,
+      seenTurn: topic.ingestSeq || 0,
     });
     if (topic.categories.size > MAX_CATEGORIES) {
       const oldest = topic.categories.keys().next().value;
@@ -469,6 +488,15 @@ function createConversationMemoryStore({
        1. the answer object the card sent back (ids, never wording);
        2. a typed reply that equals the label or the value of one option;
        3. nothing - the reply stays text for the model to interpret. */
+  /* A numeric slot stores the canonical Latin string the normaliser reads;
+     a value it cannot read leaves the question pending rather than being
+     guessed at, and a non-numeric slot is untouched. */
+  function canonicalNumber(slot, value) {
+    if (!NUMERIC_SLOTS.has(slot)) return cleanText(value, 160);
+    const parsed = parseNumberInput(value);
+    return parsed.ok ? parsed.value : null;
+  }
+
   function resolveClarification(pending, message, answer) {
     if (!pending) return null;
     const options = Array.isArray(pending.options) ? pending.options : [];
@@ -501,10 +529,12 @@ function createConversationMemoryStore({
           return { slot: slot || 'image', kind: 'attachment', value: '', ids, label };
         }
         const record = recordOf(chosen);
+        const chosenValue = canonicalNumber(slot, chosen.value || chosen.label);
+        if (chosenValue === null) return null;
         return {
           slot,
           kind: record ? 'record' : 'value',
-          value: cleanText(chosen.value || chosen.label, 160),
+          value: chosenValue,
           id: record ? record.id : '',
           entity: record ? record.entity : '',
           label,
@@ -515,9 +545,16 @@ function createConversationMemoryStore({
         return { slot: 'image', kind: 'attachment', value: '', ids, label: '' };
       }
       const value = cleanText(answer.value, 160);
-      if (value && cleanText(answer.slot, 40)) {
-        const answeredSlot = normaliseSlot(answer.slot) || slot;
-        return { slot: answeredSlot, kind: 'value', value, label: value };
+      /* The question's own slot is the authority. A client-supplied slot that
+         disagrees decides a field the model never asked for, an unrecognisable
+         one settles nothing, and a value with no slot behind it stays text for
+         the model to interpret. */
+      const rawSlot = cleanText(answer.slot, 40);
+      const answeredSlot = normaliseSlot(rawSlot);
+      if (value && slot && (!rawSlot || (answeredSlot && answeredSlot === slot))) {
+        const canonical = canonicalNumber(slot, value);
+        if (canonical === null) return null;
+        return { slot, kind: 'value', value: canonical, label: canonical };
       }
       return null;
     }
@@ -535,10 +572,12 @@ function createConversationMemoryStore({
     const label = cleanText(labelOf(option), 80);
     if (noneOf(option)) return { slot, kind: 'none', value: '', label };
     const record = recordOf(option);
+    const matchedValue = canonicalNumber(slot, valueOf(option));
+    if (matchedValue === null) return null;
     return {
       slot,
       kind: record ? 'record' : 'value',
-      value: cleanText(valueOf(option), 160),
+      value: matchedValue,
       id: record ? record.id : '',
       entity: record ? record.entity : '',
       label,
@@ -568,13 +607,31 @@ function createConversationMemoryStore({
     return draft.image;
   }
 
+  /* The upload answered the image question, so the card that asked for it is
+     settled too: left live, a later "no image" click would overwrite the
+     picture that just arrived. */
+  function answerImageQuestion(topic) {
+    if (!topic) return null;
+    const card = [...topic.clarifications].reverse().find((item) =>
+      item.status === 'pending' && slotForClarification(item) === 'image');
+    if (!card) return null;
+    return markClarification(topic, '', 'answered', null, cleanText(card.id, 60));
+  }
+
   function noteImage(conversationId, status, attachmentIds, { onlyIfUnset = false } = {}) {
     const conversation = ensureConversation(conversationId);
     if (!conversation) return null;
     const topic = activeTopic(conversation);
     const draft = topic && topic.pendingRequest && topic.pendingRequest.draft;
-    if (onlyIfUnset && draft && typeof draft === 'object' && draft.image) return null;
-    return setImageStatus(topic, status, attachmentIds);
+    /* A picture already recorded is only replaced by a click on the image
+       card, never by a plain upload. A question still waiting for a picture
+       is open, and so is a decline the operator now answers with a real file:
+       "actually, here is the photo" is a deliberate act. */
+    if (onlyIfUnset && draft && typeof draft === 'object' && draft.image &&
+        draft.image.status === 'attached') return null;
+    const recorded = setImageStatus(topic, status, attachmentIds);
+    if (status === 'attached' && recorded) answerImageQuestion(topic);
+    return recorded;
   }
 
   /* How a settled answer is written into the prompt. A decision is rendered
@@ -748,9 +805,16 @@ function createConversationMemoryStore({
     return topic.pendingRequest.draft;
   }
 
-  function markClarification(topic, message, status, answer) {
+  function markClarification(topic, message, status, answer, clarificationId = '') {
     if (!topic) return null;
-    const pending = [...topic.clarifications].reverse().find((item) => item.status === 'pending');
+    const wanted = cleanText(clarificationId, 60);
+    /* Without an id the latest open question is the one being answered - that
+       is the prose path. With an id exactly that card is settled, even when a
+       newer question superseded it: clicking the older one must not retire the
+       newer one, and the newer one must not swallow the older click. */
+    const pending = [...topic.clarifications].reverse().find((item) =>
+      (item.status === 'pending' || (!!wanted && item.status === 'superseded')) &&
+      (!wanted || cleanText(item.id, 60) === wanted));
     if (!pending) return null;
     let resolved = null;
     pending.status = status || 'answered';
@@ -821,7 +885,17 @@ function createConversationMemoryStore({
   }
 
   function ingestToolCalls(topic, toolCalls) {
-    for (const call of Array.isArray(toolCalls) ? toolCalls : []) {
+    const calls = Array.isArray(toolCalls) ? toolCalls : [];
+    /* One number for the whole batch: every row one search turn returns
+       shares it, so a card minted after that turn may name any of them, while
+       rows from earlier turns are older and cannot. */
+    const bringsRows = calls.some((call) => {
+      const result = call && call.metadata && call.metadata.posnic;
+      return !!result && (result.kind === 'product_search' ||
+        result.kind === 'product_list' || result.kind === 'category_list');
+    });
+    if (bringsRows) topic.ingestSeq = (topic.ingestSeq || 0) + 1;
+    for (const call of calls) {
       const result = call && call.metadata && call.metadata.posnic;
       if (!result) continue;
       if (result.kind === 'product_search' || result.kind === 'product_list') {
@@ -993,13 +1067,28 @@ function createConversationMemoryStore({
        to the pending question and it must not replace the pending request. */
     const sideQuestion = wasPending && !newSignal && !newEntity && !cancellation &&
       question && !correction;
+    /* A card click carries the id of the card it answers. It is an answer,
+       never a new request: a label such as "من غير سعر" reads like a write
+       request, and without this guard the request is replaced and the card
+       superseded before the click can settle it. An older card that a newer
+       question superseded is still on screen, so it is matched too - the
+       click names the exact card, whichever one it is. */
+    const sentCardId = answer && typeof answer === 'object'
+      ? cleanText(answer.clarificationId, 60)
+      : '';
+    const liveCard = sentCardId && previous
+      ? [...previous.clarifications].reverse().find((item) =>
+        (item.status === 'pending' || item.status === 'superseded') &&
+        cleanText(item.id, 60) === sentCardId)
+      : null;
+    const cardClick = !!liveCard;
     /* The first create/update request also creates a pending draft. A short
        answer continues it; a new write action starts a new request unless it
        is a correction such as "change the price to 50". A bare "تمام" while
        fields are still missing is an acknowledgement, not a value. */
     const pendingAnswer = wasPending && !newSignal && !newEntity && !cancellation &&
       !sideQuestion && !acknowledgement &&
-      (!looksLikeWriteRequest(message) || correction);
+      (!looksLikeWriteRequest(message) || correction || cardClick);
 
     let topic = previous;
     let switched = false;
@@ -1063,6 +1152,13 @@ function createConversationMemoryStore({
     conversation.activeTopicId = topic.id;
     conversation.updatedAt = current();
 
+    /* An id the operator pasted is part of the conversation just as much as
+       one a tool returned, so the plan allow-list accepts it; an id the model
+       produced on its own is still refused. A longer hex run is not claimed
+       window by window - only a whole 24-character id counts. */
+    const typedIds = message.match(/(?<![0-9a-f])[0-9a-f]{24}(?![0-9a-f])/gi);
+    if (typedIds) noteSeen(conversationId, typedIds.map((value) => ({ id: value })));
+
     if (cancellation) {
       topic.pendingRequest = null;
       topic.stage = 'cancelled';
@@ -1071,7 +1167,7 @@ function createConversationMemoryStore({
       }
     } else if (sideQuestion) {
       if (topic.stage === 'collecting' || topic.stage === 'paused') topic.stage = 'paused';
-    } else if (!sideQuestion && looksLikeWriteRequest(message) &&
+    } else if (!sideQuestion && !cardClick && looksLikeWriteRequest(message) &&
       (!topic.pendingRequest || newEntity || !pendingAnswer)) {
       topic.pendingRequest = {
         text: cleanText(message, MAX_TEXT_CHARS),
@@ -1088,18 +1184,31 @@ function createConversationMemoryStore({
       topic.stage = 'collecting';
     }
 
-    /* A card click arrives with its ids. It settles the question it belongs
-       to even when the display text would not read as an answer, and a card
-       from an older question settles nothing. */
-    const structuredAnswer = !!(answer && typeof answer === 'object' &&
-      waitingClarification &&
-      cleanText(answer.clarificationId, 60) === cleanText(waitingClarification.id, 60));
+    /* The click matched above is resolved against the topic this turn stayed
+       in. If the turn switched topics the card belongs elsewhere and settles
+       nothing; otherwise the named card is the one answered, whether a newer
+       question superseded it or not. */
+    const targetCard = sentCardId
+      ? [...topic.clarifications].reverse().find((item) =>
+        (item.status === 'pending' || item.status === 'superseded') &&
+        cleanText(item.id, 60) === sentCardId)
+      : null;
+    const structuredAnswer = !!(sentCardId && targetCard);
+    /* An answer that carries card ids but decides nothing must not retire the
+       question: a click from a card that no longer exists, a value tagged with
+       a slot this question never asked for, an attachment with no ids. In each
+       case the card stays exactly as it was, so the operator can still answer
+       it - marking it answered would leave a dead card and nothing decided.
+       An answer object without ids is ordinary text and keeps the older
+       behaviour. */
+    const unusableCard = !!sentCardId && !resolveClarification(targetCard, message, answer);
     /* A settled decision tells the local flow which slot this turn answered,
        so its click label is never parsed as a sentence. pendingAnswer stays
        text-based: this turn still answers the pending request. */
     let answered = null;
-    if ((pendingAnswer || structuredAnswer) && !switched) {
-      const decision = markClarification(topic, message, 'answered', structuredAnswer ? answer : null);
+    if ((pendingAnswer || structuredAnswer) && !switched && !unusableCard) {
+      const decision = markClarification(topic, message, 'answered',
+        structuredAnswer ? answer : null, sentCardId);
       if (decision && decision.slot) answered = { slot: decision.slot, kind: decision.kind };
     }
     addPoint(topic, message);
@@ -1358,33 +1467,83 @@ function createConversationMemoryStore({
     };
   }
 
+  /* The rows a card may name: only those from that entity's latest search.
+     A card is minted right after the search that informed it, so joining
+     anything older would offer a label the operator is no longer looking at.
+     Rows never stamped (an imported conversation) count as older than any
+     search, and when no search has happened they are all there is. */
+  function latestRows(map) {
+    let latest = 0;
+    for (const row of map.values()) {
+      const seen = Number.isFinite(row.seenTurn) ? row.seenTurn : 0;
+      if (seen > latest) latest = seen;
+    }
+    const rows = [];
+    for (const row of map.values()) {
+      if ((Number.isFinite(row.seenTurn) ? row.seenTurn : 0) === latest) rows.push(row);
+    }
+    return rows;
+  }
+
   function recordFor(conversationId, name, slot) {
-    const wanted = normalise(name);
+    const wanted = foldName(name);
     if (!wanted) return null;
     const conversation = conversations.get(key(conversationId));
     const topic = activeTopic(conversation);
     if (!topic) return null;
-    const products = () => {
-      for (const product of topic.products.values()) {
-        if (product.name && normalise(product.name) === wanted) {
-          return { entity: 'product', id: product.id };
-        }
-      }
-      return null;
-    };
-    const categories = () => {
-      for (const category of topic.categories.values()) {
-        if (category.name && normalise(category.name) === wanted) {
-          return { entity: 'category', id: category.id };
-        }
-      }
-      return null;
-    };
     /* The slot says which kind of record the choice can name, so an option
-       can only ever resolve to the kind the question was about. */
-    if (slot === 'category') return categories();
-    if (slot === 'target') return products();
-    return products() || categories();
+       can only ever resolve to the kind the question was about. A slot that
+       does not say is not a guess to make: a label that happens to equal a
+       product's name is a value, and the model can re-resolve it from words. */
+    if (slot !== 'category' && slot !== 'target') return null;
+    const rows = latestRows(slot === 'category' ? topic.categories : topic.products);
+    const matches = rows.filter((row) => row.name && foldName(row.name) === wanted);
+    const ids = new Set(matches.map((row) => row.id));
+    /* Two rows that fold to one name are not a name at all: picking either
+       one would put an id behind a button the operator reads as a single
+       thing. Zero matches travels as words, which is the same refusal. */
+    if (ids.size !== 1) return null;
+    return { entity: slot === 'category' ? 'category' : 'product', id: matches[0].id };
+  }
+
+  /* Ids a tool returned this turn, recorded as soon as the tool answers.
+     Memory only learns about a turn when it closes, but the model may target
+     one of those ids in the same turn - refusing it as "unseen" would break
+     the normal search-then-act flow. */
+  function noteSeen(conversationId, rows) {
+    const conversation = conversations.get(key(conversationId));
+    if (!conversation) return;
+    const topic = activeTopic(conversation);
+    if (!topic) return;
+    for (const row of Array.isArray(rows) ? rows : []) {
+      const id = cleanText(row && row.id, 80);
+      if (!id) continue;
+      topic.seenIds.delete(id);
+      topic.seenIds.set(id, cleanText(row && row.name, 160));
+    }
+    while (topic.seenIds.size > MAX_SEEN_IDS) {
+      const oldest = topic.seenIds.keys().next().value;
+      if (oldest === undefined) break;
+      topic.seenIds.delete(oldest);
+    }
+  }
+
+  /* The allow-list a plan target id is checked against: everything this
+     topic's tools and searches actually showed. A plan may name a record by
+     id only from here, so a model cannot point at a record nobody discussed;
+     a name still resolves through the shop as before. */
+  function knownIds(conversationId) {
+    const conversation = conversations.get(key(conversationId));
+    const topic = activeTopic(conversation);
+    const ids = new Set();
+    if (topic) {
+      for (const id of topic.seenIds.keys()) ids.add(cleanText(id, 80).toLowerCase());
+      for (const product of topic.products.values()) ids.add(cleanText(product.id, 80).toLowerCase());
+      for (const category of topic.categories.values()) ids.add(cleanText(category.id, 80).toLowerCase());
+    }
+    /* Case-insensitive: an id is a hex string, and a pasted upper-case id is
+       the same record the model will send back in lower case. */
+    return { has: (value) => ids.has(cleanText(value, 80).toLowerCase()) };
   }
 
   function pendingRequest(conversationId) {
@@ -1465,9 +1624,11 @@ function createConversationMemoryStore({
     contextFor,
     currentCategory,
     has,
+    knownIds,
     noteDraft,
     noteImage,
     notePlan,
+    noteSeen,
     pendingRequest,
     recall,
     recordFor,

@@ -1369,22 +1369,31 @@
          answer, so it goes back with the card's ids instead of as a sentence
          about having attached something. */
       var choice = state.pendingChoice;
-      state.pendingChoice = null;
       if (choice && choice.answer && choice.answer.clarificationId) {
-        if (choice.payload) choice.payload.answered = true;
         var ids = state.pendingAttachmentIds.slice();
         if (!ids.length && saved.length) {
           ids = saved.map(function (attachment) { return attachment.id; });
         }
-        await sendMessage(choice.label || t('lang_ai_use_image', 'Use the attached image.'), {
+        if (!ids.length) {
+          /* Nothing was stored, so there is no image to answer with: report
+             the failure and keep the card live instead of claiming an
+             attachment that does not exist. */
+          setStatus(t('lang_ai_attach_failed', 'That image could not be attached.'), true);
+          return;
+        }
+        state.pendingChoice = null;
+        var accepted = await sendMessage(choice.label || t('lang_ai_use_image', 'Use the attached image.'), {
           answer: {
             clarificationId: choice.answer.clarificationId,
             optionId: choice.answer.optionId || '',
             attachmentIds: ids
           }
         });
+        /* Retire the card only when the answer actually went out. */
+        if (accepted && choice.payload) choice.payload.answered = true;
         return;
       }
+      state.pendingChoice = null;
     } catch (error) {
       setStatus(t('lang_ai_attach_failed', 'That image could not be attached.'), true);
     } finally {
@@ -1482,8 +1491,16 @@
     return '';
   }
 
+  /* A typed confirm/cancel awaits the API like any other send. It must not
+     take state.busy itself - the plan card sets and clears that flag with its
+     own guards - so it refuses a second run with a flag of its own. */
+  var planCommandRunning = false;
+
   async function sendMessage(text, options) {
-    if (state.busy) return;
+    /* Resolves true only once the request was actually dispatched: the cards
+       wait for that answer before retiring themselves, so a refused click
+       leaves the card live instead of dying as a dead card. */
+    if (state.busy) return false;
     var retry = !!(options && options.retry);
     /* A card click travels as an answer object: the ids of the question and
        the option, never wording the model has to interpret again. */
@@ -1494,11 +1511,11 @@
     }
     if (!state.enabled) {
       setStatus(t('lang_ai_disabled', 'Turn the assistant on first.'), true);
-      return;
+      return false;
     }
     if (!chatConfiguredForSelection()) {
       setStatus(t('lang_ai_provider_key_required', 'Enter the provider token.'), true);
-      return;
+      return false;
     }
 
     var message = typeof text === 'string'
@@ -1507,10 +1524,10 @@
     if (!message && state.attachments.length) {
       message = t('lang_ai_use_image', 'Use the attached image.');
     }
-    if (!message) return;
+    if (!message) return false;
     if (message.length > MAX_MESSAGE_CHARS) {
       setStatus(t('lang_ai_message_too_long', 'That message is too long. Keep it under 4,000 characters.'), true);
-      return;
+      return false;
     }
     /* Typing instead of attaching abandons the choice the card offered, so a
        later attachment cannot answer a question the operator walked away
@@ -1518,15 +1535,26 @@
     if (!answer) state.pendingChoice = null;
 
     var pendingPlan = latestPendingPlan();
-    var pendingCommand = pendingPlan ? planCommand(message) : '';
+    /* An answer is a decision for the card, never a plan command: an option
+       labelled "confirm" must not run the plan instead of answering. */
+    var pendingCommand = !answer && pendingPlan ? planCommand(message) : '';
     if (pendingCommand) {
-      state.messages.push({ role: 'user', text: message, attachments: [] });
-      if (state.messages.length === 1 && el.empty) el.empty.remove();
-      appendBubble('user', message, true, []);
-      if (el.prompt) el.prompt.value = '';
-      if (pendingCommand === 'confirm') await confirmPlanCard(pendingPlan);
-      else await cancelPlanCard(pendingPlan);
-      return;
+      /* A second Enter or click while that await is in flight must not run
+         the same command twice; the plan card's own busy/planBusy guards take
+         over as soon as it is called. */
+      if (planCommandRunning) return false;
+      planCommandRunning = true;
+      try {
+        state.messages.push({ role: 'user', text: message, attachments: [] });
+        if (state.messages.length === 1 && el.empty) el.empty.remove();
+        appendBubble('user', message, true, []);
+        if (el.prompt) el.prompt.value = '';
+        if (pendingCommand === 'confirm') await confirmPlanCard(pendingPlan);
+        else await cancelPlanCard(pendingPlan);
+      } finally {
+        planCommandRunning = false;
+      }
+      return true;
     }
 
     var attachmentNames = state.attachments.map(function (attachment) {
@@ -1545,22 +1573,26 @@
     updateControls();
     setStatus(t('lang_ai_thinking', 'Thinking...'));
 
+    /* Snapshot the queue before the request leaves: a file attached while this
+       turn is in flight must survive the reply, so only what this message
+       actually carried is dropped from the queue afterwards. */
+    var sentIds = state.pendingAttachmentIds.slice();
     try {
       var result = await api().chat({
         message: message,
         history: history,
         conversationId: state.conversationId,
         answer: answer || undefined,
-        attachedIds: state.pendingAttachmentIds.slice(),
+        attachedIds: sentIds,
         authToken: sessionToken(),
         branchId: activeBranch(),
         username: currentUsername()
       });
-      if (generation !== state.chatGeneration) return;
+      if (generation !== state.chatGeneration) return true;
       if (!result || !result.success) {
         setStatus(messageFor(result, 'chat'), true);
         showRetry();
-        return;
+        return true;
       }
       if (result.provider) state.chat.provider = result.provider;
       if (result.model) state.chat.model = result.model;
@@ -1569,24 +1601,30 @@
       if (!reply && !toolCalls.length) {
         setStatus(t('lang_ai_empty_reply', 'The assistant returned an empty reply. Try again.'), true);
         showRetry();
-        return;
+        return true;
       }
-      /* The message carried these images, so they belong to it now and are
-         not offered to the next one. */
-      state.pendingAttachmentIds = [];
+      /* These ids travelled with this message, so they belong to it now. Ids
+         queued while the turn was in flight are kept for the next message. */
+      state.pendingAttachmentIds = state.pendingAttachmentIds.filter(function (id) {
+        return sentIds.indexOf(id) === -1;
+      });
       addMessage('assistant', reply, toolCalls);
       setStatus('');
     } catch (error) {
-      if (generation !== state.chatGeneration) return;
+      if (generation !== state.chatGeneration) return true;
       console.error('[AI] chat request failed in the desktop bridge.', error);
       setStatus(t('lang_ai_failed', 'The assistant could not answer. Try again.'), true);
       showRetry();
     } finally {
-      if (generation !== state.chatGeneration) return;
-      state.busy = false;
-      updateControls();
-      renderMessages();
+      /* A generation change means the view was reset; leave its state alone
+         without swallowing the answer the caller is waiting for. */
+      if (generation === state.chatGeneration) {
+        state.busy = false;
+        updateControls();
+        renderMessages();
+      }
     }
+    return true;
   }
 
   function lastUserMessage() {
@@ -1770,6 +1808,14 @@
     return button;
   }
 
+  /* The page and the server read numbers with the same rule (the file loaded
+     before this one), so the value echoed in the bubble is the value stored. */
+  function parseNumber(raw) {
+    var lib = window.PosnicNumeric;
+    if (lib && typeof lib.parseNumberInput === 'function') return lib.parseNumberInput(raw);
+    return { ok: true, value: String(raw == null ? '' : raw) };
+  }
+
   /* A click on this card is a decision the system takes, not a sentence for
      the model to re-read. An option that means "enter something" opens the
      entry - the picker, a number field - instead of describing it in chat;
@@ -1789,6 +1835,10 @@
         optionId: String((option && option.id) || '')
       };
     };
+    /* One send at a time per card: the flag is raised the moment a click is
+       handed to sendMessage and drops again only when the send was refused,
+       so a second click cannot race the first while the answer is in flight. */
+    var sending = false;
     var settle = function () {
       payload.answered = true;
       body.querySelectorAll('button, input').forEach(function (item) {
@@ -1806,7 +1856,7 @@
         button.textContent = option.label || option.value || '';
         button.disabled = payload.answered === true || state.busy;
         button.addEventListener('click', function () {
-          if (payload.answered || state.busy) return;
+          if (payload.answered || state.busy || sending) return;
           var answer = answerFor(option);
           if (option.action === 'attach') {
             /* Open the picker. The card stays live until a file is chosen,
@@ -1814,8 +1864,15 @@
             startAttachment(answer, option.label, payload);
             return;
           }
-          settle();
-          sendMessage(option.value || option.label || '', { answer: answer });
+          /* The card settles only once the send was accepted: a click that
+             returns early (busy, disabled, too long) leaves it live to press
+             again instead of dying as a dead card. */
+          sending = true;
+          sendMessage(option.value || option.label || '', { answer: answer })
+            .then(function (accepted) {
+              if (accepted) settle();
+              else sending = false;
+            });
         });
         list.append(button);
       });
@@ -1835,28 +1892,49 @@
       var row = document.createElement('div');
       row.className = 'posnic-ai-number';
       var input = document.createElement('input');
-      input.type = 'number';
+      /* Arabic-Indic digits cannot be typed into type="number": ask for the
+         decimal keyboard and let the shared normaliser read whatever the
+         operator's layout produced. */
+      input.type = 'text';
+      input.inputMode = 'decimal';
       input.className = 'form-control';
-      input.min = '0';
-      input.step = 'any';
       input.setAttribute('aria-label', payload.question || '');
       var use = document.createElement('button');
       use.type = 'button';
       use.className = 'btn btn-primary btn-sm';
       use.textContent = t('lang_ai_use_value', 'Use this value');
       use.disabled = payload.answered === true || state.busy;
+      var error = document.createElement('div');
+      error.className = 'posnic-ai-card-note posnic-ai-number-error';
+      error.hidden = true;
       var submitNumber = function () {
-        if (payload.answered || state.busy) return;
-        var value = String(input.value || '').trim();
-        if (!value) return;
-        settle();
-        sendMessage(value, {
+        if (payload.answered || state.busy || sending) return;
+        var raw = String(input.value || '').trim();
+        if (!raw) return;
+        var parsed = parseNumber(raw);
+        if (!parsed.ok) {
+          /* The card stays live: an invalid value never settles the question,
+             so the operator corrects it in place. */
+          error.textContent = t('lang_ai_invalid_number', 'Enter a valid number.');
+          error.hidden = false;
+          input.focus();
+          return;
+        }
+        error.hidden = true;
+        /* Echo the canonical value and send exactly that, so the bubble, the
+             plan preview and the stored answer all agree on the number. */
+        input.value = parsed.value;
+        sending = true;
+        sendMessage(parsed.value, {
           answer: {
             clarificationId: String(payload.id || ''),
             optionId: '',
             slot: String(payload.slot || ''),
-            value: value
+            value: parsed.value
           }
+        }).then(function (accepted) {
+          if (accepted) settle();
+          else sending = false;
         });
       };
       use.addEventListener('click', submitNumber);
@@ -1867,7 +1945,7 @@
         }
       });
       row.append(input, use);
-      body.append(row);
+      body.append(row, error);
     } else {
       var hint = document.createElement('div');
       hint.className = 'posnic-ai-card-note';

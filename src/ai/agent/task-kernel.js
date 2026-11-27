@@ -81,16 +81,24 @@ function requestedValueLabels(intent) {
    a price button and the next card still demands the price. The slot
    vocabulary is the same one the card's options are built from, so a decided
    price is a decided price here too. */
+/* An optional field the operator declined is settled-empty; a required one is
+   not. "No image" ends the image question for good, while a declined price
+   still has to be asked for - the card must not demand a price nobody will
+   give, and the plan must not be built without one either. */
+const OPTIONAL_SLOTS = new Set(['image']);
+
 function missingFor(intent, pending, target) {
   const answers = pending && Array.isArray(pending.answers) ? pending.answers : [];
-  const decided = new Set(
-    answers
-      .map((item) => item && item.decision && item.decision.slot)
-      .filter(Boolean),
-  );
+  const decided = new Map();
+  for (const item of answers) {
+    const decision = item && item.decision;
+    if (decision && decision.slot) decided.set(decision.slot, decision.kind);
+  }
   return missingFields(intent, pending, target).filter((entry) => {
     const slot = slotFromFields([entry]);
-    return !slot || !decided.has(slot);
+    if (!slot || !decided.has(slot)) return true;
+    if (decided.get(slot) === 'none') return !OPTIONAL_SLOTS.has(slot);
+    return false;
   });
 }
 

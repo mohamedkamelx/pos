@@ -25,6 +25,14 @@ const branchSchema = new Schema(
     spoilage_approver_ids: [{ type: Schema.Types.ObjectId }],
     branch_id: { type: Schema.Types.ObjectId, ref: 'Branch' },
     branch_name: { type: String, required: true },
+    /*
+     * The shop type chosen when the shop was registered. It is the source of
+     * truth for the assistant's category vocabulary, so a clothing shop is
+     * not offered mobile-phone categories and a supermarket is not offered
+     * laptop categories. Older shops have no value here; the assistant falls
+     * back to reading their own category names.
+     */
+    business_type: { type: String },
     store_email: { type: String },
     store_telephone: { type: String },
     store_alternativephone: { type: String },
@@ -239,6 +247,7 @@ class BranchModel {
       api: { type: 'String', select: true },
       balance_view: { type: 'String', select: true },
       branch_name: { type: 'String', select: true },
+      business_type: { type: 'String', select: true },
       branch_no: { type: 'String', select: true },
       branch_id: { type: 'ObjectId', select: true },
       cashdenom_fields: { type: 'Array', select: true },
@@ -991,8 +1000,20 @@ class BranchModel {
         },
       ];
 
+      /* The shop type is a property of the shop, chosen once at registration.
+         A second outlet inherits it; otherwise the assistant would treat the
+         new branch as a different kind of business. */
+      const existingShopType = await this.model
+        .findOne({
+          license: user.license,
+          business_type: { $nin: ['', null] },
+        })
+        .select('business_type')
+        .lean();
+
       const branchData = {
         branch_name: data.name?.trim(),
+        business_type: (existingShopType && existingShopType.business_type) || '',
         country: data.country,
         country_id: data.country_id,
         state: data.state,
