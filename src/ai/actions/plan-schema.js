@@ -153,6 +153,10 @@ function hasSamePriceReference(text) {
   return /(?:same price|same cost|نفس السعر|نفس سعر|نفس التكلفة|نفس تكلفة|زي السعر|زى السعر|السعر السابق|سعر السابق)/i.test(String(text || ''));
 }
 
+function explicitNoCategory(text) {
+  return /(?:بدون\s*(?:فئة|تصنيف|قسم)|من\s*غير\s*(?:فئة|تصنيف|قسم)|no\s+category|without\s+(?:a\s+)?category|uncategorized)/i.test(String(text || ''));
+}
+
 function mentionsRetailPrice(text) {
   return /(?:سعر\s*(?:ال)?تجزئة|التجزئة|تجزئة|retail(?:\s*price)?|\bmrp\b)/i.test(String(text || ''));
 }
@@ -279,6 +283,58 @@ async function findCategoryByName(api, name) {
   return matches[0] || null;
 }
 
+/* The local product flow has already loaded the category list and searched
+   for the product. Reuse those answers instead of asking the API the same
+   questions again while validating its plan. */
+function categoryFromList(categories, name) {
+  const list = Array.isArray(categories) ? categories : [];
+  const ranked = rankNameMatches(name, list, (row) => row && row.name);
+  return (ranked[0] && ranked[0].item) || null;
+}
+
+function categoriesFromList(categories, name) {
+  const list = Array.isArray(categories) ? categories : [];
+  return rankNameMatches(name, list, (row) => row && row.name)
+    .slice(0, 8)
+    .map((entry) => entry.item);
+}
+
+function categoryById(categories, id) {
+  const wanted = String(id || '');
+  if (!wanted) return null;
+  return (Array.isArray(categories) ? categories : []).find((category) =>
+    String((category && (category.id || category._id)) || '') === wanted) || null;
+}
+
+async function lookupCategoryByName(api, name, preloadedCategories, categoriesComplete) {
+  if (preloadedCategories) {
+    const existing = categoryFromList(preloadedCategories, name);
+    if (existing) return existing;
+    if (categoriesComplete) return null;
+  }
+  return findCategoryByName(api, name);
+}
+
+async function lookupCategoriesByName(api, name, preloadedCategories, categoriesComplete) {
+  if (!preloadedCategories) return findCategoriesByName(api, name);
+  const local = categoriesFromList(preloadedCategories, name);
+  if (categoriesComplete) return local;
+  const remote = await findCategoriesByName(api, name);
+  const seen = new Set(local.map((row) => String((row && (row.id || row._id)) || '')));
+  return local
+    .concat(remote.filter((row) => !seen.has(String((row && (row.id || row._id)) || ''))))
+    .slice(0, 8);
+}
+
+async function lookupCategoryById(api, id, preloadedCategories, categoriesComplete) {
+  if (preloadedCategories) {
+    const existing = categoryById(preloadedCategories, id);
+    if (existing) return existing;
+    if (categoriesComplete) return null;
+  }
+  return fetchCategory(api, id);
+}
+
 async function findProduct(api, query) {
   const payload = await api.get('items/search', { q: query, limit: 20 });
   return dataList(payload);
@@ -302,10 +358,11 @@ async function resolveProductTarget(api, text) {
     };
   }
   if (exact.length > 1) {
+    const names = exact.slice(0, 8).map(itemName).filter(Boolean);
     return {
       ok: false,
       code: 'ambiguous_target',
-      message: `More than one product matches "${text}". Ask which one, or use the record id.`,
+      message: `More than one product matches "${text}": ${names.join(', ')}. Ask which one by name; never ask for an id.`,
       matches: exact.slice(0, 8).map((item) => ({
         id: String(item.id || item._id || ''),
         name: itemName(item),
@@ -327,10 +384,11 @@ async function resolveProductTarget(api, text) {
     };
   }
   if (strict.length > 1) {
+    const names = strict.slice(0, 8).map((entry) => itemName(entry.item)).filter(Boolean);
     return {
       ok: false,
       code: 'ambiguous_target',
-      message: `More than one product matches "${text}". Ask which one, or use the record id.`,
+      message: `More than one product matches "${text}": ${names.join(', ')}. Ask which one by name; never ask for an id.`,
       matches: strict.slice(0, 8).map((entry) => ({
         id: String(entry.item.id || entry.item._id || ''),
         name: itemName(entry.item),
@@ -344,8 +402,8 @@ async function resolveProductTarget(api, text) {
     ok: false,
     code: closest.length ? 'ambiguous_target' : 'not_found',
     message: closest.length
-      ? `No product is named exactly "${text}". Closest matches: ${closest.join(', ')}. Ask which one, or use the record id.`
-      : `No product in this branch matches "${text}".`,
+      ? `No product is named exactly "${text}". Closest matches: ${closest.join(', ')}. Ask which one by name; never ask for an id.`
+      : `No product in this branch matches "${text}". Ask for a different name or description, or offer to create it.`,
     matches: closest,
   };
 }
@@ -360,10 +418,11 @@ async function resolveCategoryTarget(api, text) {
     };
   }
   if (matches.length > 1) {
+    const names = matches.slice(0, 8).map((item) => cleanText(item.name, 200)).filter(Boolean);
     return {
       ok: false,
       code: 'ambiguous_target',
-      message: `More than one category matches "${text}". Ask which one, or use the record id.`,
+      message: `More than one category matches "${text}": ${names.join(', ')}. Ask which one by name; never ask for an id.`,
       matches: matches.slice(0, 8).map((item) => ({
         id: String(item.id || item._id || ''),
         name: cleanText(item.name, 200),
@@ -373,7 +432,7 @@ async function resolveCategoryTarget(api, text) {
   return {
     ok: false,
     code: 'not_found',
-    message: `No category in this branch is named exactly "${text}".`,
+    message: `No category in this branch is named exactly "${text}". Ask for a different name or offer to create it.`,
   };
 }
 
@@ -421,7 +480,10 @@ function normaliseFields(raw, actionName, stepIDs) {
   const out = {};
   for (const [key, value] of Object.entries(raw)) {
     if (!allowed.has(key)) {
-      return error('field_not_allowed', `"${key}" cannot be used in ${spec.label.toLowerCase()}.`);
+      const hint = actionName === 'adjust_stock'
+        ? ' Put the product in target and use stock_mode, stock_quantity and reason in fields.'
+        : '';
+      return error('field_not_allowed', `"${key}" cannot be used in ${spec.label.toLowerCase()}.${hint}`);
     }
     if (value === undefined || value === null || value === '') continue;
     const next = fieldValue(actionName, key, value);
@@ -448,6 +510,35 @@ function normaliseFields(raw, actionName, stepIDs) {
     out[key] = next;
   }
   return { ok: true, fields: out };
+}
+
+/* The model often copies a product's id or name from a search result into
+   fields as product_id/product_name, because that is the shape of the row it
+   just read. Accept that natural shape for actions whose target is a product
+   instead of rejecting the plan with a field-name error. */
+function takeTargetAliases(input, actionName) {
+  if (!isObject(input)) return input;
+  const aliases = actionName === 'adjust_stock'
+    ? ['product_id', 'item_id', 'product_name', 'item_name', 'id', 'name', 'target']
+    : actionName === 'update_product'
+      ? ['product_id', 'item_id', 'product_name', 'item_name', 'target']
+      : actionName === 'update_category'
+        ? ['target']
+        : [];
+  if (!aliases.length) return input;
+  const fields = isObject(input.fields) ? { ...input.fields } : input.fields;
+  if (!isObject(fields)) return input;
+  let target = input.target;
+  for (const alias of aliases) {
+    const value = fields[alias];
+    if (value === undefined || value === null || value === '') {
+      delete fields[alias];
+      continue;
+    }
+    if (target === undefined || target === null || target === '') target = value;
+    delete fields[alias];
+  }
+  return { ...input, target, fields };
 }
 
 function stepTitle(step) {
@@ -495,8 +586,24 @@ function describeAttachment(attachments, sessionID, attachmentId, requestedName 
   return described;
 }
 
-async function validatePlan(raw, { api, sessionID, attachments, userText = '' } = {}) {
+async function validatePlan(raw, {
+  api,
+  sessionID,
+  attachments,
+  userText = '',
+  lookups = null,
+} = {}) {
   const userWords = cleanText(userText, 4000);
+  const preloaded = lookups && typeof lookups === 'object' ? lookups : {};
+  const preloadedCategories = Array.isArray(preloaded.categories) ? preloaded.categories : null;
+  const categoriesComplete = preloaded.categoriesComplete === true && !!preloadedCategories;
+  const preloadedProducts = Array.isArray(preloaded.products) ? preloaded.products : null;
+  const currentCategory = preloaded.currentCategory && typeof preloaded.currentCategory === 'object'
+    ? {
+        id: cleanText(preloaded.currentCategory.id, 80),
+        name: cleanText(preloaded.currentCategory.name, 200),
+      }
+    : null;
   if (!api || typeof api.get !== 'function') {
     return error('configuration_error', 'The shop data service is not available.');
   }
@@ -514,8 +621,42 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
     allStepIDs.add(stepID);
   });
 
-  if (isObject(raw.shared)) {
-    for (const key of Object.keys(raw.shared)) {
+  const warnings = [];
+
+  /* A category reference is only valid inside the plan that contains the
+     category step. When the model carries a reference from an earlier plan
+     (for example after the user just created a category), use the current
+     category from the conversation instead of failing the whole plan. */
+  function repairCategoryFields(fields, stepIDs, label) {
+    if (!isObject(fields)) return fields;
+    const out = { ...fields };
+    const idRef = isRef(out.category_id) && !stepIDs.has(out.category_id.step);
+    const nameRef = isRef(out.category_name) && !stepIDs.has(out.category_name.step);
+    if (!idRef && !nameRef) return out;
+    const concreteId = !isRef(out.category_id) ? cleanText(out.category_id, 80) : '';
+    const concreteName = !isRef(out.category_name) ? cleanText(out.category_name, 200) : '';
+    if (idRef) delete out.category_id;
+    if (nameRef) delete out.category_name;
+    if (concreteId || concreteName) {
+      warnings.push(`Ignored a category reference in ${label} that points to an earlier plan.`);
+      return out;
+    }
+    if (currentCategory && (currentCategory.id || currentCategory.name)) {
+      if (currentCategory.id) out.category_id = currentCategory.id;
+      if (currentCategory.name) out.category_name = currentCategory.name;
+      warnings.push(
+        `The category reference in ${label} came from an earlier plan; ` +
+        `using the current category "${currentCategory.name || currentCategory.id}".`,
+      );
+    } else {
+      warnings.push(`Ignored a category reference in ${label} that points to an earlier plan.`);
+    }
+    return out;
+  }
+
+  const sharedInput = repairCategoryFields(raw.shared, allStepIDs, 'shared fields');
+  if (isObject(sharedInput)) {
+    for (const key of Object.keys(sharedInput)) {
       if (!SHARED_FIELDS.has(key)) {
         return error('field_not_allowed', `"${key}" cannot be shared across every step.`);
       }
@@ -523,9 +664,9 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
   }
 
   const shared = {};
-  if (isObject(raw.shared)) {
-    for (const key of Object.keys(raw.shared)) {
-      const next = fieldValue('create_product', key, raw.shared[key]);
+  if (isObject(sharedInput)) {
+    for (const key of Object.keys(sharedInput)) {
+      const next = fieldValue('create_product', key, sharedInput[key]);
       if (next === null) return error('invalid_field', `Shared "${key}" must be valid.`);
       if (isRef(next) && !allStepIDs.has(next.step)) {
         return error('invalid_reference', `Shared "${key}" refers to a step that is not in this plan.`);
@@ -537,17 +678,17 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
   const steps = [];
   const stepIDs = new Set();
   const categorySteps = new Set();
-  const warnings = [];
   const productNames = new Set();
   const productCodes = new Set();
   const textCorrections = new Map();
 
   for (let index = 0; index < raw.steps.length; index += 1) {
-    const input = raw.steps[index];
+    let input = raw.steps[index];
     if (!isObject(input)) return error('invalid_plan', `Step ${index + 1} is not an object.`);
     const actionName = cleanText(input.action, 40);
     const spec = ACTIONS[actionName];
     if (!spec) return error('invalid_action', `Step ${index + 1} has an unknown action.`);
+    input = takeTargetAliases(input, actionName);
 
     const stepID = cleanText(input.id, 40) || `s${index + 1}`;
     if (!/^[a-z0-9_-]+$/i.test(stepID)) {
@@ -557,7 +698,8 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
       return error('invalid_plan', `Step id "${stepID}" is used twice.`);
     }
 
-    const normalized = normaliseFields(input.fields || {}, actionName, stepIDs);
+    const repairedFields = repairCategoryFields(input.fields || {}, allStepIDs, `step "${stepID}"`);
+    const normalized = normaliseFields(repairedFields, actionName, stepIDs);
     if (!normalized.ok) return normalized;
     let fields = mergeShared(normalized.fields, shared, actionName);
     for (const value of Object.values(fields)) {
@@ -566,6 +708,20 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
           'invalid_reference',
           `Step "${stepID}" refers to a step that is not earlier in this plan.`,
         );
+      }
+    }
+
+    /* A product added in the same topic belongs to the category the topic is
+       already working in. The model should include it explicitly, but when it
+       omits the category, the conversation's current category is the safe
+       default; an explicit "without category" still wins. */
+    if (actionName === 'create_product' && currentCategory &&
+        !fields.category_id && !fields.category_name && !explicitNoCategory(userWords)) {
+      const categoryId = /^[a-f0-9]{24}$/i.test(currentCategory.id) ? currentCategory.id : '';
+      if (categoryId) fields.category_id = categoryId;
+      if (currentCategory.name) fields.category_name = currentCategory.name;
+      if (categoryId || currentCategory.name) {
+        warnings.push(`Used the current category "${currentCategory.name || currentCategory.id}".`);
       }
     }
 
@@ -610,15 +766,27 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
       if (isRef(target)) {
         const ref = parseRef(target);
         if (!stepIDs.has(ref.step)) {
-          return error('invalid_reference', `Step "${stepID}" targets a step that is not earlier in this plan.`);
+          return error(
+            'invalid_reference',
+            `Step "${stepID}" targets a step that is not earlier in this plan. ` +
+            'Use the product name or id from the search result, or add that step earlier in this same plan.',
+          );
         }
         step.target = ref;
       } else {
         const targetText = cleanText(target, 200);
         if (!targetText) {
+          if (actionName === 'adjust_stock') {
+            return error(
+              'invalid_target',
+              `Step "${stepID}" needs the product in target, not in fields. ` +
+              'Use the name or id from the search result, for example ' +
+              '{"target":"كاتل مياه استانلس 1.7 لتر","fields":{"stock_mode":"subtract","stock_quantity":3}}.',
+            );
+          }
           return error(
             'invalid_target',
-            `Step "${stepID}" needs a product or category name, barcode, SKU, or record id.`,
+            `Step "${stepID}" needs a product or category name, description, barcode or SKU. An id from a tool result also works, but never ask the user for one.`,
           );
         }
         const targetID = id(targetText);
@@ -777,7 +945,7 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
       if (!isRef(fields.category_id) && !fields.category_id && fields.category_name && !isRef(fields.category_name)) {
         let existing;
         try {
-          existing = await findCategoryByName(api, fields.category_name);
+          existing = await lookupCategoryByName(api, fields.category_name, preloadedCategories, categoriesComplete);
         } catch (caught) {
           return error(caught.code || 'request_failed', caught.message || 'The category could not be checked.');
         }
@@ -792,7 +960,7 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
       }
       if (fields.category_id && !isRef(fields.category_id)) {
         try {
-          const category = await fetchCategory(api, fields.category_id);
+          const category = await lookupCategoryById(api, fields.category_id, preloadedCategories, categoriesComplete);
           if (category) fields.category_name = cleanText(category.name, 200);
         } catch (caught) {
           return error('category_not_found', 'That category was not found in this branch.');
@@ -800,7 +968,7 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
       }
 
       try {
-        const matches = await findProduct(api, fields.name);
+        const matches = preloadedProducts || await findProduct(api, fields.name);
         const exact = matches.find((item) => normaliseName(itemName(item)) === wanted);
         if (exact) {
           return error(
@@ -820,6 +988,35 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
               'possible_duplicate',
               `The code "${code}" is already used by "${itemName(codeMatch)}". Choose another code or update that product.`,
               { existingId: String(codeMatch.id || codeMatch._id || '') },
+            );
+          }
+          /* The name search cannot see a different-name product carrying the
+             same code, and the server refuses that write only at execution
+             time. Ask the catalogue by the code itself — trimmed and
+             lowercased, leading zeros kept — so the clash surfaces as
+             possible_duplicate with the product to update. The real search
+             matches exact codes (barcode_id, sku, itemid, plu_code, gtin,
+             barcodes — item.repository.searchItems). If this lookup cannot
+             run, fail open with a logged warning: the server's barcode write
+             lock is the backstop, while the name check above keeps its
+             fail-closed path as the primary duplicate gate. */
+          let byCode = [];
+          try {
+            byCode = await findProduct(api, String(code).trim());
+          } catch (lookupError) {
+            step.warnings.push(
+              `The barcode duplicate check could not run (${lookupError.message || lookupError}); ` +
+              'the server will still refuse a code clash.',
+            );
+          }
+          const exactCode = byCode.find((item) =>
+            String(itemBarcode(item)).trim().toLowerCase() === wantedCode ||
+            String(itemSku(item)).trim().toLowerCase() === wantedCode);
+          if (exactCode) {
+            return error(
+              'possible_duplicate',
+              `The code "${code}" is already used by "${itemName(exactCode)}". Choose another code or update that product.`,
+              { existingId: String(exactCode.id || exactCode._id || '') },
             );
           }
         }
@@ -892,7 +1089,7 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
       if (fields.category_name && !fields.category_id && !isRef(fields.category_name)) {
         let existing;
         try {
-          existing = await findCategoryByName(api, fields.category_name);
+          existing = await lookupCategoryByName(api, fields.category_name, preloadedCategories, categoriesComplete);
         } catch (caught) {
           return error(caught.code || 'request_failed', caught.message || 'The category could not be checked.');
         }
@@ -907,7 +1104,7 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
       }
       if (fields.category_id && !isRef(fields.category_id)) {
         try {
-          const category = await fetchCategory(api, fields.category_id);
+          const category = await lookupCategoryById(api, fields.category_id, preloadedCategories, categoriesComplete);
           if (category) fields.category_name = cleanText(category.name, 200);
         } catch (caught) {
           return error('category_not_found', 'That category was not found in this branch.');
@@ -925,17 +1122,39 @@ async function validatePlan(raw, { api, sessionID, attachments, userText = '' } 
       const wanted = normaliseName(fields.name);
       let reusedCategory = false;
       try {
-        const candidates = await findCategoriesByName(api, fields.name);
+        const candidates = await lookupCategoriesByName(
+          api,
+          fields.name,
+          preloadedCategories,
+          categoriesComplete,
+        );
         const existing = candidates.find((row) => normaliseName(row.name) === wanted);
         if (existing) {
-          return error(
-            'possible_duplicate',
-            `A category named "${fields.name}" already exists. Use that category or choose a different name.`,
-            { existingId: String(existing.id || existing._id || '') },
-          );
+          const existingId = String(existing.id || existing._id || '');
+          const existingName = cleanText(existing.name, 200);
+          /* A plan that creates a category and then puts a product in it is
+             asking for that shelf, not for a second category with the same
+             name. Reuse the shelf that is already there. */
+          if (laterStepUsesCategory(raw.steps, index, stepID, fields.name)) {
+            step.reuse = { id: existingId, name: existingName };
+            step.label = 'Use existing category';
+            textCorrections.set(fields.name, existingName);
+            fields.name = existingName;
+            step.warnings.push(
+              `Reused the existing category "${existingName}" instead of creating a duplicate.`,
+            );
+            warnings.push(`Reuses the existing category "${existingName}".`);
+            reusedCategory = true;
+          } else {
+            return error(
+              'possible_duplicate',
+              `A category named "${fields.name}" already exists. Use that category or choose a different name.`,
+              { existingId, existingName },
+            );
+          }
         }
         const similar = candidates[0];
-        if (similar) {
+        if (!reusedCategory && similar) {
           const score = scoreNameMatch(fields.name, similar.name);
           /* The same number of words plus a close spelling is a variant of an
              existing category (الاحزايا -> احذية), not a new one. Multi-word

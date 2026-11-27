@@ -221,7 +221,13 @@ function currentProductPayload(current, fields, images, cover) {
 }
 
 function expectedStock(before, fields) {
-  const old = number(before && before.stock);
+  /* `available_quantity` is the live row's field and `stock` is what
+     beforeProduct() carries out of the preview. Prefer the live one so the
+     answer is the same number the read-back will report. */
+  const current = before && before.available_quantity !== undefined
+    ? before.available_quantity
+    : (before && before.stock);
+  const old = number(current);
   const qty = number(fields.stock_quantity);
   if (fields.stock_mode === 'set') return qty;
   if (fields.stock_mode === 'add') return old + qty;
@@ -389,7 +395,12 @@ async function executeStep(step, { api, attachments, sessionID, results, registe
   }
 
   if (step.action === 'adjust_stock') {
-    const before = step.before || (await fetchItem(api, target));
+    /* Read the live row now, not the preview snapshot, for the same reason
+       update_category does: stock moves between the preview and Confirm.
+       The expected quantity has to come from what is on the shelf today, and
+       the rollback has to restore the value that was there when this step
+       ran - restoring a preview-time number would put sold units back. */
+    const before = await fetchItem(api, target);
     if (!before) throw new Error('The product was not found in this branch.');
     const expected = expectedStock(before, fields);
     const response = await api.post('items/stockAdjustment', {
