@@ -52,6 +52,16 @@ const SPELLING_VARIANTS = new Map([
   ['خضرا', 'خضراء'],
 ]);
 
+/* "How do I add a product?" is a request for an explanation, not a request to
+   create a record. Treat it as a question even though it contains a write
+   verb. Keep this narrow: a user can still write "عايز أضيف منتج؟" and mean
+   the action. */
+const HOW_TO_RE = /(?:^|[\s،,])(?:how\s+(?:do|can|should|would|could)\s+(?:i|we|you)\s+(?:add|create|make|enter|save|register)|how\s+to\s+(?:add|create|make|enter|save|register)|what(?:'s|\s+is)\s+the\s+way\s+to\s+(?:add|create|make|enter|save|register)|(?:إزاي|ازاي|إزى|ازى|كيف|كيفية|إزيك|ازيك)\s+(?:أضيف|اضيف|أضف|اضف|أنشئ|انشئ|أسجل|اسجل|أعمل|اعمل|أدخل|ادخل|أحفظ|احفظ|أضبط|اضبط))/iu;
+
+function isHowToQuestion(value) {
+  return HOW_TO_RE.test(String(value || ''));
+}
+
 function correctCommonSpelling(value) {
   const source = String(value == null ? '' : value);
   /* "14 أدم" is a common slip for "14 قدم" (feet). Only correct it after a
@@ -74,6 +84,7 @@ module.exports = {
   correctCommonSpelling,
   editDistance: smart.editDistance,
   expandQuery: smart.expandQuery,
+  isHowToQuestion,
   nameSimilarity: smart.nameSimilarity,
   normalizeName: smart.normalizeSearchText,
   phoneticKey: smart.phoneticKey,

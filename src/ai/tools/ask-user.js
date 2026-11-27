@@ -10,6 +10,8 @@
 'use strict';
 
 const { text } = require('./values');
+const { isHowToQuestion } = require('../text-match');
+const { CATEGORY_STOP_WORDS, CATEGORY_PHRASE_RE } = require('../category-terms');
 
 const MAX_QUESTION_CHARS = 300;
 const MAX_OPTIONS = 4;
@@ -18,7 +20,8 @@ const MAX_VALUE_CHARS = 160;
 const MAX_PENDING_CHARS = 500;
 const MAX_MISSING = 8;
 
-const CATEGORY_PHRASE_RE = /(?:^|\s)(?:في|فى|داخل|ضمن|in|under)\s+(?:فئة|قسم|category)\s+([^\s،,.!?]+(?:\s+[^\s،,.!?]+){0,2})/i;
+/* CATEGORY_PHRASE_RE and CATEGORY_STOP_WORDS come from ../category-terms:
+   the parser reads the same category value with the same stop rules. */
 const CATEGORY_WORD_RE = /(?:فئة|تصنيف|قسم|category)/i;
 const CATEGORY_CHOICE_RE = /(?:أنشئ|إنشاء|انشئ|انشاء|أترك|اترك|بدون\s+(?:تصنيف|فئة)|من\s+غير\s+(?:تصنيف|فئة)|leave\s+(?:it\s+)?uncategorized|create\s+(?:a\s+)?(?:suitable\s+)?category|without\s+(?:a\s+)?category)/i;
 const IMAGE_WORD_RE = /(?:صورة|صور|image|photo|picture)/i;
@@ -28,6 +31,49 @@ const PRODUCT_CONTEXT_RE = /(?:منتج|صنف|برودكت|product|item)/i;
 const CREATE_CATEGORY_EN_RE = /^create\s+(?:a\s+)?(?:new\s+)?category\s*[:\-]?\s*(.*)$/i;
 const LEAVE_UNCATEGORIZED_EN_RE = /^leave\s+(?:it\s+)?uncategorized\.?$/i;
 const ARABIC_RE = /[\u0600-\u06FF]/;
+/* A yes/no permission question ("shall I enter the details?") spends a whole
+   turn without collecting a value. When fields are missing, rewrite it into
+   the question that asks for those fields. Image/category questions are
+   genuine choices, so they are left alone. */
+const PERMISSION_ONLY_RE = new RegExp([
+  '(?:^|\\s)(?:هل\\s+)?(?:تريد|تحب|عايز|عاوز|تود)\\s+(?:أن\\s+|ان\\s+)?(?:أدخل|ادخل|إدخال|ادخال|أكمل|اكمل|نكمل|أتابع|اتابع|أبدأ|ابدا|أضيف|اضيف|إضافة|اضافة|المتابعة|الاستمرار|استمرار)\\b',
+  '(?:^|\\s)(?:أكمل|اكمل|نكمل|أتابع|اتابع)\\s*[؟?]?\\s*$',
+  '^(?:do you want|would you like|shall i|should i|can i|may i)\\s+(?:me\\s+)?(?:to\\s+)?(?:add|enter|continue|proceed|save|create|go ahead)\\b',
+].join('|'), 'i');
+
+const UPDATE_REQUEST_RE = /(?:^|\s)(?:edit|update|change|modify|rename|adjust|set|fix|correct|تعديل|عدل|عدّل|غير|غيّر|حدث|حدّث|تغيير|تعدل)(?:\s|$)/i;
+const ATTACHMENT_ID_RE = /(?:attachment|file|image)\s*(?:id|identifier)\b|(?:id|identifier)\s*(?:for|of)?\s*(?:the\s+)?(?:attachment|file|image)\b|معرّف\s*(?:المرفق|مرفق|الصورة)|معرف\s*(?:المرفق|مرفق|الصورة)|attachment_id/i;
+const RECORD_ID_RE = /(?:product|item|record|category)\s*(?:id|identifier)\b|(?:id|identifier)\s*(?:for|of)?\s*(?:the\s+)?(?:product|item|record|category)\b|معرّف\s*(?:المنتج|منتج|السجل|سجل|الفئة|فئة|الصنف|صنف)|معرف\s*(?:المنتج|منتج|السجل|سجل|الفئة|فئة|الصنف|صنف)|(?:product|item|record|category)_id/i;
+const GENERIC_ID_RE = /(?:^|\s)(?:the\s+)?id(?:\s|$)|(?:^|\s)(?:آي|اي)\s*دي(?:\s|$)/i;
+const UPDATE_SCOPE_FIELDS = [
+  ['selling_price', /(?:selling|sale|sell|price|سعر|بيع|بسعر)/i],
+  ['cost_price', /(?:cost|purchase|company|تكلفة|التكلفة|شراء)/i],
+  ['opening_stock', /(?:stock|quantity|qty|مخزون|كمية|الكمية|المخزون)/i],
+  ['image', /(?:image|photo|picture|صورة|صور)/i],
+];
+
+function normalisedField(value) {
+  return String(value || '').toLowerCase().replace(/[\s-]+/g, '_');
+}
+
+function fieldsInMissing(missing) {
+  const fields = new Set();
+  for (const item of missing) {
+    const key = normalisedField(item);
+    for (const [field, pattern] of UPDATE_SCOPE_FIELDS) {
+      if (key === field || pattern.test(key)) fields.add(field);
+    }
+  }
+  return fields;
+}
+
+function fieldsInUserWords(value) {
+  const fields = new Set();
+  for (const [field, pattern] of UPDATE_SCOPE_FIELDS) {
+    if (pattern.test(value)) fields.add(field);
+  }
+  return fields;
+}
 
 function localizeCategoryOption(option) {
   const create = String(option.label || '').match(CREATE_CATEGORY_EN_RE);
@@ -42,14 +88,8 @@ function localizeCategoryOption(option) {
   }
   return option;
 }
-const CATEGORY_STOP_WORDS = new Set([
-  'و', 'أو', 'او', 'ثم', 'بس', 'بسعر', 'سعر', 'السعر', 'وكمية', 'كمية',
-  'الكمية', 'وتكلفة', 'تكلفة', 'التكلفة', 'ووصف', 'وصف', 'الوصف', 'وخلي',
-  'خلي', 'خلى', 'ويكون', 'يكون', 'علشان', 'عشان', 'مع', 'في', 'فى', 'من',
-  'الى', 'إلى', 'على', 'والتكلفة', 'والكمية', 'والوصف', 'جديدة', 'جديد',
-  'new', 'and', 'with', 'for', 'price', 'cost', 'stock', 'quantity',
-  'description',
-]);
+/* CATEGORY_STOP_WORDS comes from ../category-terms — one set for the
+   parser's cleanCategoryName and this tool's namedCategory. */
 
 /* Return the category the user already named after "في فئة ...". A short
    answer or a different question must not make the assistant ask which
@@ -76,13 +116,57 @@ function normaliseQuestion(value) {
     .trim();
 }
 
+/* Models sometimes send only the missing field labels. Compose a readable
+   question from them instead of failing the turn on a missing question. */
+const MISSING_LABELS = new Map([
+  ['name', ['اسم المنتج', 'product name']],
+  ['product_name', ['اسم المنتج', 'product name']],
+  ['selling_price', ['سعر البيع', 'selling price']],
+  ['price', ['سعر البيع', 'selling price']],
+  ['cost_price', ['سعر التكلفة', 'cost price']],
+  ['cost', ['سعر التكلفة', 'cost price']],
+  ['opening_stock', ['كمية الافتتاح', 'opening stock']],
+  ['stock', ['الكمية', 'quantity']],
+  ['quantity', ['الكمية', 'quantity']],
+  ['image', ['صورة المنتج', 'product image']],
+  ['product_image', ['صورة المنتج', 'product image']],
+  ['category', ['التصنيف', 'category']],
+]);
+
+function missingLabel(value, arabic) {
+  const raw = String(value || '').trim();
+  const key = raw.toLowerCase().replace(/[\s-]+/g, '_');
+  const labels = MISSING_LABELS.get(key);
+  return labels ? labels[arabic ? 0 : 1] : raw;
+}
+
+function missingQuestion(missing, { arabic: forceArabic } = {}) {
+  const arabic = typeof forceArabic === 'boolean'
+    ? forceArabic
+    : missing.some((item) => ARABIC_RE.test(item));
+  const labels = [];
+  for (const item of missing) {
+    const label = missingLabel(item, arabic);
+    if (label && !labels.includes(label)) labels.push(label);
+  }
+  if (!labels.length) return '';
+  const prefix = arabic ? 'أحتاج: ' : 'I need: ';
+  return text(`${prefix}${labels.join(arabic ? '، ' : ', ')}.`, MAX_QUESTION_CHARS);
+}
+
 function askUser(input, {
   pendingText = '',
   pendingNote = '',
   answered = [],
   currentCategory = null,
 } = {}) {
-  const question = text(input && input.question, MAX_QUESTION_CHARS);
+  const missing = (Array.isArray(input && input.missing) ? input.missing : [])
+    .map((item) => text(item, 60))
+    .filter(Boolean)
+    .slice(0, MAX_MISSING);
+
+  let question = text(input && input.question, MAX_QUESTION_CHARS) ||
+    missingQuestion(missing);
   if (!question) {
     return {
       kind: 'error',
@@ -90,9 +174,84 @@ function askUser(input, {
       message: 'A clarification question needs text.',
     };
   }
+  /* "Do you want to enter the details?" is not a useful question when the
+     details are already known to be missing. Ask for the values instead of
+     spending another turn on a yes/no answer. */
+  const permissionOnly = missing.length > 0 &&
+    PERMISSION_ONLY_RE.test(question) &&
+    !IMAGE_WORD_RE.test(question) &&
+    !CATEGORY_WORD_RE.test(question);
+  if (permissionOnly) {
+    const rewritten = missingQuestion(missing, { arabic: ARABIC_RE.test(question) });
+    if (rewritten) question = rewritten;
+  }
   const arabic = ARABIC_RE.test(question);
 
-  const rawOptions = Array.isArray(input && input.options) ? input.options : [];
+  /* The user must never be asked for an internal identifier. When the model
+     tries to ask for one, return an internal correction it can act on instead
+     of showing the question. This is a safety net, not the main workflow. */
+  const missingKeys = missing.map(normalisedField);
+  const attachmentIdQuestion = ATTACHMENT_ID_RE.test(question) ||
+    missingKeys.some((key) => key === 'attachment_id' || key === 'image_attachment_id');
+  if (attachmentIdQuestion) {
+    return {
+      kind: 'error',
+      code: 'internal_attachment_id',
+      internal: true,
+      message: 'Do not ask for an attachment id. Ask the user to attach the image in the chat. When it arrives, use the attachment id from the attachment notice automatically.',
+    };
+  }
+  const recordIdQuestion = RECORD_ID_RE.test(question) ||
+    missingKeys.some((key) => ['product_id', 'item_id', 'record_id', 'category_id'].includes(key));
+  if (recordIdQuestion) {
+    return {
+      kind: 'error',
+      code: 'internal_record_id',
+      internal: true,
+      message: 'Do not ask for a record id. Ask for the product name or a short description, call posnic_search_products, show the matching names as choices, and use the selected name as the plan target.',
+    };
+  }
+  if (GENERIC_ID_RE.test(question)) {
+    return {
+      kind: 'error',
+      code: 'internal_id_question',
+      internal: true,
+      message: 'Do not ask for an internal id. For a product, ask for its name or a short description and search. For an image, ask the user to attach it in the chat.',
+    };
+  }
+
+  /* An update only asks for the change the user requested. Asking for price,
+     cost, stock or an image after "edit that product" is the exact failure
+     this guard prevents. Create requests are left alone. */
+  const updateRequest = UPDATE_REQUEST_RE.test(pendingText) &&
+    !CREATE_DRAFT_RE.test(pendingText) &&
+    !isHowToQuestion(pendingText);
+  if (updateRequest) {
+    const answers = Array.isArray(answered) ? answered : [];
+    const userWords = [
+      pendingText,
+      ...answers.map((item) => item && item.answer).filter(Boolean),
+    ].join(' ');
+    const userFields = fieldsInUserWords(userWords);
+    const requestedFields = fieldsInMissing(missing);
+    const extraFields = [...requestedFields].filter((field) => !userFields.has(field));
+    if (extraFields.length) {
+      const allowed = [...userFields].filter((field) => requestedFields.has(field));
+      const message = allowed.length
+        ? `This is an update. The user asked to change: ${allowed.join(', ')}. Ask only for those values; do not ask for ${extraFields.join(', ')}.`
+        : 'This is an update, not a new product. Do not ask for selling price, cost price, stock or an image unless the user asked to change them. If the product is not identified, ask for its name or a short description and search. Then ask what they want to change.';
+      return {
+        kind: 'error',
+        code: 'update_scope_question',
+        internal: true,
+        message,
+      };
+    }
+  }
+
+  const rawOptions = !permissionOnly && Array.isArray(input && input.options)
+    ? input.options
+    : [];
   if (rawOptions.length > MAX_OPTIONS) {
     return {
       kind: 'error',
@@ -113,11 +272,6 @@ function askUser(input, {
       options[index] = localizeCategoryOption(options[index]);
     }
   }
-
-  const missing = (Array.isArray(input && input.missing) ? input.missing : [])
-    .map((item) => text(item, 60))
-    .filter(Boolean)
-    .slice(0, MAX_MISSING);
 
   const settled = (Array.isArray(answered) ? answered : [])
     .filter((item) => item && item.question && item.answer)
@@ -230,5 +384,8 @@ module.exports = {
   MAX_QUESTION_CHARS,
   askUser,
   formatForModel,
+  missingLabel,
+  missingQuestion,
+  namedCategory,
 };
 

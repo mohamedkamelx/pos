@@ -99,6 +99,10 @@ function formatForModel(result) {
       item.id ? `id: ${item.id}` : '',
       item.category ? `category: ${item.category}` : '',
       `price: ${item.sellingPrice}`,
+      /* See search-products: cost is in the mapped row and must reach the
+         model or no margin question can be answered. Zero is "not set", so
+         it stays out of the row instead of looking like a real cost. */
+      Number(item.costPrice) > 0 ? `cost: ${item.costPrice}` : '',
       `stock: ${item.stock}`,
       item.unit ? `unit: ${item.unit}` : '',
     ].filter(Boolean);

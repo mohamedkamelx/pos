@@ -106,6 +106,12 @@ function formatForModel(result) {
         item.id ? `id: ${item.id}` : '',
         item.category ? `category: ${item.category}` : '',
         `price: ${item.sellingPrice}`,
+        /* Cost is the one field the model needs and never used to get. A
+           margin, a markup or a "what is stuck in the store" question cannot
+           be answered without it, and it was in the mapped row all along.
+           Zero means the shop has not set a cost, so it is omitted rather
+           than shown as a real zero. */
+        Number(item.costPrice) > 0 ? `cost: ${item.costPrice}` : '',
         `stock: ${item.stock}`,
         item.unit ? `unit: ${item.unit}` : '',
         includeCodes && item.barcode ? `barcode: ${item.barcode}` : '',
@@ -114,6 +120,9 @@ function formatForModel(result) {
       return parts.join(' | ');
     }),
     `Matches returned: ${result.count}.`,
+    result.count === 1
+      ? 'Use the product name as the target; do not ask the user for its id.'
+      : 'If the user must choose, call posnic_ask_user with these product names as options and use the chosen name as the target; do not ask for an id.',
   ];
   return lines.join('\n');
 }
