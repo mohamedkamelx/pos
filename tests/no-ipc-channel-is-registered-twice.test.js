@@ -42,6 +42,16 @@ function registrations() {
       const line = text.slice(0, m.index).split('\n').length;
       found.push({ kind: m[1], channel: m[2], file, line });
     }
+    /* ai-ipc registers through one local handle() wrapper so the desktop IPC
+       map and the phone API bridge cannot drift apart. That wrapper is the
+       same ipcMain.handle call, so the sweep must see its channels too. */
+    if (file === 'ai-ipc.js') {
+      const wrapped = /(?:^|\n)\s*handle\(\s*'([^']+)'/g;
+      while ((m = wrapped.exec(text))) {
+        const line = text.slice(0, m.index).split('\n').length;
+        found.push({ kind: 'handle', channel: m[1], file, line });
+      }
+    }
   }
   return found;
 }

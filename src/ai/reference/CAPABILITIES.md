@@ -316,12 +316,20 @@ Input:
   "options": [
     { "label": "Piece", "value": "piece" },
     { "label": "Kilogram", "value": "kilogram" }
-  ]
+  ],
+  "missing": ["unit"]
 }
 ```
 
 Rules:
 
+- Put the question text in `question`. `missing` is optional and only lists
+  the field labels; the tool composes a question from them when `question` is
+  omitted.
+- Never ask a yes/no permission question such as "Do you want to enter the
+  details?" or "هل تريد إدخال البيانات؟" when values are missing. Ask for the
+  missing values themselves in the same question. If the user already said
+  yes, continue with the values instead of asking again.
 - Do not ask when the request is already clear. "Which products do I have?"
   and "all products" are list requests, not category questions.
 - Do not ask for optional fields. Leave them at their defaults.
@@ -366,9 +374,23 @@ Rules:
 
 - Always search first and reuse an existing product or category instead of
   creating a duplicate.
-- The target may be the record id or the exact product/category name, barcode
-  or SKU. The main process resolves the name in the current branch. Never ask
-  the user to find or type an internal record id.
+- The target may be the record id or the exact product/category name,
+  description, barcode or SKU. The main process resolves the name in the
+  current branch. Never ask the user to find or type an internal record id.
+- For an update, include only the fields the user wants to change. If they did
+  not say what to change, ask what they want to change; never ask for every
+  editable field.
+- To change an image, ask the user to attach it in the chat. Use the attachment
+  id from the notice automatically; never ask for an attachment id.
+- A plan can contain several ordered steps. A read part of the request is
+  answered from the live tool row before the preview.
+- For `adjust_stock`, put the product in `target` and use `stock_mode`,
+  `stock_quantity` and `reason` in `fields`. Do not put `product_id` in
+  `fields`.
+- A step reference only works inside the same plan. For the current category
+  from an earlier plan, use its name or id, not a step reference.
+- Never answer stock, price, cost or count from memory or a plan preview.
+  Search or list the live row first. A plan preview is not saved data.
 - If several new products need the same new category, create the category once
   as an earlier step and reference its id in the product steps.
 - Reference an earlier step with `{"step":"cat1","field":"id"}` or

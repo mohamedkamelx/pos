@@ -110,12 +110,17 @@ function fakeOpenCodeSdk({ promptHook, tokenHook, waitHook } = {}) {
     clock: 1000,
   };
   const client = {
-    provider: { list: async () => ({ data: [{ id: 'groq' }] }) },
+    provider: { list: async () => ({ data: [{ id: 'groq' }, { id: 'nvidia' }] }) },
     model: {
       list: async () => ({
         data: [
           { providerID: 'groq', id: 'openai/gpt-oss-120b', modelID: 'openai/gpt-oss-120b' },
           { providerID: 'groq', id: 'openai/gpt-oss-20b', modelID: 'openai/gpt-oss-20b' },
+          {
+            providerID: 'nvidia',
+            id: 'moonshotai/kimi-k3.1-pro',
+            modelID: 'moonshotai/kimi-k3.1-pro',
+          },
         ],
       }),
     },
@@ -197,7 +202,7 @@ function fakeOpenCodeSdk({ promptHook, tokenHook, waitHook } = {}) {
 async function createRuntimeHarness(t, options = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'posnic-runtime-'));
   const logs = [];
-  let settings = { provider: 'groq', model: 'openai/gpt-oss-120b' };
+  let settings = options.settings || { provider: 'groq', model: 'openai/gpt-oss-120b' };
   const { client, state } = fakeOpenCodeSdk(options);
   const sdkLoaderPath = require.resolve(path.join(ROOT, 'src/ai/sdk-loader'));
   const runtimePath = require.resolve(path.join(ROOT, 'src/ai/opencode-runtime'));
@@ -220,9 +225,10 @@ async function createRuntimeHarness(t, options = {}) {
       setSettings: (next) => { settings = next; return settings; },
     },
     logger: (line) => logs.push(line),
-    fetchImpl: async () => response(200, { data: [] }),
+    fetchImpl: options.fetchImpl || (async () => response(200, { data: [] })),
     apiBaseUrl: 'http://127.0.0.1:5555',
     chatTimeoutMs: options.chatTimeoutMs,
+    slowNoticeMs: options.slowNoticeMs,
   });
   t.after(async () => {
     await runtime.close();
@@ -336,6 +342,21 @@ test('a category question offers create or leave uncategorized', () => {
   assert.equal(localized.options[1].value, 'ترك غير مصنفة');
 });
 
+test('the local API bridge reaches the same handlers as IPC', async (t) => {
+  const h = setup(t);
+
+  assert.ok(h.state.bridge, 'the API bridge was not exposed');
+  assert.equal(global.__posnicAiBridge, h.state.bridge);
+
+  const status = await h.state.bridge.invoke('ai:key-status', {});
+  assert.equal(status.success, true);
+  assert.equal(status.enabled, false);
+
+  const unknown = await h.state.bridge.invoke('ai:not-a-channel', {});
+  assert.equal(unknown.success, false);
+  assert.equal(unknown.code, 'bridge_unknown');
+});
+
 test('both credentials are validated, encrypted and kept out of the page', async (t) => {
   const h = setup(t, {
     fetchImpl: async (url, init) => {
@@ -359,6 +380,7 @@ test('both credentials are validated, encrypted and kept out of the page', async
       'ai:reset-chat',
       'ai:save-key',
       'ai:save-provider-key',
+      'ai:set-active-provider-key',
       'ai:set-enabled',
       'ai:set-provider-model',
       'ai:set-reasoning',
@@ -462,39 +484,65 @@ test('the provider token and model selection are separate from transcription', a
   assert.equal((await h.handlers.get('ai:key-status')({})).chat.configured, false);
 });
 
-test('a backup provider token is stored separately from the primary token', async (t) => {
+test('provider tokens are stored separately and can be selected or removed', async (t) => {
   const h = setup(t, {
     fetchImpl: async () => response(200, { data: [] }),
   });
 
-  assert.equal((await h.handlers.get('ai:save-provider-key')({}, {
+  const first = await h.handlers.get('ai:save-provider-key')({}, {
     provider: 'groq', key: PROVIDER_KEY,
-  })).success, true);
-  const backupKey = 'gsk_backup_test_0987654321';
-  const backup = await h.handlers.get('ai:save-provider-key')({}, {
-    provider: 'groq', key: backupKey, backup: true,
   });
-  assert.equal(backup.success, true);
-  assert.equal(backup.backup, true);
-  assert.equal(backup.backupConfigured, true);
+  assert.equal(first.success, true);
+  assert.equal(first.index, 0);
+  assert.equal(first.tokenCount, 1);
+  assert.equal(first.activeToken, 0);
 
-  const backupPath = path.join(h.dir, 'ai-provider-groq2.json');
+  const secondKey = 'gsk_second_test_0987654321';
+  const second = await h.handlers.get('ai:save-provider-key')({}, {
+    provider: 'groq', key: secondKey,
+  });
+  assert.equal(second.success, true);
+  assert.equal(second.index, 1);
+  assert.equal(second.tokenCount, 2);
+  assert.equal(second.backupConfigured, true);
+  assert.equal(second.activeToken, 0);
+
+  const thirdKey = 'gsk_third_test_1234567890';
+  const third = await h.handlers.get('ai:save-provider-key')({}, {
+    provider: 'groq', key: thirdKey,
+  });
+  assert.equal(third.success, true);
+  assert.equal(third.index, 2);
+  assert.equal(third.tokenCount, 3);
+
+  const secondPath = path.join(h.dir, 'ai-provider-groq2.json');
+  const thirdPath = path.join(h.dir, 'ai-provider-groq3.json');
   assert.equal(fs.existsSync(h.providerKeyPath), true);
-  assert.equal(fs.existsSync(backupPath), true);
-  assert.ok(!fs.readFileSync(backupPath, 'utf8').includes(backupKey));
+  assert.equal(fs.existsSync(secondPath), true);
+  assert.equal(fs.existsSync(thirdPath), true);
+  assert.ok(!fs.readFileSync(secondPath, 'utf8').includes(secondKey));
+  assert.ok(!fs.readFileSync(thirdPath, 'utf8').includes(thirdKey));
+
+  const selected = await h.handlers.get('ai:set-active-provider-key')({}, {
+    provider: 'groq', index: 1,
+  });
+  assert.equal(selected.success, true);
+  assert.equal(selected.activeToken, 1);
 
   const status = await h.handlers.get('ai:key-status')({});
   assert.equal(status.chat.configured, true);
-  assert.equal(status.chat.backupConfigured, true);
-  assert.equal(status.chat.activeToken, 'primary');
+  assert.equal(status.chat.tokenCount, 3);
+  assert.equal(status.chat.activeToken, 1);
 
   const removed = await h.handlers.get('ai:clear-provider-key')({}, {
-    provider: 'groq', backup: true,
+    provider: 'groq', index: 1,
   });
   assert.equal(removed.success, true);
-  assert.equal(removed.backupConfigured, false);
-  assert.equal(fs.existsSync(backupPath), false);
+  assert.equal(removed.tokenCount, 2);
+  assert.equal(removed.activeToken, 0);
+  assert.equal(fs.existsSync(secondPath), false);
   assert.equal(fs.existsSync(h.providerKeyPath), true);
+  assert.equal(fs.existsSync(thirdPath), true);
 });
 
 test('the assistant needs both credentials, then transcribes and chats', async (t) => {
@@ -762,7 +810,7 @@ test('the microphone, bridge, page, search and package are wired to AI, not Voic
     'validateProviderKey', 'saveProviderKey', 'clearProviderKey',
     'setProviderModel', 'transcribe', 'chat', 'resetChat',
     'attach', 'removeAttachment', 'confirmPlan', 'cancelPlan',
-    'onPlanProgress',
+    'onPlanProgress', 'onChatProgress',
   ]) {
     assert.match(preload, new RegExp(`${method}: \\(`), `preload.ai.${method} is missing`);
   }
@@ -1001,8 +1049,13 @@ test('the assistant page renders clickable clarification, product list and plan 
       metadata: {
         posnic: {
           kind: 'clarify',
+          id: 'c_unit',
+          slot: '',
+          action: '',
           question: 'Which unit?',
-          options: [{ label: 'Piece', value: 'piece' }],
+          options: [
+            { id: 'o1', label: 'Piece', value: 'piece', none: false, action: '', record: null },
+          ],
         },
       },
     },
@@ -1102,6 +1155,10 @@ test('the assistant page renders clickable clarification, product list and plan 
   await new Promise((resolve) => setTimeout(resolve, 80));
   assert.equal(chatCalls.length, 2);
   assert.equal(chatCalls[1].message, 'piece');
+  /* The click travels as ids, not as wording the model has to interpret. */
+  assert.equal(chatCalls[1].answer.clarificationId, 'c_unit');
+  assert.equal(chatCalls[1].answer.optionId, 'o1');
+  assert.equal(chatCalls[1].attachedIds.join(','), '');
 
   const confirm = d.querySelector('.posnic-ai-plan-foot .btn-primary');
   assert.ok(confirm, 'the plan confirmation button was not rendered');
@@ -1113,6 +1170,221 @@ test('the assistant page renders clickable clarification, product list and plan 
   assert.equal(confirmCalls[0].authToken, 'jwt-session');
   assert.equal(confirmCalls[0].branchId, 'branch-1');
   assert.match(d.body.textContent, /Completed/);
+});
+
+/* The complaint: clicking "attach" sent a sentence into the chat instead of
+   opening the picker. The option opens the picker, the card stays live while
+   the dialog is open, and only a chosen file becomes an answer - one message,
+   carrying the card's ids and the attachment ids. */
+test('an attach option opens the picker and sends nothing until a file is chosen', async () => {
+  const frontend = (...parts) => read('frontend', ...parts);
+  const dom = new JSDOM(
+    '<!doctype html><html><body>' + frontend('modules', 'ai.html') + '</body></html>',
+    { runScripts: 'outside-only', url: 'http://localhost/dashboard.html' },
+  );
+  const w = dom.window;
+  const d = w.document;
+  const chatCalls = [];
+
+  w.PosnicPro = {
+    local: {
+      get: (key) => {
+        if (key === 'ai_assistant_settings') return JSON.stringify({ enabled: true });
+        if (key === 'branch_id_set') return 'branch-1';
+        if (key === 'username') return 'admin';
+        return null;
+      },
+      set: () => {},
+    },
+    i18n: { t: (_, fallback) => fallback },
+    userACL: { branch: { write: true } },
+    HideSideBarModal: () => {},
+  };
+  w.hasher = { setHash: () => {} };
+  w.$ = () => ({
+    removeClass() { return this; },
+    addClass() { return this; },
+    hide() { return this; },
+    show() { return this; },
+  });
+  w.localStorage.setItem('posnic_jwt_token', 'jwt-session');
+
+  const toolCalls = [{
+    name: 'posnic_ask_user',
+    status: 'completed',
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        id: 'c_img',
+        slot: 'image',
+        action: 'attach',
+        question: 'Add an image for this product?',
+        missing: ['صورة المنتج'],
+        options: [
+          { id: 'o1', label: 'Attach image', value: 'attach', none: false, action: 'attach', record: null },
+          { id: 'o2', label: 'No image', value: 'none', none: true, action: '', record: null },
+        ],
+      },
+    },
+  }];
+
+  w.electronAPI = {
+    ai: {
+      keyStatus: async () => ({
+        success: true,
+        enabled: true,
+        transcription: { configured: true },
+        chat: { configured: true, provider: 'groq', model: 'openai/gpt-oss-120b' },
+        providers: [],
+      }),
+      setEnabled: async () => ({ success: true, enabled: true }),
+      chat: async (payload) => {
+        chatCalls.push(payload);
+        return { success: true, text: 'Here is what I found.', toolCalls };
+      },
+      onPlanProgress: () => () => {},
+      attach: async () => ({
+        success: true,
+        attachments: [{ id: 'att-7', name: 'photo.png', size: 12, mime: 'image/png' }],
+      }),
+      removeAttachment: async () => ({ success: true }),
+      resetChat: async () => ({ success: true }),
+      transcribe: async () => ({ success: true, text: '' }),
+      confirmPlan: async () => ({ success: true }),
+      cancelPlan: async () => ({ success: true }),
+    },
+  };
+
+  w.eval(frontend('static', 'script', 'js', 'core', 'ai.js'));
+  w.PosnicPro.ai.init();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  d.getElementById('ai_prompt').value = 'add a product';
+  d.getElementById('ai_send').click();
+  await new Promise((resolve) => setTimeout(resolve, 120));
+  assert.equal(chatCalls.length, 1);
+
+  const attachOption = [...d.querySelectorAll('.posnic-ai-option')]
+    .find((button) => button.textContent === 'Attach image');
+  assert.ok(attachOption, 'the attach option was not rendered');
+
+  const input = d.getElementById('ai_attach_input');
+  let pickerOpens = 0;
+  input.click = function () { pickerOpens += 1; };
+  attachOption.click();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  assert.equal(pickerOpens, 1, 'the option did not open the image picker');
+  assert.equal(chatCalls.length, 1, 'opening the picker sent a message');
+
+  /* Cancelling the dialog answers nothing: the card stays live and offers
+     the picker again. */
+  input.dispatchEvent(new w.Event('cancel'));
+  assert.equal(chatCalls.length, 1, 'cancelling the dialog sent a message');
+
+  attachOption.click();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(pickerOpens, 2, 'the card did not offer the picker again');
+  assert.equal(chatCalls.length, 1);
+
+  /* Choosing the file is the answer. */
+  Object.defineProperty(input, 'files', {
+    configurable: true,
+    value: [new w.File(['image-bytes'], 'photo.png', { type: 'image/png' })],
+  });
+  input.dispatchEvent(new w.Event('change'));
+  await new Promise((resolve) => setTimeout(resolve, 200));
+
+  assert.equal(chatCalls.length, 2, 'the chosen file did not send exactly one message');
+  assert.equal(chatCalls[1].answer.clarificationId, 'c_img');
+  assert.equal(chatCalls[1].answer.optionId, 'o1');
+  assert.equal(chatCalls[1].answer.attachmentIds.join(','), 'att-7');
+  assert.equal(chatCalls[1].attachedIds.join(','), 'att-7');
+  assert.equal(chatCalls[1].message, 'Attach image');
+});
+
+test('the assistant page shows local progress and a slow notice while a reply is pending', async () => {
+  const frontend = (...parts) => read('frontend', ...parts);
+  const dom = new JSDOM(
+    '<!doctype html><html><body>' + frontend('modules', 'ai.html') + '</body></html>',
+    { runScripts: 'outside-only', url: 'http://localhost/dashboard.html' },
+  );
+  const w = dom.window;
+  const d = w.document;
+  const chatCalls = [];
+  const progressListeners = [];
+  let finishChat = null;
+
+  w.PosnicPro = {
+    local: {
+      get: (key) => {
+        if (key === 'ai_assistant_settings') return JSON.stringify({ enabled: true });
+        if (key === 'branch_id_set') return 'branch-1';
+        if (key === 'username') return 'admin';
+        return null;
+      },
+      set: () => {},
+    },
+    i18n: { t: (_, fallback) => fallback },
+    userACL: { branch: { write: true } },
+    HideSideBarModal: () => {},
+  };
+  w.hasher = { setHash: () => {} };
+  w.$ = () => ({
+    removeClass() { return this; },
+    addClass() { return this; },
+    hide() { return this; },
+    show() { return this; },
+  });
+  w.localStorage.setItem('posnic_jwt_token', 'jwt-session');
+  w.electronAPI = {
+    ai: {
+      keyStatus: async () => ({
+        success: true,
+        enabled: true,
+        transcription: { configured: true },
+        chat: { configured: true, provider: 'groq', model: 'openai/gpt-oss-120b' },
+        providers: [],
+      }),
+      setEnabled: async () => ({ success: true, enabled: true }),
+      chat: (payload) => {
+        chatCalls.push(payload);
+        return new Promise((resolve) => { finishChat = resolve; });
+      },
+      onPlanProgress: () => () => {},
+      onChatProgress: (listener) => {
+        progressListeners.push(listener);
+        return () => {};
+      },
+      attach: async () => ({ success: true, attachments: [] }),
+      removeAttachment: async () => ({ success: true }),
+      resetChat: async () => ({ success: true }),
+      transcribe: async () => ({ success: true, text: '' }),
+      confirmPlan: async () => ({ success: true }),
+      cancelPlan: async () => ({ success: true }),
+    },
+  };
+
+  w.eval(frontend('static', 'script', 'js', 'core', 'ai.js'));
+  w.PosnicPro.ai.init();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+  assert.equal(progressListeners.length, 1, 'the page did not subscribe to chat progress');
+
+  d.getElementById('ai_prompt').value = 'كام مخزون كاتل؟';
+  d.getElementById('ai_send').click();
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(chatCalls.length, 1);
+
+  const conversationId = chatCalls[0].conversationId;
+  progressListeners[0]({ conversationId, stage: 'reading_shop' });
+  assert.match(d.getElementById('ai_status').textContent, /Checking live shop data/);
+
+  progressListeners[0]({ conversationId, stage: 'slow' });
+  assert.match(d.getElementById('ai_status').textContent, /Still working/);
+
+  finishChat({ success: true, text: 'تمام.', toolCalls: [] });
+  await new Promise((resolve) => setTimeout(resolve, 60));
+  assert.equal(d.getElementById('ai_status').textContent, '');
 });
 
 test('a rate-limited chat tells the user when to retry', async () => {
@@ -1187,6 +1459,285 @@ test('a rate-limited chat tells the user when to retry', async () => {
 
   assert.match(d.getElementById('ai_status').textContent, /12 minutes/);
   assert.equal(d.getElementById('ai_retry').hidden, false);
+});
+
+test('a phone uses the local API bridge when electronAPI is absent', async () => {
+  const frontend = (...parts) => read('frontend', ...parts);
+  const dom = new JSDOM(
+    '<!doctype html><html><body>' + frontend('modules', 'ai.html') + '</body></html>',
+    { runScripts: 'outside-only', url: 'http://localhost/dashboard.html' },
+  );
+  const w = dom.window;
+  const d = w.document;
+  const requests = [];
+
+  w.PosnicPro = {
+    local: {
+      get: (key) => {
+        if (key === 'ai_assistant_settings') return JSON.stringify({ enabled: true });
+        if (key === 'branch_id_set') return 'branch-1';
+        if (key === 'username') return 'admin';
+        return null;
+      },
+      set: () => {},
+    },
+    i18n: { t: (_, fallback) => fallback },
+    userACL: { branch: { write: true } },
+    HideSideBarModal: () => {},
+    csrfToken: 'csrf-1',
+  };
+  w.hasher = { setHash: () => {} };
+  w.$ = () => ({
+    removeClass() { return this; },
+    addClass() { return this; },
+    hide() { return this; },
+    show() { return this; },
+  });
+  w.fetch = async (url, init) => {
+    requests.push({ url, init });
+    const body = url === '/ai/status'
+      ? {
+        success: true,
+        enabled: true,
+        transcription: { configured: true },
+        chat: { configured: true, provider: 'groq', model: 'openai/gpt-oss-120b' },
+        providers: [],
+      }
+      : { success: true, text: 'Hello from the till.' };
+    return {
+      status: 200,
+      headers: { get: () => null },
+      json: async () => body,
+    };
+  };
+
+  w.eval(frontend('static', 'script', 'js', 'core', 'ai.js'));
+  w.PosnicPro.ai.init();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  assert.equal(d.getElementById('ai_chat_card').hidden, false);
+  assert.doesNotMatch(d.body.textContent, /available in the Posnic desktop app/);
+  assert.equal(requests[0].url, '/ai/status');
+  assert.equal(requests[0].init.method, 'GET');
+  assert.equal(requests[0].init.credentials, 'same-origin');
+
+  d.getElementById('ai_prompt').value = 'show me';
+  d.getElementById('ai_send').click();
+  await new Promise((resolve) => setTimeout(resolve, 120));
+
+  const chat = requests.find((request) => request.url === '/ai/chat');
+  assert.ok(chat, 'the chat was not sent through the local API');
+  assert.equal(chat.init.method, 'POST');
+  assert.equal(chat.init.headers['X-XSRF-TOKEN'], 'csrf-1');
+  assert.equal(chat.init.headers['X-Branch-Id'], 'branch-1');
+  assert.equal(JSON.parse(chat.init.body).message, 'show me');
+  assert.match(d.body.textContent, /Hello from the till/);
+});
+
+test('a secure phone page records in the page and sends base64 audio', async () => {
+  const frontend = (...parts) => read('frontend', ...parts);
+  const dom = new JSDOM(
+    '<!doctype html><html><body>' + frontend('modules', 'ai.html') + '</body></html>',
+    { runScripts: 'outside-only', url: 'https://192.168.1.20:5443/dashboard.html' },
+  );
+  const w = dom.window;
+  const d = w.document;
+  const requests = [];
+  let recorder = null;
+  let microphoneOpened = false;
+
+  w.PosnicPro = {
+    local: {
+      get: (key) => {
+        if (key === 'ai_assistant_settings') return JSON.stringify({ enabled: true });
+        if (key === 'branch_id_set') return 'branch-1';
+        if (key === 'username') return 'admin';
+        return null;
+      },
+      set: () => {},
+    },
+    i18n: { t: (_, fallback) => fallback },
+    userACL: { branch: { write: true } },
+    HideSideBarModal: () => {},
+  };
+  w.hasher = { setHash: () => {} };
+  w.$ = () => ({
+    removeClass() { return this; },
+    addClass() { return this; },
+    hide() { return this; },
+    show() { return this; },
+  });
+  w.localStorage.setItem('posnic_jwt_token', 'jwt-session');
+  Object.defineProperty(w.navigator, 'mediaDevices', {
+    configurable: true,
+    value: {
+      getUserMedia: async () => {
+        microphoneOpened = true;
+        return {
+          getTracks: () => [{ stop: () => {} }],
+        };
+      },
+    },
+  });
+  w.MediaRecorder = class FakeMediaRecorder {
+    constructor(stream, options) {
+      this.stream = stream;
+      this.mimeType = (options && options.mimeType) || 'audio/webm';
+      recorder = this;
+    }
+    static isTypeSupported() { return true; }
+    start() { this.started = true; }
+    stop() { if (this.onstop) this.onstop(); }
+  };
+
+  w.fetch = async (url, init) => {
+    requests.push({ url, init });
+    let body;
+    if (url === '/ai/status') {
+      body = {
+        success: true,
+        enabled: true,
+        transcription: { configured: true },
+        chat: { configured: true },
+        providers: [],
+      };
+    } else if (url === '/ai/transcribe') {
+      body = { success: true, text: 'عايز اضيف عشر منتاجات' };
+    } else {
+      body = { success: true, text: 'تمام' };
+    }
+    return { status: 200, headers: { get: () => null }, json: async () => body };
+  };
+
+  w.eval(frontend('static', 'script', 'js', 'core', 'ai.js'));
+  w.PosnicPro.ai.init();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  assert.equal(d.getElementById('ai_audio_input'), null, 'the system recorder input is still present');
+  d.getElementById('ai_mic').click();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(microphoneOpened, true, 'the browser microphone prompt was not requested');
+  assert.ok(recorder && recorder.started, 'the in-page recorder did not start');
+
+  recorder.ondataavailable({
+    data: new w.Blob([new w.Uint8Array([1, 2, 3, 4])], { type: recorder.mimeType }),
+  });
+  d.getElementById('ai_mic').click();
+  await new Promise((resolve) => setTimeout(resolve, 120));
+
+  const transcribe = requests.find((request) => request.url === '/ai/transcribe');
+  assert.ok(transcribe, 'the clip was not sent to the API');
+  const payload = JSON.parse(transcribe.init.body);
+  assert.equal(payload.audioEncoding, 'base64');
+  assert.equal(payload.audio, 'AQIDBA==');
+  assert.match(payload.mimeType, /^audio\//);
+
+  const chat = requests.find((request) => request.url === '/ai/chat');
+  assert.ok(chat, 'the transcript was not sent to the chat');
+  assert.equal(JSON.parse(chat.init.body).message, 'عايز اضيف عشر منتاجات');
+});
+
+test('a plain HTTP phone page points to the secure address instead of the system recorder', async () => {
+  const frontend = (...parts) => read('frontend', ...parts);
+  const dom = new JSDOM(
+    '<!doctype html><html><body>' + frontend('modules', 'ai.html') + '</body></html>',
+    { runScripts: 'outside-only', url: 'http://192.168.1.20:5555/dashboard.html' },
+  );
+  const w = dom.window;
+  const d = w.document;
+  const requests = [];
+
+  w.PosnicPro = {
+    local: {
+      get: (key) => {
+        if (key === 'ai_assistant_settings') return JSON.stringify({ enabled: true });
+        if (key === 'branch_id_set') return 'branch-1';
+        if (key === 'username') return 'admin';
+        return null;
+      },
+      set: () => {},
+    },
+    i18n: { t: (_, fallback) => fallback },
+    userACL: { branch: { write: true } },
+    HideSideBarModal: () => {},
+  };
+  w.hasher = { setHash: () => {} };
+  w.$ = () => ({
+    removeClass() { return this; },
+    addClass() { return this; },
+    hide() { return this; },
+    show() { return this; },
+  });
+  w.localStorage.setItem('posnic_jwt_token', 'jwt-session');
+  Object.defineProperty(w.navigator, 'mediaDevices', { value: undefined, configurable: true });
+  delete w.MediaRecorder;
+
+  w.fetch = async (url, init) => {
+    requests.push({ url, init });
+    const body = url === '/ai/status'
+      ? {
+        success: true,
+        enabled: true,
+        transcription: { configured: true },
+        chat: { configured: true },
+        providers: [],
+      }
+      : { success: true, text: 'تمام' };
+    return { status: 200, headers: { get: () => null }, json: async () => body };
+  };
+
+  w.eval(frontend('static', 'script', 'js', 'core', 'ai.js'));
+  w.PosnicPro.ai.init();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  d.getElementById('ai_mic').click();
+  await new Promise((resolve) => setTimeout(resolve, 20));
+
+  assert.equal(d.getElementById('ai_audio_input'), null, 'the system recorder input is still present');
+  assert.match(d.getElementById('ai_status').textContent, /https:\/\/192\.168\.1\.20:5443\//);
+  assert.match(d.getElementById('ai_status').textContent, /log in again/);
+  assert.equal(requests.some((request) => request.url === '/ai/transcribe'), false);
+});
+
+test('a standalone API keeps the desktop-only note', async () => {
+  const frontend = (...parts) => read('frontend', ...parts);
+  const dom = new JSDOM(
+    '<!doctype html><html><body>' + frontend('modules', 'ai.html') + '</body></html>',
+    { runScripts: 'outside-only', url: 'http://localhost/dashboard.html' },
+  );
+  const w = dom.window;
+  const d = w.document;
+
+  w.PosnicPro = {
+    local: { get: () => null, set: () => {} },
+    i18n: { t: (_, fallback) => fallback },
+    userACL: { branch: { write: true } },
+    HideSideBarModal: () => {},
+  };
+  w.hasher = { setHash: () => {} };
+  w.$ = () => ({
+    removeClass() { return this; },
+    addClass() { return this; },
+    hide() { return this; },
+    show() { return this; },
+  });
+  w.fetch = async () => ({
+    status: 503,
+    headers: { get: () => null },
+    json: async () => ({
+      success: false,
+      code: 'bridge_unavailable',
+      error: 'The AI assistant is available in the Posnic desktop app.',
+    }),
+  });
+
+  w.eval(frontend('static', 'script', 'js', 'core', 'ai.js'));
+  w.PosnicPro.ai.init();
+  await new Promise((resolve) => setTimeout(resolve, 80));
+
+  assert.match(d.body.textContent, /available in the Posnic desktop app/);
+  assert.equal(d.getElementById('ai_chat_card').hidden, true);
 });
 
 test('a typed confirmation confirms the pending plan without asking the model again', async () => {
@@ -1294,7 +1845,9 @@ test('a typed confirmation confirms the pending plan without asking the model ag
   assert.equal(chatCalls.length, 1);
   assert.equal(d.querySelectorAll('.posnic-ai-plan-foot .btn-primary').length, 1);
 
-  d.getElementById('ai_prompt').value = 'تمام نفذ';
+  /* The reported case was a bare "تمام" after the preview. It must execute
+     the plan, not go to the model and produce a conversational "تمام." */
+  d.getElementById('ai_prompt').value = 'تمام';
   d.getElementById('ai_send').click();
   await new Promise((resolve) => setTimeout(resolve, 120));
 
@@ -1302,7 +1855,7 @@ test('a typed confirmation confirms the pending plan without asking the model ag
   assert.equal(confirmCalls.length, 1, 'the typed confirmation did not execute the plan');
   assert.equal(confirmCalls[0].planId, 'plan_typed');
   assert.equal(d.querySelectorAll('.posnic-ai-message--user').length, 2);
-  assert.match(d.body.textContent, /تمام نفذ/);
+  assert.match(d.body.textContent, /تمام/);
   assert.match(d.body.textContent, /Completed/);
 });
 
@@ -1767,10 +2320,29 @@ test('clarification returns a question and short clickable options', () => {
   assert.match(formatForModel(result), /do not repeat/i);
 
   assert.equal(askUser({ question: '   ' }).code, 'missing_question');
+  assert.equal(askUser({ missing: [] }).code, 'missing_question');
   assert.equal(askUser({
     question: 'Too many?',
     options: [1, 2, 3, 4, 5].map((value) => ({ label: String(value) })),
   }).code, 'too_many_options');
+
+  const composedArabic = askUser({
+    missing: ['اسم المنتج', 'سعر البيع', 'سعر التكلفة', 'كمية فتح', 'صورة المنتج', 'التصنيف'],
+  });
+  assert.equal(composedArabic.kind, 'clarify');
+  assert.match(composedArabic.question, /^أحتاج: /);
+  assert.match(composedArabic.question, /اسم المنتج/);
+  assert.match(composedArabic.question, /سعر البيع/);
+  assert.match(composedArabic.question, /التصنيف/);
+
+  const composedEnglish = askUser({
+    missing: ['selling_price', 'cost_price', 'opening_stock'],
+  });
+  assert.equal(composedEnglish.kind, 'clarify');
+  assert.match(composedEnglish.question, /^I need: /);
+  assert.match(composedEnglish.question, /selling price/);
+  assert.match(composedEnglish.question, /cost price/);
+  assert.match(composedEnglish.question, /opening stock/);
 });
 
 test('a category the request already named is not asked for again', () => {
@@ -1838,6 +2410,70 @@ test('a category the request already named is not asked for again', () => {
   assert.equal(repeated.kind, 'error');
   assert.equal(repeated.code, 'question_already_answered');
   assert.match(repeated.message, /100/);
+});
+
+test('the execution body never sends corrections to the shop API', async () => {
+  /* Claude review #6 item 4: corrections rides on the plan for the preview
+     card only; every request body is built field by field and must never
+     carry it. */
+  const { executePlan } = require(path.join(ROOT, 'src/ai/actions/plan-executor'));
+
+  const requests = [];
+  const saved = {
+    _id: 'item-c1',
+    name: 'Watch',
+    selling_price: 3000,
+    company_price: 2000,
+    mrp_price: 3000,
+    available_quantity: 7,
+    category_id: '',
+    category_name: '',
+  };
+  const api = {
+    async get(pathname) {
+      requests.push({ method: 'GET', pathname });
+      if (pathname === 'items/search') return { data: { list: [], total: 0 } };
+      if (pathname === 'items/item-c1') return { data: saved };
+      throw new Error(`unexpected GET ${pathname}`);
+    },
+    async post(pathname, body) {
+      requests.push({ method: 'POST', pathname, body });
+      if (pathname === 'items') return { data: saved };
+      throw new Error(`unexpected POST ${pathname}`);
+    },
+    async put(pathname, body) {
+      requests.push({ method: 'PUT', pathname, body });
+      throw new Error(`unexpected PUT ${pathname}`);
+    },
+  };
+
+  const plan = {
+    id: 'plan-c1',
+    warnings: [],
+    corrections: [{ field: 'openingStock', from: 200, to: 7 }],
+    steps: [{
+      id: 'p1',
+      action: 'create_product',
+      status: 'pending',
+      fields: { name: 'Watch', selling_price: 3000, cost_price: 2000, opening_stock: 7 },
+    }],
+  };
+  const executed = await executePlan(plan, { api, sessionID: 'conv-c1' });
+  assert.equal(executed.status, 'completed');
+  for (const item of requests) {
+    if (!item.body) continue;
+    assert.ok(
+      !('corrections' in item.body),
+      `${item.method} ${item.pathname} sent corrections: ${JSON.stringify(item.body)}`,
+    );
+  }
+  const create = requests.find((item) => item.method === 'POST' && item.pathname === 'items');
+  assert.ok(create, 'the product write happened');
+  /* productPayload maps field by field; opening_stock travels as
+     available_quantity and cost_price as company_price. */
+  assert.equal(create.body.available_quantity, 7);
+  assert.equal(create.body.company_price, 2000);
+  assert.equal(create.body.name, 'Watch');
 });
 
 test('a confirmed plan creates the category once, adds the product image and verifies it', async () => {
@@ -2182,6 +2818,112 @@ test('a failed later step undoes earlier writes and leaves a retryable plan', as
     [{ method: 'DELETE', pathname: 'categories/cat-atomic', body: undefined }]
   );
   assert.ok(executed.warnings.includes('No changes were kept. You can retry this plan.'));
+});
+
+/*
+ * A preview is a photograph of the shelf, not the shelf. Stock moves between
+ * the preview and Confirm - a sale, a count, another till. Calculating the
+ * expected quantity from that photograph reports a mismatch that never
+ * happened, and restoring it puts sold units back into inventory.
+ */
+test('a stock adjustment is verified against live stock, not the preview snapshot', async () => {
+  const { executePlan } = require(path.join(ROOT, 'src/ai/actions/plan-executor'));
+
+  /* 10 in stock when the preview was made; three sold since. */
+  const live = { id: 'i-stale', name: 'Pepsi', available_quantity: 7 };
+
+  const api = {
+    async get(pathname) {
+      if (pathname === 'items/i-stale') return { data: { ...live } };
+      throw new Error(`unexpected GET ${pathname}`);
+    },
+    async post(pathname, body) {
+      if (pathname === 'items/stockAdjustment') {
+        live.available_quantity += Number(body.rows[0].qty);
+        return { type: 'success' };
+      }
+      throw new Error(`unexpected POST ${pathname}`);
+    },
+    async put() { throw new Error('unexpected PUT'); },
+    async delete() { throw new Error('unexpected DELETE'); },
+  };
+
+  const plan = {
+    id: 'plan_stale',
+    status: 'pending',
+    warnings: [],
+    steps: [{
+      id: 's1',
+      action: 'adjust_stock',
+      target: 'i-stale',
+      fields: { stock_mode: 'add', stock_quantity: 5, reason: 'Stock found' },
+      /* Exactly what plan-schema stores when it validates the preview. */
+      before: { id: 'i-stale', name: 'Pepsi', stock: 10 },
+      dependsOn: [],
+    }],
+  };
+
+  const executed = await executePlan(plan, { api, sessionID: 'conv-stale' });
+
+  /* 7 live + 5 = 12. Reporting 10 + 5 = 15 would be a phantom mismatch. */
+  assert.equal(executed.status, 'completed');
+  assert.equal(executed.steps[0].verified, true, executed.steps[0].message);
+  assert.equal(executed.steps[0].message, 'Stock adjusted and checked.');
+});
+
+test('the rollback of a stock adjustment restores the execution-time quantity', async () => {
+  const { executePlan } = require(path.join(ROOT, 'src/ai/actions/plan-executor'));
+
+  const live = { id: 'i-stale', name: 'Pepsi', available_quantity: 7 };
+  const adjustmentPosts = [];
+
+  const api = {
+    async get(pathname) {
+      if (pathname === 'items/i-stale') return { data: { ...live } };
+      throw new Error(`unexpected GET ${pathname}`);
+    },
+    async post(pathname, body) {
+      if (pathname === 'items/stockAdjustment') {
+        adjustmentPosts.push(body);
+        if (body.mode !== 'set') live.available_quantity += Number(body.rows[0].qty);
+        return { type: 'success' };
+      }
+      if (pathname === 'items') throw new Error('The product could not be saved.');
+      throw new Error(`unexpected POST ${pathname}`);
+    },
+    async put() { throw new Error('unexpected PUT'); },
+    async delete() { throw new Error('unexpected DELETE'); },
+  };
+
+  const plan = {
+    id: 'plan_rollback',
+    status: 'pending',
+    warnings: [],
+    steps: [
+      {
+        id: 's1',
+        action: 'adjust_stock',
+        target: 'i-stale',
+        fields: { stock_mode: 'add', stock_quantity: 5, reason: 'Stock found' },
+        before: { id: 'i-stale', name: 'Pepsi', stock: 10 },
+        dependsOn: [],
+      },
+      {
+        id: 's2',
+        action: 'create_product',
+        fields: { name: 'Fail', selling_price: 1, cost_price: 1, opening_stock: 1 },
+        dependsOn: [],
+      },
+    ],
+  };
+
+  const executed = await executePlan(plan, { api, sessionID: 'conv-rollback' });
+  assert.equal(executed.steps[1].status, 'failed');
+
+  /* Undoing back to the preview's 10 would resurrect stock that was sold. */
+  const undo = adjustmentPosts[adjustmentPosts.length - 1];
+  assert.equal(undo.mode, 'set', 'rollback sets the quantity back');
+  assert.equal(undo.rows[0].qty, 7, 'restore what was there when the step ran');
 });
 
 test('an incomplete rollback keeps the surviving step visible and blocks retry', async () => {
@@ -2856,9 +3598,12 @@ test('the tool plugin registers the read, clarification and plan tools and execu
   }, { sessionID: 'session-1' });
   assert.equal(clarify.metadata.posnic.kind, 'clarify');
   assert.equal(clarify.metadata.posnic.question, 'Which unit?');
+  /* Every option carries the ids the click needs: the card's question id, the
+     option id, and the action the runtime has already decided for it. */
+  assert.ok(clarify.metadata.posnic.id, 'the card carries a stable id');
   assert.deepEqual(clarify.metadata.posnic.options, [
-    { label: 'Piece', value: 'piece' },
-    { label: 'Kilogram', value: 'kilogram' },
+    { id: 'o1', label: 'Piece', value: 'piece', none: false, action: '', record: null },
+    { id: 'o2', label: 'Kilogram', value: 'kilogram', none: false, action: '', record: null },
   ]);
   assert.match(clarify.content[0].text, /already visible/);
 
@@ -3014,9 +3759,26 @@ test('the model receives only the shop and local-note tools and the reference in
   });
   const agent = config.agents['posnic-assistant'];
 
-  assert.equal(agent.steps, 8);
-  assert.match(agent.system, /Built-in reference topics/);
-  assert.match(agent.system, /Add a product/);
+  /* The step allowance is derived from the model's per-request cap rather
+     than fixed at eight. Every step resends the fixed payload plus the
+     results of the steps before it, so a turn grows inside itself while the
+     cap stays put, and eight steps against an 8,000-token cap can only end
+     in a 413. The number is asserted because raising it re-opens exactly the
+     failure this rule exists to prevent. */
+  assert.equal(agent.steps, 4);
+  assert.ok(
+    agent.steps < registry.runtimeConfig({
+      providerID: 'nvidia',
+      modelID: 'moonshotai/kimi-k3.1-pro',
+    }).agents['posnic-assistant'].steps,
+    'a model that declares a small request cap must get fewer steps than ' +
+      'one that declares none',
+  );
+  /* Spot-check that the policy payload is actually attached, by three rules
+     that have no other home. Assert the rule, never the heading: the prompt
+     is expected to be reworded, and a heading would rot on the first edit. */
+  assert.match(agent.system, /Call posnic_help before answering/);
+  assert.match(agent.system, /A new product needs name, selling price, cost price and opening stock/);
   assert.match(agent.system, /Never ask the user to type a record id/);
   const allowed = agent.permissions
     .filter((permission) => permission.effect === 'allow')
@@ -3164,6 +3926,308 @@ test('conversation memory keeps an unfinished create request across short answer
   assert.equal(memory.pendingRequest(conversation), null);
 });
 
+/* A finite choice is a decision the system takes. The click carries the card's
+   ids, so the reply is never re-read as prose: the option names the record,
+   the field it fills and, for an image, the attachments that were picked. */
+test('a clicked choice settles the question by its ids and carries the record it named', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  let clock = 1000;
+  const memory = createConversationMemoryStore({ now: () => clock++ });
+  const conversation = 'conv-clicked-choice';
+
+  memory.beginTurn(conversation, 'ضيف منتج جديد');
+  memory.completeTurn(conversation, 'إيه اسم المنتج؟', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        id: 'c_card1',
+        slot: 'target',
+        action: 'record',
+        question: 'إيه اسم المنتج؟',
+        missing: ['name'],
+        options: [
+          {
+            id: 'o1',
+            label: 'Pepsi 1L',
+            value: 'Pepsi 1L',
+            none: false,
+            action: 'record',
+            record: { entity: 'product', id: 'item-9' },
+          },
+          { id: 'o2', label: 'إسم تاني', value: 'new', none: true, action: '', record: null },
+        ],
+      },
+    },
+  }]);
+  assert.equal(memory.pendingRequest(conversation).question, 'إيه اسم المنتج؟');
+
+  /* A card from another question settles nothing: matching it against these
+     options would decide something the operator never saw. */
+  memory.beginTurn(conversation, 'تمام', {
+    answer: { clarificationId: 'c_other', optionId: 'o1' },
+  });
+  assert.equal(memory.pendingRequest(conversation).question, 'إيه اسم المنتج؟');
+
+  memory.beginTurn(conversation, 'Pepsi 1L', {
+    answer: { clarificationId: 'c_card1', optionId: 'o1' },
+  });
+  const block = memory.contextFor(conversation, { full: true, message: 'Pepsi 1L' });
+  assert.match(block, /Already answered \(do not ask again\)/);
+  assert.match(block, /target = Pepsi 1L \(id item-9\)/);
+  assert.equal(memory.pendingRequest(conversation).question, '');
+});
+
+/* The image answer is written to the draft the plan is built from, so the
+   picture is asked for once and only an attached image reaches the plan. */
+test('an image choice writes the draft image status the plan reads', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  let clock = 1000;
+  const memory = createConversationMemoryStore({ now: () => clock++ });
+  const conversation = 'conv-image-choice';
+
+  memory.beginTurn(conversation, 'ضيف منتج جديد');
+  memory.noteDraft(conversation, { kind: 'create_product', name: 'Pepsi 1L' });
+  memory.completeTurn(conversation, 'محتاج صورة للمنتج؟', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        id: 'c_img1',
+        slot: 'image',
+        action: 'attach',
+        question: 'محتاج صورة للمنتج؟',
+        missing: ['صورة المنتج'],
+        options: [
+          { id: 'o1', label: 'أرفق صورة', value: 'attach', none: false, action: 'attach', record: null },
+          { id: 'o2', label: 'بدون صورة', value: 'none', none: true, action: '', record: null },
+        ],
+      },
+    },
+  }]);
+
+  const attachTurn = memory.beginTurn(conversation, 'استخدم الصورة المرفقة.', {
+    answer: {
+      clarificationId: 'c_img1',
+      optionId: 'o1',
+      attachmentIds: ['att-7'],
+    },
+  });
+  assert.deepEqual(attachTurn.answered, { slot: 'image', kind: 'attachment' });
+  let pending = memory.pendingRequest(conversation);
+  assert.deepEqual(pending.draft.image, { status: 'attached', attachmentIds: ['att-7'] });
+  assert.match(memory.contextFor(conversation, { full: true, message: 'x' }),
+    /image = attached \(attachment att-7\)/);
+
+  /* Declining the picture is an answer too, and it leaves the field empty
+     instead of re-asking for it on the next turn. */
+  memory.beginTurn(conversation, 'ضيف منتج جديد');
+  memory.noteDraft(conversation, { kind: 'create_product', name: 'Coke 330' });
+  memory.completeTurn(conversation, 'صورة المنتج؟', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        id: 'c_img2',
+        slot: 'image',
+        action: 'attach',
+        question: 'صورة المنتج؟',
+        missing: ['صورة المنتج'],
+        options: [
+          { id: 'o1', label: 'أرفق صورة', value: 'attach', none: false, action: 'attach', record: null },
+          { id: 'o2', label: 'بدون صورة', value: 'none', none: true, action: '', record: null },
+        ],
+      },
+    },
+  }]);
+  const declinedTurn = memory.beginTurn(conversation, 'بدون صورة', {
+    answer: { clarificationId: 'c_img2', optionId: 'o2' },
+  });
+  pending = memory.pendingRequest(conversation);
+  assert.deepEqual(pending.draft.image, { status: 'none', attachmentIds: [] });
+  assert.equal(memory.pendingRequest(conversation).question, '');
+  /* Declining is a decision, so the question is settled and recorded as
+     "leave empty" instead of being offered again on the next turn. */
+  assert.match(
+    memory.contextFor(conversation, { full: true, message: 'x' }),
+    /image = none \(leave empty\)/,
+  );
+  /* Declining is a decision: the turn records which slot it settled, so the
+     flow can skip parsing the click label as language. pendingAnswer stays
+     text-based — this turn still answers the pending request. */
+  assert.deepEqual(declinedTurn.answered, { slot: 'image', kind: 'none' });
+
+  /* Nothing re-asks the picture: the settled decision stays on the draft
+     through the next turn. */
+  memory.beginTurn(conversation, 'تمام');
+  const afterDecline = memory.pendingRequest(conversation);
+  assert.equal(afterDecline.question, '');
+  assert.deepEqual(afterDecline.draft.image, { status: 'none', attachmentIds: [] });
+});
+
+test('a typed decline records image none without a click', () => {
+  /* Claude review #6: بدون صورة typed as plain text settles the same slot
+     the click does — answered, draft.image = none, question cleared — so the
+     picture is never asked for again. */
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  const memory = createConversationMemoryStore({ now: () => 1000 });
+  const conversation = 'conv-typed-decline';
+
+  memory.beginTurn(conversation, 'ضيف منتج جديد');
+  memory.noteDraft(conversation, { kind: 'create_product', name: 'Coke 330' });
+  memory.completeTurn(conversation, 'صورة المنتج؟', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        id: 'c_img_td',
+        slot: 'image',
+        action: 'attach',
+        question: 'صورة المنتج؟',
+        missing: ['صورة المنتج'],
+        options: [
+          { id: 'o1', label: 'أرفق صورة', value: 'attach', none: false, action: 'attach', record: null },
+          { id: 'o2', label: 'بدون صورة', value: 'none', none: true, action: '', record: null },
+        ],
+      },
+    },
+  }]);
+
+  const turn = memory.beginTurn(conversation, 'بدون صورة');
+  assert.deepEqual(turn.answered, { slot: 'image', kind: 'none' });
+  const pending = memory.pendingRequest(conversation);
+  assert.deepEqual(pending.draft.image, { status: 'none', attachmentIds: [] });
+  assert.equal(pending.question, '');
+});
+
+test('a side question pauses an unfinished request instead of consuming it', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  const memory = createConversationMemoryStore({ now: () => 1000 });
+  const conversation = 'conv-side-question';
+
+  memory.beginTurn(conversation, 'ضيف منتج iPhone 15');
+  memory.completeTurn(conversation, 'إيه سعر البيع والتكلفة؟', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        question: 'إيه سعر البيع والتكلفة؟',
+        pending: 'إنشاء منتج iPhone 15; missing: selling price, cost price',
+        missing: ['selling price', 'cost price'],
+      },
+    },
+  }]);
+  assert.equal(memory.pendingRequest(conversation).stage, 'collecting');
+
+  const side = memory.beginTurn(conversation, 'كام سعر iPhone 15 في السوق؟');
+  assert.equal(side.pendingAnswer, false, 'the side question was consumed as an answer');
+  assert.equal(side.sideQuestion, true);
+  assert.equal(side.writeRequest, false);
+  assert.equal(side.contextChange, true);
+  assert.equal(memory.pendingRequest(conversation).text, 'ضيف منتج iPhone 15');
+  assert.equal(memory.pendingRequest(conversation).question, 'إيه سعر البيع والتكلفة؟');
+
+  const snapshot = memory.snapshot(conversation);
+  const active = snapshot.topics.find((topic) => topic.id === snapshot.activeTopicId);
+  assert.equal(active.stage, 'paused');
+  const pendingClarification = active.clarifications.find((item) => item.status === 'pending');
+  assert.ok(pendingClarification, 'the pending question was marked answered');
+  assert.equal(pendingClarification.answer, undefined);
+
+  const block = memory.contextFor(conversation, {
+    full: true,
+    message: 'كام سعر iPhone 15 في السوق؟',
+  });
+  assert.match(block, /side question/i);
+  assert.match(block, /still waiting/i);
+
+  const answer = memory.beginTurn(conversation, 'السعر 50000 والتكلفة 40000');
+  assert.equal(answer.pendingAnswer, true);
+  assert.equal(answer.sideQuestion, false);
+  const after = memory.pendingRequest(conversation);
+  assert.equal(after.stage, 'collecting');
+  assert.match(after.answers.at(-1).answer, /50000/);
+});
+
+test('a bare acknowledgement does not answer a value question', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  const memory = createConversationMemoryStore({ now: () => 1000 });
+  const conversation = 'conv-acknowledgement';
+
+  memory.beginTurn(conversation, 'ضيف منتج iPhone 15');
+  memory.completeTurn(conversation, 'إيه سعر البيع؟', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        question: 'إيه سعر البيع؟',
+        missing: ['selling price'],
+      },
+    },
+  }]);
+
+  const ack = memory.beginTurn(conversation, 'تمام');
+  assert.equal(ack.pendingAnswer, false);
+  assert.equal(ack.acknowledgement, true);
+  assert.equal(ack.stage, 'collecting');
+  const pending = memory.pendingRequest(conversation);
+  assert.equal(pending.question, 'إيه سعر البيع؟');
+  assert.equal(pending.answers.length, 0);
+  const block = memory.contextFor(conversation, { full: true, message: 'تمام' });
+  assert.match(block, /only an acknowledgement/i);
+});
+
+test('a topic change mid-task pauses the old task and keeps it resumable', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  const memory = createConversationMemoryStore({ now: () => 1000 });
+  const conversation = 'conv-topic-change';
+
+  const first = memory.beginTurn(conversation, 'ضيف منتج iPhone 15');
+  memory.completeTurn(conversation, 'إيه سعر البيع؟', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        question: 'إيه سعر البيع؟',
+        missing: ['selling price'],
+      },
+    },
+  }]);
+
+  const switched = memory.beginTurn(conversation, 'new topic: what is the price of Pepsi?');
+  assert.equal(switched.switched, true);
+  assert.notEqual(switched.topicId, first.topicId);
+  assert.equal(switched.contextChange, true);
+
+  const snapshot = memory.snapshot(conversation);
+  const old = snapshot.topics.find((topic) => topic.id === first.topicId);
+  assert.equal(old.stage, 'paused');
+  assert.ok(old.pendingRequest);
+
+  const back = memory.beginTurn(conversation, 'back to the iPhone 15 product');
+  assert.equal(back.switched, true);
+  assert.equal(back.topicId, first.topicId);
+  assert.equal(memory.pendingRequest(conversation).question, 'إيه سعر البيع؟');
+});
+
+test('an explicit abandon cancels the old task when the topic changes', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  const memory = createConversationMemoryStore({ now: () => 1000 });
+  const conversation = 'conv-abandon';
+
+  const first = memory.beginTurn(conversation, 'ضيف منتج iPhone 15');
+  memory.completeTurn(conversation, 'إيه سعر البيع؟', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        question: 'إيه سعر البيع؟',
+        missing: ['selling price'],
+      },
+    },
+  }]);
+
+  const abandoned = memory.beginTurn(conversation, 'سيبك من ده، عايز أسأل على Pepsi');
+  assert.equal(abandoned.switched, true);
+  const snapshot = memory.snapshot(conversation);
+  const old = snapshot.topics.find((topic) => topic.id === first.topicId);
+  assert.equal(old.stage, 'cancelled');
+  assert.equal(old.pendingRequest, null);
+  assert.equal(old.clarifications.every((item) => item.status !== 'pending'), true);
+});
+
 test('an answered category is kept for the next product and is never asked again', () => {
   const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
   const memory = createConversationMemoryStore({ now: () => 1000 });
@@ -3200,6 +4264,73 @@ test('an answered category is kept for the next product and is never asked again
   assert.equal(nextProduct.switched, false, 'the current category keeps the next product in the same topic');
   assert.equal(nextProduct.writeRequest, true);
   assert.equal(memory.pendingRequest(conversation).category.name, 'غسالات');
+});
+
+test('a category the user declined is never stored as a category', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  const memory = createConversationMemoryStore({ now: () => 1000 });
+  const conversation = 'conv-category-decline';
+
+  memory.beginTurn(conversation, 'ضيف منتج عربية لعبة');
+  memory.completeTurn(conversation, 'اختر الفئة للصنف وإرفاق صورة', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        question: 'اختر الفئة للصنف وإرفاق صورة',
+        slot: 'category',
+        missing: ['category'],
+        options: [
+          { label: 'لا فئة بدون صورة', value: 'لا فئة بدون صورة', none: true },
+          { label: 'أجهزة الكهربائية المنزلية', value: 'أجهزة الكهربائية المنزلية' },
+        ],
+      },
+    },
+  }]);
+
+  memory.beginTurn(conversation, 'لا فئة بدون صورة');
+  const after = memory.pendingRequest(conversation);
+  assert.equal(
+    after.category,
+    null,
+    `the declined option was stored as a category: ${after.category && after.category.name}`,
+  );
+  const block = memory.contextFor(conversation, { full: false, message: 'x' });
+  assert.ok(!/Current category: لا فئة/.test(block), 'the prompt must not offer it as a category');
+
+  /* The settled answer still reaches the model, but as a decision rather
+     than as a name. */
+  assert.equal(after.answers.at(-1).decision.kind, 'none');
+  assert.match(memory.contextFor(conversation, { full: true, message: 'x' }),
+    /category = none \(leave empty\)/);
+});
+
+test('a choice naming no existing category is not treated as one', () => {
+  const { createConversationMemoryStore } = require(path.join(ROOT, 'src/ai/conversation-memory'));
+  const memory = createConversationMemoryStore({ now: () => 1000 });
+  const conversation = 'conv-category-unknown-choice';
+
+  memory.beginTurn(conversation, 'ضيف منتج دفاية');
+  memory.completeTurn(conversation, 'اختر الفئة', [{
+    metadata: {
+      posnic: {
+        kind: 'clarify',
+        question: 'اختر الفئة',
+        slot: 'category',
+        missing: ['category'],
+        options: [
+          { label: 'فئة جديدة', value: 'فئة جديدة' },
+          { label: 'الأجهزة الكهربائية المنزلية', value: 'الأجهزة الكهربائية المنزلية' },
+        ],
+      },
+    },
+  }]);
+
+  memory.beginTurn(conversation, 'فئة جديدة');
+  assert.equal(
+    memory.pendingRequest(conversation).category,
+    null,
+    'a button wording is not evidence of a shop record',
+  );
 });
 
 test('a category created by a plan becomes the current category', () => {
@@ -3370,6 +4501,116 @@ test('the runtime separates topics, keeps memory and recovers from a provider er
   assert.match(h.state.prompts[3].text, /Earlier topics/);
 });
 
+/*
+ * The cap applies to the whole request, not to the message: fixed payload plus
+ * reference layers plus the message is what the provider counts. Asserting the
+ * message alone would pass while the request itself overflowed, which is the
+ * regression this exists to catch.
+ */
+test('the request the provider receives stays inside the per-request cap', async (t) => {
+  const h = await createRuntimeHarness(t, {
+    promptHook: () => ({ reply: 'Done.' }),
+  });
+  const base = {
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-budget',
+  };
+
+  await h.runtime.chat({ ...base, message: 'Show me Pepsi' });
+  await h.runtime.chat({ ...base, message: 'and its price' });
+
+  const { systemPrompt } = require(path.join(ROOT, 'src/ai', 'provider-registry.js'));
+  const { toolPayloadChars } = require(path.join(ROOT, 'src/ai', 'tools', 'plugin.js'));
+  const { estimateTokens } = require(path.join(ROOT, 'src/ai', 'context-budget.js'));
+  const fixed = systemPrompt().length + await toolPayloadChars();
+
+  assert.ok(h.state.prompts.length >= 2, 'expected two requests');
+  for (const prompt of h.state.prompts) {
+    const tokens = estimateTokens(fixed + prompt.text.length);
+    assert.ok(
+      tokens <= 8000,
+      `request is ${tokens} tokens against an 8,000-token cap ` +
+        `(fixed ${fixed}, message ${prompt.text.length} chars)`,
+    );
+  }
+});
+
+/*
+ * A high thinking level spends far more of the cap on reasoning than a low
+ * one, so the reserve grows and the reference layers have to give way. The
+ * message is not reference data and must survive the trim: dropping it would
+ * answer a question the user never asked.
+ */
+test('a tight thinking level trims the reference layers rather than the message', async (t) => {
+  const h = await createRuntimeHarness(t, {
+    settings: {
+      provider: 'groq',
+      model: 'openai/gpt-oss-120b',
+      reasoning: 'high',
+    },
+    promptHook: () => ({ reply: 'Done.' }),
+  });
+  const base = {
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-budget-high',
+  };
+
+  /* Memory grows a little per turn, so a short conversation legitimately fits
+     inside even a tight budget. The trim only has to engage once the block is
+     bigger than what the cap leaves over, which is the case this is about. */
+  const turns = [
+    'Show me Pepsi',
+    'and its price',
+    'show me Coca Cola too',
+    'and the stock for both',
+    'which one sells better',
+    'show me the categories',
+    'add Pepsi to a new category',
+    'and set its price to 12',
+  ];
+  for (const message of turns) {
+    await h.runtime.chat({ ...base, message });
+  }
+
+  const budgetLogs = h.logs.filter((line) => line.startsWith('[AI budget]'));
+  assert.ok(
+    budgetLogs.length >= turns.length,
+    `expected a budget log line per turn, got ${budgetLogs.length}`,
+  );
+  assert.ok(
+    budgetLogs.some((line) => line.includes('reserve=3200')),
+    `high effort must reserve room for its reasoning: ${budgetLogs.join(' | ')}`,
+  );
+  assert.ok(
+    budgetLogs.some((line) => line.includes('reference did not fit')),
+    `the reference layers must actually be trimmed: ${budgetLogs.join(' | ')}`,
+  );
+
+  const { systemPrompt } = require(path.join(ROOT, 'src/ai', 'provider-registry.js'));
+  const { toolPayloadChars } = require(path.join(ROOT, 'src/ai', 'tools', 'plugin.js'));
+  const { estimateTokens } = require(path.join(ROOT, 'src/ai', 'context-budget.js'));
+  const fixed = systemPrompt().length + await toolPayloadChars();
+
+  for (const prompt of h.state.prompts) {
+    assert.ok(
+      estimateTokens(fixed + prompt.text.length) <= 8000,
+      'a trimmed request must still fit the cap',
+    );
+    /* The budget may cut memory, card or local context, never the message:
+       it is appended after every reference layer, so it must still be there
+       in full. (A corrective instruction may be appended after it, so look
+       for the message anywhere in the prompt.) */
+    assert.ok(
+      turns.some((message) => prompt.text.includes(message)),
+      `the message must survive the trim: ${prompt.text.slice(-160)}`,
+    );
+  }
+});
+
 test('a continuing session still receives the compact memory and current category', async (t) => {
   let planCount = 0;
   const h = await createRuntimeHarness(t, {
@@ -3413,11 +4654,14 @@ test('a continuing session still receives the compact memory and current categor
     conversationId: 'conv-context-every-turn',
   };
 
-  const first = await h.runtime.chat({ ...base, message: 'ضيف منتج غسالة في فئة غسالات' });
+  const first = await h.runtime.chat({
+    ...base,
+    message: 'ضيف منتج غسالة في فئة غسالات وكمان عدل سعر منتج تاني',
+  });
   assert.equal(first.success, true);
   assert.equal(first.memory.switched, true);
 
-  const second = await h.runtime.chat({ ...base, message: 'ضيف منتج تاني' });
+  const second = await h.runtime.chat({ ...base, message: 'إيه الفئة الحالية؟' });
   assert.equal(second.success, true);
   assert.equal(second.memory.switched, false);
   assert.equal(h.state.sessionCount, 1, 'the current category keeps the follow-up in one session');
@@ -3447,7 +4691,7 @@ test('a provider rate limit keeps its retry time and does not restart the sessio
     () => h.runtime.chat({
       ...base,
       conversationId: 'conv-rate-limit',
-      message: 'أريد أن أضيف تلاجة',
+      message: 'ابعتلي تقرير عن تلاجة بنسونيك 14 أدم؟',
     }),
     (error) => {
       assert.equal(error.code, 'rate_limited');
@@ -3462,7 +4706,7 @@ test('a provider rate limit keeps its retry time and does not restart the sessio
     () => h.runtime.chat({
       ...base,
       conversationId: 'conv-rate-limit',
-      message: 'أريد أن أضيف تلاجة',
+      message: 'ابعتلي تقرير عن تلاجة بنسونيك 14 أدم؟',
     }),
     (error) => {
       assert.equal(error.code, 'rate_limited');
@@ -3478,14 +4722,15 @@ test('a provider rate limit keeps its retry time and does not restart the sessio
   );
 });
 
-test('a quota failure retries once with the backup provider token', async (t) => {
+test('quota failures walk every saved token and keep the working one active', async (t) => {
   const h = await createRuntimeHarness(t, {
     providerKeys: {
-      'provider:groq': 'primary-token',
-      'provider:groq:2': 'backup-token',
+      'provider:groq': 'first-token',
+      'provider:groq:2': 'second-token',
+      'provider:groq:3': 'third-token',
     },
     promptHook: ({ index }) => {
-      if (index === 0) {
+      if (index < 2) {
         return { error: {
           type: 'provider.rate-limit',
           message: 'Rate limit reached. Please try again in 60s.',
@@ -3511,25 +4756,28 @@ test('a quota failure retries once with the backup provider token', async (t) =>
     branchId: 'branch-1',
     username: 'admin',
     conversationId: 'conv-token-rotation',
-    message: 'أريد أن أضيف تلاجة بنسونيك 14 أدم',
+    message: 'ابعتلي تقرير عن تلاجة بنسونيك 14 أدم؟',
   });
 
   assert.equal(result.success, true);
-  assert.equal(h.runtime.activeToken('groq'), 'backup');
-  assert.equal(h.state.sessionCount, 2);
-  assert.equal(h.state.removeCalls, 1);
-  assert.equal(h.state.prompts.length, 2);
-  assert.match(h.state.prompts[1].text, /\[Conversation memory\]/);
-  assert.match(h.state.prompts[1].text, /تلاجة بنسونيك/);
+  assert.equal(h.runtime.activeToken('groq'), 2);
+  assert.equal(h.state.sessionCount, 3);
+  assert.equal(h.state.removeCalls, 2);
+  assert.equal(h.state.prompts.length, 3);
+  assert.match(h.state.prompts[2].text, /\[Conversation memory\]/);
+  assert.match(h.state.prompts[2].text, /تلاجة بنسونيك/);
   assert.ok(h.logs.some((line) =>
-    /\[AI auth\] rate limited; retrying with the backup provider token/.test(line)));
+    /\[AI auth\] rate_limited; retrying with provider token 2/.test(line)));
+  assert.ok(h.logs.some((line) =>
+    /\[AI auth\] rate_limited; retrying with provider token 3/.test(line)));
 });
 
-test('a quota failure on the backup token stops instead of looping', async (t) => {
+test('a quota failure on the last token stops instead of looping', async (t) => {
   const h = await createRuntimeHarness(t, {
     providerKeys: {
-      'provider:groq': 'primary-token',
-      'provider:groq:2': 'backup-token',
+      'provider:groq': 'first-token',
+      'provider:groq:2': 'second-token',
+      'provider:groq:3': 'third-token',
     },
     promptHook: ({ index }) => ({
       error: {
@@ -3547,7 +4795,7 @@ test('a quota failure on the backup token stops instead of looping', async (t) =
       branchId: 'branch-1',
       username: 'admin',
       conversationId: 'conv-token-rotation-fails',
-      message: 'أريد أن أضيف تلاجة',
+      message: 'ابعتلي تقرير عن تلاجة بنسونيك؟',
     }),
     (error) => {
       assert.equal(error.code, 'rate_limited');
@@ -3556,10 +4804,134 @@ test('a quota failure on the backup token stops instead of looping', async (t) =
     },
   );
 
-  assert.equal(h.runtime.activeToken('groq'), 'backup');
+  assert.equal(h.runtime.activeToken('groq'), 2);
+  assert.equal(h.state.sessionCount, 3);
+  assert.equal(h.state.removeCalls, 2);
+  assert.equal(h.state.prompts.length, 3);
+});
+
+test('a 413 provider response explains the per-request token limit', async (t) => {
+  const h = await createRuntimeHarness(t, {
+    promptHook: () => ({
+      error: {
+        type: 'provider.error',
+        message: 'Request too large for the model context.',
+        status: 413,
+      },
+    }),
+  });
+
+  await assert.rejects(
+    () => h.runtime.chat({
+      authToken: 'jwt-session',
+      branchId: 'branch-1',
+      username: 'admin',
+      conversationId: 'conv-provider-413',
+      message: 'اكتب مثالاً للسعر',
+    }),
+    (error) => {
+      assert.equal(error.code, 'request_too_large');
+      assert.match(error.message, /Request too large/);
+      assert.match(error.message, /8,000/);
+      assert.match(error.message, /Start a new chat/);
+      return true;
+    },
+  );
+  assert.ok(h.logs.some((line) => /\[AI provider\] request_too_large status=413/.test(line)));
+});
+
+test('a 413 on a later turn retries once with compact memory', async (t) => {
+  const h = await createRuntimeHarness(t, {
+    promptHook: ({ index }) => {
+      if (index === 1) {
+        return {
+          error: {
+            type: 'provider.error',
+            message: 'Request too large for model openai/gpt-oss-120b on tokens per minute (TPM): Limit 8000, Requested 12000.',
+            status: 413,
+          },
+        };
+      }
+      return { reply: `Reply ${index + 1}` };
+    },
+  });
+  const base = {
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-provider-413-retry',
+  };
+
+  const first = await h.runtime.chat({ ...base, message: 'Show me Pepsi' });
+  assert.equal(first.success, true);
+
+  const second = await h.runtime.chat({ ...base, message: 'what about Pepsi?' });
+  assert.equal(second.success, true);
   assert.equal(h.state.sessionCount, 2);
   assert.equal(h.state.removeCalls, 1);
-  assert.equal(h.state.prompts.length, 2);
+  assert.notEqual(h.state.prompts[1].sessionID, h.state.prompts[2].sessionID);
+  assert.match(h.state.prompts[2].text, /\[Conversation memory\]/);
+  assert.match(
+    h.logs.join('\n'),
+    /retrying in a fresh session with compact memory after request_too_large/,
+  );
+});
+
+test('a low per-request provider starts a fresh session before the next turn', async (t) => {
+  const h = await createRuntimeHarness(t, {
+    tokenHook: () => ({
+      input: 6000,
+      output: 500,
+      reasoning: 0,
+      cache: { read: 0, write: 0 },
+    }),
+  });
+  const base = {
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-low-request-budget',
+  };
+
+  const first = await h.runtime.chat({ ...base, message: 'Show me Pepsi' });
+  assert.equal(first.success, true);
+  assert.equal(h.state.sessionCount, 1);
+
+  const second = await h.runtime.chat({ ...base, message: 'what about Pepsi?' });
+  assert.equal(second.success, true);
+  assert.equal(h.state.sessionCount, 2);
+  assert.equal(h.state.removeCalls, 1);
+  assert.notEqual(h.state.prompts[1].sessionID, h.state.prompts[0].sessionID);
+  assert.match(h.state.prompts[1].text, /\[Conversation memory\]/);
+  assert.ok(h.logs.some((line) => /\[AI prompt\] chars=\d+ request_limit=8000/.test(line)));
+});
+
+test('a 200 response carrying a provider error is not treated as a reply', async (t) => {
+  const h = await createRuntimeHarness(t, {
+    promptHook: () => ({
+      error: {
+        type: 'provider.error',
+        message: 'The provider rejected the request inside a successful response.',
+        status: 200,
+      },
+    }),
+  });
+
+  await assert.rejects(
+    () => h.runtime.chat({
+      authToken: 'jwt-session',
+      branchId: 'branch-1',
+      username: 'admin',
+      conversationId: 'conv-provider-200-error',
+      message: 'اكتب مثالاً للسعر',
+    }),
+    (error) => {
+      assert.equal(error.code, 'provider_error');
+      assert.match(error.message, /rejected the request inside a successful response/);
+      return true;
+    },
+  );
+  assert.ok(h.logs.some((line) => /\[AI provider\] provider_error status=200/.test(line)));
 });
 
 test('an exact product duplicate becomes an update question without another model call', async (t) => {
@@ -3594,7 +4966,7 @@ test('an exact product duplicate becomes an update question without another mode
     branchId: 'branch-1',
     username: 'admin',
     conversationId: 'conv-duplicate',
-    message: 'أريد أن أضيف تلاجة بنسونيك 14 أدم',
+    message: 'أريد أن أضيف تلاجة بنسونيك 14 أدم وكمان عدل سعر منتج تاني',
   });
 
   assert.equal(result.success, true);
@@ -3671,6 +5043,67 @@ test('an add request hides similar products and does not repeat the clarify ques
     result.toolCalls.some((call) => call.name === 'posnic_ask_user'),
     true,
   );
+});
+
+test('a multi-product answer does not repeat the clarification as prose and a card', async (t) => {
+  const prose = 'أرجو تزويدي بتفاصيل باقي المنتجات التسعة (الاسم، سعر البيع، سعر التكلفة، والكمية الافتتاحية) لكل منها.';
+  const question = 'من فضلك اذكر تفاصيل باقي المنتجات التسعة (الاسم، سعر البيع، سعر التكلفة، الكمية الافتتاحية) لكل منتج.';
+  const h = await createRuntimeHarness(t, {
+    promptHook: ({ index }) => {
+      if (index === 0) {
+        return {
+          reply: 'أحتاج تفصيلة واحدة',
+          tools: [{
+            name: 'posnic_ask_user',
+            metadata: { posnic: {
+              kind: 'clarify',
+              question: 'من فضلك اذكر أسماء المنتجات، سعر البيع، سعر التكلفة، والكمية الافتتاحية لكل منتج.',
+              options: [],
+              missing: ['product details'],
+            } },
+          }],
+        };
+      }
+      return {
+        reply: prose,
+        tools: [{
+          name: 'posnic_ask_user',
+          metadata: { posnic: {
+            kind: 'clarify',
+            question,
+            options: [],
+            missing: ['remaining products'],
+          } },
+        }],
+      };
+    },
+  });
+
+  const first = await h.runtime.chat({
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-many-products',
+    message: 'عايز اضيف عشر منتاجات',
+  });
+  assert.equal(first.success, true);
+  assert.equal(first.toolCalls.filter((call) => call.name === 'posnic_ask_user').length, 1);
+  assert.match(h.state.prompts[0].text, /Task: create several products/);
+  assert.match(h.state.prompts[0].text, /Missing: product details/);
+  assert.doesNotMatch(h.state.prompts[0].text, /Target: عشر/);
+  assert.doesNotMatch(h.state.prompts[0].text, /name=عشر/);
+
+  const second = await h.runtime.chat({
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-many-products',
+    message: 'عربية لعبة سعرها 500 جنية وبنشتريها ب 400 والكمية 3 الوصف عربية جامدة اوي',
+  });
+  assert.equal(second.success, true);
+  assert.equal(second.text, '', 'the prose repeated the clarification card');
+  assert.equal(second.toolCalls.filter((call) => call.name === 'posnic_ask_user').length, 1);
+  assert.match(second.toolCalls[0].metadata.posnic.question, /باقي المنتجات التسعة/);
 });
 
 test('a provider or model change is applied to the runtime before it restarts', async (t) => {
@@ -3789,7 +5222,7 @@ test('the runtime continues a first write request after a search-only reply', as
     branchId: 'branch-1',
     username: 'admin',
     conversationId: 'conv-write-correction',
-    message: 'ضيف برودكت جزمة حمرى في فئة الاحزايا وخلي الكمية خمسين',
+    message: 'ضيف برودكت جزمة حمرى في فئة الاحزايا وخلي الكمية خمسين وكمان قولي الأرباح',
   });
 
   assert.equal(reply.success, true);
@@ -3824,7 +5257,7 @@ test('a failed write continuation is reported instead of showing the discarded s
       branchId: 'branch-1',
       username: 'admin',
       conversationId: 'conv-write-failure',
-      message: 'ضيف جزمة حمراء في فئة احذية',
+      message: 'ضيف جزمة حمراء في فئة احذية وكمان قولي الأرباح',
     }),
     (error) => {
       assert.equal(error.code, 'provider_error');
@@ -3899,7 +5332,7 @@ test('the runtime keeps a pending create request across a restart and a short an
 
   const first = await h.runtime.chat({
     ...base,
-    message: 'ضيف برودكت جزمة زرقاء في فئة الاحزايا',
+    message: 'ضيف برودكت جزمة زرقاء في فئة الاحزايا وكمان عدل سعر منتج تاني',
   });
   assert.equal(first.success, true);
 
@@ -3952,7 +5385,7 @@ test('a slow model still delivers a plan it already prepared', async (t) => {
 
   const started = Date.now();
   const result = await h.runtime.chat({
-    message: 'ضيف جزمة حمراء',
+    message: 'ضيف جزمة حمراء وكمان عدل سعر منتج تاني',
     authToken: 'jwt-session',
     branchId: 'branch-1',
     username: 'admin',
@@ -3962,6 +5395,338 @@ test('a slow model still delivers a plan it already prepared', async (t) => {
   assert.equal(result.success, true);
   assert.ok(result.toolCalls.some((call) => call.name === 'posnic_propose_plan'));
   assert.ok(Date.now() - started < 2000);
+});
+
+test('a session that keeps producing messages is not cut off mid-work', async (t) => {
+  let sdkState = null;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const h = await createRuntimeHarness(t, {
+    /* The stall allowance is shorter than the work below, so a fixed
+       deadline would give up while the session was still producing. */
+    chatTimeoutMs: 400,
+    tokenHook: ({ state }) => { sdkState = state; return null; },
+    waitHook: async ({ sessionID }) => {
+      for (let step = 0; step < 10; step += 1) {
+        await sleep(60);
+        const list = sdkState && sdkState.sessions.get(sessionID);
+        if (list) {
+          sdkState.clock += 10;
+          list.push({
+            type: 'assistant',
+            time: { created: sdkState.clock + 1 },
+            content: [{ type: 'text', text: 'step done' }],
+          });
+        }
+      }
+      /* Work finishes and the session settles: the wait ends normally. */
+    },
+  });
+
+  const stages = [];
+  const started = Date.now();
+  const result = await h.runtime.chat({
+    message: 'ضيف أربع منتجات وافتح فئة جديدة',
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-busy',
+    onProgress: (progress) => stages.push(progress && progress.stage),
+  });
+  const elapsed = Date.now() - started;
+
+  assert.equal(result.success, true, 'the completed work must be returned');
+  assert.ok(
+    stages.includes('working'),
+    `the user was never told it was working; stages were: ${stages.join(', ')}`,
+  );
+  assert.ok(
+    elapsed >= 550,
+    `gave up after ${elapsed}ms even though messages kept arriving past ` +
+    `the ${400}ms stall allowance`,
+  );
+});
+
+test('a session that goes genuinely quiet still stops', async (t) => {
+  const h = await createRuntimeHarness(t, {
+    chatTimeoutMs: 60,
+    waitHook: () => new Promise(() => {}),
+    promptHook: () => ({ reply: '' }),
+  });
+
+  const started = Date.now();
+  await assert.rejects(
+    () => h.runtime.chat({
+      message: 'اسأل سؤال عادي',
+      authToken: 'jwt-session',
+      branchId: 'branch-1',
+      username: 'admin',
+      conversationId: 'conv-stalled',
+    }),
+    (error) => error.code === 'chat_timeout',
+    'a stall must still be reported, not hang',
+  );
+  assert.ok(
+    Date.now() - started < 2000,
+    'a session with no activity must stop at the stall allowance, not the ceiling',
+  );
+});
+
+test('a standard product create is handled locally without starting the model', async (t) => {
+  const category = {
+    id: '64b7f0c2a1b2c3d4e5f60001',
+    name: 'موبايلات',
+    itemCount: 4,
+  };
+  const h = await createRuntimeHarness(t, {
+    fetchImpl: async (url) => {
+      if (url.includes('/api/items/search')) {
+        return response(200, { data: { list: [], total: 0 } });
+      }
+      if (url.includes('/api/branches/getOneStore')) {
+        return response(200, { data: { business_type: 'electronics' } });
+      }
+      if (url.includes('/api/categories')) {
+        return response(200, { data: { list: [category], total: 1 } });
+      }
+      return response(404, { message: 'not found' });
+    },
+  });
+
+  const result = await h.runtime.chat({
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-local-standard',
+    message: 'أضيف منتج iPhone 15 8 RAM 32GB بسعر 50000 وتكلفة 40 وكمية 13',
+  });
+
+  assert.equal(result.success, true);
+  assert.equal(h.state.sessionCount, 0, 'the model was not started');
+  assert.equal(h.state.prompts.length, 0, 'the model received no request');
+  assert.ok(h.logs.some((line) =>
+    /\[AI local\] product request handled without a model request/.test(line)));
+
+  const planCall = result.toolCalls.find((call) => call.name === 'posnic_propose_plan');
+  assert.ok(planCall, 'a plan preview is returned');
+  const plan = planCall.metadata.posnic.plan;
+  const product = plan.steps.find((step) => step.action === 'create_product');
+  assert.ok(product);
+  assert.equal(product.fields.name, 'iPhone 15 8 RAM 32GB');
+  assert.equal(product.fields.selling_price, 50000);
+  assert.equal(product.fields.cost_price, 40);
+  assert.equal(product.fields.opening_stock, 13);
+  assert.equal(product.fields.category_id, category.id);
+});
+
+test('a direct stock question is answered from live rows without the model', async (t) => {
+  const row = {
+    id: '64b7f0c2a1b2c3d4e5f60010',
+    name: 'كاتل',
+    selling_price: 100,
+    company_price: 70,
+    available_quantity: 8,
+    category_id: '64b7f0c2a1b2c3d4e5f60001',
+    category_name: 'موبايلات',
+    track_inventory: true,
+    unit: 'qty',
+  };
+  const h = await createRuntimeHarness(t, {
+    fetchImpl: async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/items/search') {
+        return response(200, { data: { list: [row], total: 1 } });
+      }
+      return response(404, { message: 'not found' });
+    },
+  });
+
+  const result = await h.runtime.chat({
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-live-stock',
+    message: 'كام مخزون كاتل؟',
+  });
+
+  assert.equal(result.success, true);
+  assert.match(result.text, /«كاتل» متوفر 8/);
+  assert.equal(h.state.prompts.length, 0, 'the model received no request');
+  assert.equal(h.state.sessionCount, 0, 'the model was not started');
+  assert.ok(result.toolCalls.some((call) =>
+    call.metadata && call.metadata.posnic &&
+    call.metadata.posnic.kind === 'product_search'));
+});
+
+test('an ambiguous live name asks by product name without the model', async (t) => {
+  const rows = [
+    { id: 'a', name: 'كاتل مياه', selling_price: 10, available_quantity: 3, track_inventory: true },
+    { id: 'b', name: 'كاتل غاز', selling_price: 20, available_quantity: 4, track_inventory: true },
+  ];
+  const h = await createRuntimeHarness(t, {
+    fetchImpl: async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/items/search') {
+        return response(200, { data: { list: rows, total: rows.length } });
+      }
+      return response(404, { message: 'not found' });
+    },
+  });
+
+  const result = await h.runtime.chat({
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-live-ambiguous',
+    message: 'كام مخزون كاتل؟',
+  });
+
+  assert.match(result.text, /«كاتل مياه»/);
+  assert.match(result.text, /«كاتل غاز»/);
+  assert.match(result.text, /أنهي واحد/);
+  assert.doesNotMatch(result.text, /\bid\b/i);
+  assert.equal(h.state.prompts.length, 0);
+});
+
+test('a targetless edit uses the live row from the previous turn and compiles without the model', async (t) => {
+  const row = {
+    id: '64b7f0c2a1b2c3d4e5f60010',
+    name: 'كاتل',
+    selling_price: 100,
+    company_price: 70,
+    available_quantity: 8,
+    category_id: '64b7f0c2a1b2c3d4e5f60001',
+    category_name: 'موبايلات',
+    track_inventory: true,
+    unit: 'qty',
+  };
+  const h = await createRuntimeHarness(t, {
+    fetchImpl: async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/items/search') {
+        return response(200, { data: { list: [row], total: 1 } });
+      }
+      if (parsed.pathname === `/api/items/${row.id}`) {
+        return response(200, { data: row });
+      }
+      return response(404, { message: 'not found' });
+    },
+  });
+  const base = {
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-live-edit',
+  };
+
+  const read = await h.runtime.chat({ ...base, message: 'كام مخزون كاتل؟' });
+  assert.equal(read.success, true);
+  assert.equal(h.state.prompts.length, 0);
+
+  const edit = await h.runtime.chat({ ...base, message: 'عدل المنتج ده وخلي سعره 30' });
+  assert.equal(edit.success, true);
+  assert.equal(h.state.prompts.length, 0, 'the model received no request');
+
+  const planCall = edit.toolCalls.find((call) => call.name === 'posnic_propose_plan');
+  assert.ok(planCall, 'a plan preview is returned');
+  const step = planCall.metadata.posnic.plan.steps[0];
+  assert.equal(step.action, 'update_product');
+  assert.equal(step.targetName, 'كاتل');
+  assert.equal(step.fields.selling_price, 30);
+  assert.equal(step.fields.cost_price, undefined);
+  assert.equal(step.fields.stock, undefined);
+});
+
+test('an image edit with a live target hands the missing image to the model', async (t) => {
+  const row = {
+    id: '64b7f0c2a1b2c3d4e5f60010',
+    name: 'كاتل',
+    selling_price: 100,
+    company_price: 70,
+    available_quantity: 8,
+    track_inventory: true,
+  };
+  const h = await createRuntimeHarness(t, {
+    fetchImpl: async (url) => {
+      const parsed = new URL(url);
+      if (parsed.pathname === '/api/items/search') {
+        return response(200, { data: { list: [row], total: 1 } });
+      }
+      return response(404, { message: 'not found' });
+    },
+  });
+  const base = {
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-live-image',
+  };
+
+  await h.runtime.chat({ ...base, message: 'كام مخزون كاتل؟' });
+  const edit = await h.runtime.chat({ ...base, message: 'غير صورة المنتج' });
+
+  assert.equal(edit.success, true);
+  const prompt = h.state.prompts.map((entry) => entry.text)
+    .find((text) => text.includes('[Local pre-check]'));
+  assert.ok(prompt, 'the model receives the local compiler context');
+  const contextBlock = prompt.split('[Local pre-check]')[1] || '';
+  assert.match(contextBlock, /"missing":\["image"\]/);
+  assert.match(contextBlock, /own words/);
+  assert.doesNotMatch(contextBlock, /attachment/i);
+});
+
+test('a slow model reports progress and a slow notice while it works', async (t) => {
+  const h = await createRuntimeHarness(t, {
+    slowNoticeMs: 5,
+    promptHook: () => ({ reply: 'تمام.' }),
+    waitHook: () => new Promise((resolve) => setTimeout(resolve, 30)),
+  });
+  const stages = [];
+
+  const result = await h.runtime.chat({
+    authToken: 'jwt-session',
+    branchId: 'branch-1',
+    username: 'admin',
+    conversationId: 'conv-progress',
+    message: 'اكتب مثالاً للسعر',
+    onProgress: (progress) => stages.push(progress.stage),
+  });
+
+  assert.equal(result.success, true);
+  assert.ok(stages.includes('understanding'));
+  assert.ok(stages.includes('waiting_model'));
+  assert.ok(stages.includes('slow'));
+  assert.equal(stages[stages.length - 1], 'done');
+});
+
+test('chat progress is forwarded to the renderer on ai:chat-progress', async (t) => {
+  const base = fakeRuntime();
+  const runtime = {
+    ...base,
+    async chat(payload) {
+      if (typeof payload.onProgress === 'function') {
+        payload.onProgress({ stage: 'reading_shop', at: 123 });
+      }
+      return { success: true, text: 'ok', toolCalls: [] };
+    },
+  };
+  const h = setup(t, { runtime });
+  await h.handlers.get('ai:save-key')({}, KEY);
+  await h.handlers.get('ai:save-provider-key')({}, { provider: 'groq', key: PROVIDER_KEY });
+  await h.handlers.get('ai:set-enabled')({}, true);
+
+  const sent = [];
+  const result = await h.handlers.get('ai:chat')({
+    sender: { send: (channel, data) => sent.push({ channel, data }) },
+  }, {
+    message: 'بكام الجزمة؟',
+    conversationId: 'conv-progress-ipc',
+  });
+
+  assert.equal(result.success, true);
+  assert.deepEqual(sent, [{
+    channel: 'ai:chat-progress',
+    data: { conversationId: 'conv-progress-ipc', stage: 'reading_shop', at: 123 },
+  }]);
 });
 
 test('assistant replies use the requested currency wording, never the rupee sign', async (t) => {
@@ -3978,7 +5743,7 @@ test('assistant replies use the requested currency wording, never the rupee sign
     promptHook: () => ({ reply: 'السعر ₹ 200، والكلمة 200 جنيه.' }),
   });
   const result = await h.runtime.chat({
-    message: 'بكام الجزمة؟',
+    message: 'اكتب مثالاً للسعر',
     authToken: 'jwt-session',
     branchId: 'branch-1',
     username: 'admin',
@@ -4026,6 +5791,8 @@ test('a new conversation does not carry the previous conversation context', asyn
 
 test('the runtime compacts when real token usage reaches the context window', async (t) => {
   const h = await createRuntimeHarness(t, {
+    settings: { provider: 'nvidia', model: 'moonshotai/kimi-k3.1-pro' },
+    providerKeys: { 'provider:nvidia': 'test-provider-key' },
     tokenHook: ({ index, state }) => ({
       input: state.compactCalls > 0 ? 4000 : 30000 + index * 20000,
       output: 500,
@@ -4052,6 +5819,8 @@ test('the runtime compacts when real token usage reaches the context window', as
 
 test('the runtime keeps one session while real token usage fits the window', async (t) => {
   const h = await createRuntimeHarness(t, {
+    settings: { provider: 'nvidia', model: 'moonshotai/kimi-k3.1-pro' },
+    providerKeys: { 'provider:nvidia': 'test-provider-key' },
     tokenHook: () => ({
       input: 12000,
       output: 400,
@@ -4074,4 +5843,92 @@ test('the runtime keeps one session while real token usage fits the window', asy
   }
   assert.equal(h.state.compactCalls, 0);
   assert.equal(h.state.sessionCount, 1);
+});
+
+test('a barcode used by another product is caught by a code search, not the name search', () => {
+  /* The duplicate check used to run only over the name search results, so a
+     different-name product carrying the same barcode slipped past the plan
+     and the server refused the write late. The check now asks the catalogue
+     by the code itself — trimmed, case-folded, leading zeros kept — and
+     surfaces possible_duplicate with the product to update. */
+  const { validatePlan } = require(path.join(ROOT, 'src/ai/actions/plan-schema'));
+  const api = {
+    async get(pathname, query) {
+      if (pathname === 'items/search') {
+        const q = String((query && query.q) || '').trim().toLowerCase();
+        const list = q === '6291041500012345'
+          ? [{ _id: 'item-9', name: 'Golden Clock', barcode_id: '6291041500012345' }]
+          : [];
+        return { data: { list, total: list.length } };
+      }
+      if (pathname === 'branches/getOneStore') return { data: { business_type: 'electronics' } };
+      return { data: { list: [], total: 0 } };
+    },
+    async post() { throw new Error('unexpected POST'); },
+    async put() { throw new Error('unexpected PUT'); },
+  };
+
+  return validatePlan({
+    title: 'Add Golden Watch',
+    steps: [
+      {
+        id: 'p1',
+        action: 'create_product',
+        fields: {
+          name: 'Golden Watch',
+          barcode: '6291041500012345',
+          selling_price: 300,
+          cost_price: 200,
+          opening_stock: 4,
+        },
+      },
+    ],
+  }, { api, sessionID: 'conv-barcode' }).then((prepared) => {
+    assert.equal(prepared.ok, false);
+    assert.equal(prepared.code, 'possible_duplicate');
+    assert.equal(prepared.existingId, 'item-9');
+    assert.match(prepared.message, /Golden Clock/);
+  });
+});
+
+test('a failing barcode lookup fails open with a warning, the server lock backstopping', () => {
+  /* The by-code lookup is a secondary safety net: when it cannot run, the
+     plan must not be blocked — the server's barcode write lock refuses a
+     clash at execution time. The primary name check keeps its fail-closed
+     path: here the name search succeeds (no duplicate) and only the code
+     query fails. */
+  const { validatePlan } = require(path.join(ROOT, 'src/ai/actions/plan-schema'));
+  const api = {
+    async get(pathname, query) {
+      if (pathname === 'items/search') {
+        const q = String((query && query.q) || '').trim();
+        if (q === '6291041500012345') throw new Error('catalogue unreachable');
+        return { data: { list: [], total: 0 } };
+      }
+      if (pathname === 'branches/getOneStore') return { data: { business_type: 'electronics' } };
+      return { data: { list: [], total: 0 } };
+    },
+    async post() { throw new Error('unexpected POST'); },
+    async put() { throw new Error('unexpected PUT'); },
+  };
+
+  return validatePlan({
+    title: 'Add Golden Watch',
+    steps: [
+      {
+        id: 'p1',
+        action: 'create_product',
+        fields: {
+          name: 'Golden Watch',
+          barcode: '6291041500012345',
+          selling_price: 300,
+          cost_price: 200,
+          opening_stock: 4,
+        },
+      },
+    ],
+  }, { api, sessionID: 'conv-barcode-down' }).then((prepared) => {
+    assert.equal(prepared.ok, true);
+    assert.match(prepared.plan.warnings.join(' '), /barcode duplicate check could not run/);
+  });
 });

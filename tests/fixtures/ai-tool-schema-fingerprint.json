@@ -1,0 +1,302 @@
+{
+  "posnic_search_products": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "query": {
+        "type": "string"
+      },
+      "category": {
+        "type": "string",
+        "maxLength": 160
+      },
+      "context": {
+        "type": "string",
+        "maxLength": 240
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 20
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "posnic_list_products": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "query": {
+        "type": "string"
+      },
+      "categoryId": {
+        "type": "string"
+      },
+      "categoryName": {
+        "type": "string"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50
+      },
+      "page": {
+        "type": "integer",
+        "minimum": 1
+      }
+    },
+    "required": []
+  },
+  "posnic_list_categories": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "query": {
+        "type": "string"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 50
+      }
+    },
+    "required": []
+  },
+  "posnic_help": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "query": {
+        "type": "string"
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 6
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "posnic_recall": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "query": {
+        "type": "string",
+        "maxLength": 200
+      },
+      "limit": {
+        "type": "integer",
+        "minimum": 1,
+        "maximum": 6
+      }
+    },
+    "required": [
+      "query"
+    ]
+  },
+  "posnic_ask_user": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "question": {
+        "type": "string",
+        "maxLength": 300
+      },
+      "slot": {
+        "type": "string",
+        "maxLength": 40
+      },
+      "options": {
+        "type": "array",
+        "maxItems": 4,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "label": {
+              "type": "string",
+              "maxLength": 80
+            },
+            "value": {
+              "type": "string",
+              "maxLength": 160
+            },
+            "none": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "label"
+          ]
+        }
+      },
+      "pending": {
+        "type": "string",
+        "maxLength": 500
+      },
+      "missing": {
+        "type": "array",
+        "maxItems": 8,
+        "items": {
+          "type": "string",
+          "maxLength": 60
+        }
+      }
+    },
+    "required": []
+  },
+  "posnic_user_profile": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {},
+    "required": []
+  },
+  "posnic_update_user_profile": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "section": {
+        "type": "string",
+        "enum": [
+          "preferences",
+          "recurring",
+          "language"
+        ]
+      },
+      "note": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 240
+      }
+    },
+    "required": [
+      "section",
+      "note"
+    ]
+  },
+  "posnic_propose_plan": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "title": {
+        "type": "string",
+        "maxLength": 120
+      },
+      "summary": {
+        "type": "string",
+        "maxLength": 400
+      },
+      "corrections": {
+        "type": "array",
+        "maxItems": 8,
+        "items": {
+          "type": "object",
+          "additionalProperties": true
+        }
+      },
+      "shared": {
+        "type": "object",
+        "additionalProperties": true
+      },
+      "steps": {
+        "type": "array",
+        "minItems": 1,
+        "maxItems": 20,
+        "items": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "id": {
+              "type": "string",
+              "pattern": "^[a-zA-Z0-9_-]+$",
+              "maxLength": 40
+            },
+            "action": {
+              "type": "string",
+              "enum": [
+                "create_category",
+                "update_category",
+                "create_product",
+                "update_product",
+                "adjust_stock"
+              ]
+            },
+            "target": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "properties": {
+                    "step": {
+                      "type": "string"
+                    },
+                    "field": {
+                      "type": "string",
+                      "enum": [
+                        "id",
+                        "name"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "step"
+                  ]
+                }
+              ]
+            },
+            "dependsOn": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 10
+            },
+            "fields": {
+              "type": "object",
+              "additionalProperties": true
+            },
+            "images": {
+              "type": "array",
+              "maxItems": 8,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "attachmentId": {
+                    "type": "string"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "cover": {
+                    "type": "boolean"
+                  }
+                },
+                "required": [
+                  "attachmentId"
+                ]
+              }
+            }
+          },
+          "required": [
+            "id",
+            "action",
+            "fields"
+          ]
+        }
+      }
+    },
+    "required": [
+      "title",
+      "steps"
+    ]
+  }
+}

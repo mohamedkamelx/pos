@@ -21,6 +21,7 @@ const {
   listProviders,
 } = require('./ai/provider-registry');
 const {
+  MAX_PROVIDER_TOKENS,
   TRANSCRIPTION_SLOT,
   createKeyStore,
   providerTokenSlot,
@@ -81,6 +82,41 @@ function runtimeFailure(error) {
   );
 }
 
+/* A click on a card arrives as an answer object, never as prose the model
+   has to re-read. Only the ids travel: the question, the option and, for an
+   image, the attachments that were picked. Anything malformed is dropped so
+   the turn falls back to ordinary text instead of deciding on a guess. */
+function readChatAnswer(payload) {
+  const raw = payload && payload.answer;
+  if (!raw || typeof raw !== 'object') return null;
+  const clarificationId = typeof raw.clarificationId === 'string'
+    ? raw.clarificationId.trim().slice(0, 60) : '';
+  if (!clarificationId) return null;
+  const answer = { clarificationId };
+  if (typeof raw.optionId === 'string') answer.optionId = raw.optionId.trim().slice(0, 40);
+  if (typeof raw.slot === 'string') answer.slot = raw.slot.trim().slice(0, 40);
+  if (typeof raw.value === 'string') answer.value = raw.value.trim().slice(0, 160);
+  if (Array.isArray(raw.attachmentIds)) {
+    answer.attachmentIds = raw.attachmentIds
+      .map((id) => (typeof id === 'string' ? id.trim().slice(0, 80) : ''))
+      .filter(Boolean)
+      .slice(0, MAX_ATTACHMENTS);
+  }
+  return answer;
+}
+
+/* The images this message carries. Only the ids the page sent with the
+   message are used, so an attachment from an earlier request can never be
+   pulled into a plan built now. */
+function readAttachedIds(payload) {
+  const raw = payload && payload.attachedIds;
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((id) => (typeof id === 'string' ? id.trim().slice(0, 80) : ''))
+    .filter(Boolean)
+    .slice(0, MAX_ATTACHMENTS);
+}
+
 function createAiIpc({
   ipcMain: suppliedIpcMain,
   app,
@@ -96,6 +132,15 @@ function createAiIpc({
   installed = true;
 
   const ipcMain = suppliedIpcMain || defaultIpcMain();
+  /* The same handlers serve the desktop renderer over IPC and a phone on the
+     shop Wi-Fi over the local API. Keeping one map means a phone cannot reach
+     a path the desktop does not have, and a new handler is not silently
+     desktop-only. */
+  const handlers = new Map();
+  const handle = (channel, handler) => {
+    handlers.set(channel, handler);
+    ipcMain.handle(channel, handler);
+  };
   const keyStore = createKeyStore({ app, safeStorage });
   const runtime = (runtimeFactory || createOpenCodeRuntime)({
     baseDir: path.join(app.getPath('userData'), 'ai'),
@@ -105,22 +150,36 @@ function createAiIpc({
     apiBaseUrl,
   });
 
+  function providerTokens(providerID) {
+    return keyStore.providerTokenStatuses(providerID);
+  }
+
+  function tokenResponse(providerID) {
+    const tokens = providerTokens(providerID);
+    const activeToken = keyStore.getActiveProviderToken(providerID);
+    const configured = tokens.some((token) => token.configured);
+    const active = tokens.find((token) => token.index === activeToken) || tokens[0] || null;
+    return {
+      configured,
+      secure: active ? active.secure : true,
+      session: tokens.some((token) => token.session),
+      reason: active && active.configured
+        ? ''
+        : (tokens.find((token) => token.unreadable) ? 'unreadable' : ''),
+      tokens,
+      tokenCount: tokens.length,
+      activeToken,
+      backupConfigured: tokens.length > 1,
+      backupSecure: active ? active.secure : true,
+    };
+  }
+
   function providerStatus() {
     const settings = keyStore.getSettings();
     const provider = getProvider(settings.provider) || getProvider(DEFAULT_PROVIDER);
     const model = getModel(provider.id, settings.model) || provider.models[0];
-    const chat = keyStore.status(providerTokenSlot(provider.id));
-    const backup = keyStore.status(providerTokenSlot(provider.id, 1));
     return {
-      configured: chat.configured,
-      secure: chat.secure,
-      session: chat.session,
-      reason: chat.reason,
-      backupConfigured: backup.configured,
-      backupSecure: backup.secure,
-      activeToken: typeof runtime.activeToken === 'function'
-        ? runtime.activeToken(provider.id)
-        : 'primary',
+      ...tokenResponse(provider.id),
       provider: provider.id,
       providerLabel: provider.label,
       model: model.id,
@@ -146,7 +205,7 @@ function createAiIpc({
     try { await runtime.stop(); } catch (error) { /* already stopped */ }
   }
 
-  ipcMain.handle('ai:set-enabled', async (_event, enabled) => {
+  handle('ai:set-enabled', async (_event, enabled) => {
     const next = enabled === true;
     if (!next) {
       aiInputState.enabled = false;
@@ -166,11 +225,14 @@ function createAiIpc({
 
     const settings = keyStore.getSettings();
     const provider = getProvider(settings.provider) || getProvider(DEFAULT_PROVIDER);
-    const primary = keyStore.read(providerTokenSlot(provider.id));
-    const backup = keyStore.read(providerTokenSlot(provider.id, 1));
-    const chat = primary.key ? primary : backup;
-    if (!chat.key) {
-      const unreadable = primary.error === 'unreadable' || backup.error === 'unreadable';
+    const slots = keyStore.providerTokenSlots(provider.id);
+    const readable = slots
+      .map((index) => keyStore.read(providerTokenSlot(provider.id, index)))
+      .find((token) => token.key);
+    if (!readable) {
+      const unreadable = slots
+        .map((index) => keyStore.read(providerTokenSlot(provider.id, index)))
+        .some((token) => token.error === 'unreadable');
       return failure(
         unreadable ? 'provider_key_unreadable' : 'provider_key_missing',
         unreadable
@@ -208,9 +270,9 @@ function createAiIpc({
     return { success: true, enabled: true };
   });
 
-  ipcMain.handle('ai:key-status', () => status());
+  handle('ai:key-status', () => status());
 
-  ipcMain.handle('ai:validate-key', async (_event, raw) => {
+  handle('ai:validate-key', async (_event, raw) => {
     if (raw != null && typeof raw !== 'string') {
       return failure('key_invalid', 'Enter a valid Groq API key.');
     }
@@ -228,7 +290,7 @@ function createAiIpc({
     return validateGroqKey(key, fetchImpl);
   });
 
-  ipcMain.handle('ai:save-key', async (_event, raw) => {
+  handle('ai:save-key', async (_event, raw) => {
     const key = typeof raw === 'string' ? raw.trim() : '';
     if (!key || key.length > MAX_KEY_LENGTH) {
       return failure('key_invalid', 'Enter a valid Groq API key.');
@@ -250,7 +312,7 @@ function createAiIpc({
     };
   });
 
-  ipcMain.handle('ai:clear-key', async () => {
+  handle('ai:clear-key', async () => {
     try {
       keyStore.clear(TRANSCRIPTION_SLOT);
     } catch (error) {
@@ -261,7 +323,7 @@ function createAiIpc({
     return { success: true, configured: false };
   });
 
-  ipcMain.handle('ai:validate-provider-key', async (_event, payload) => {
+  handle('ai:validate-provider-key', async (_event, payload) => {
     const provider = payload && payload.provider;
     const key = payload && payload.key;
     if (typeof provider !== 'string' || typeof key !== 'string') {
@@ -270,11 +332,12 @@ function createAiIpc({
     return validateProviderKey(provider, key.trim(), fetchImpl);
   });
 
-  ipcMain.handle('ai:save-provider-key', async (_event, payload) => {
+  handle('ai:save-provider-key', async (_event, payload) => {
     const providerID = payload && payload.provider;
     const provider = getProvider(providerID);
     const key = payload && typeof payload.key === 'string' ? payload.key.trim() : '';
-    const backup = !!(payload && payload.backup === true);
+    const requestedIndex = payload && Number.isInteger(payload.index) ? payload.index : null;
+    const legacyBackup = !!(payload && payload.backup === true);
     if (!provider) {
       return failure('provider_invalid', 'Choose a supported model provider.');
     }
@@ -286,27 +349,36 @@ function createAiIpc({
 
     let stored;
     try {
-      stored = keyStore.setSecret(providerTokenSlot(provider.id, backup ? 1 : 0), key);
+      if (requestedIndex !== null || legacyBackup) {
+        stored = keyStore.setProviderToken(
+          provider.id,
+          requestedIndex !== null ? requestedIndex : 1,
+          key,
+        );
+      } else {
+        stored = keyStore.addProviderToken(provider.id, key);
+      }
     } catch (error) {
       return failure('provider_key_save_failed', 'The provider token could not be saved.');
+    }
+    if (!stored || stored.ok === false) {
+      return failure(
+        stored && stored.code === 'token_limit' ? 'token_limit' : 'provider_key_save_failed',
+        stored && stored.code === 'token_limit'
+          ? `You can save up to ${MAX_PROVIDER_TOKENS} provider tokens.`
+          : 'The provider token could not be saved.',
+      );
     }
 
     const settings = keyStore.getSettings();
     if (typeof runtime.updateSettings === 'function') runtime.updateSettings(settings);
-    /* A newly saved primary token should be tried again before the backup.
-       A backup is read lazily on the next quota failure, so it needs no restart. */
-    if (!backup && typeof runtime.usePrimaryToken === 'function') {
-      runtime.usePrimaryToken(provider.id);
-    }
+    const activeToken = keyStore.getActiveProviderToken(provider.id);
+    /* Saving the token that is already active must restart so the new secret
+       replaces the old one. A new inactive token is picked up on the next turn. */
     let restarted = false;
     let warning = '';
-    const activeIsBackup = typeof runtime.activeToken === 'function' &&
-      runtime.activeToken(provider.id) === 'backup';
-    /* Saving a new backup while the backup is already the active token must
-       restart so the new secret replaces the exhausted one. An inactive
-       backup is picked up lazily on the next quota failure. */
     if (settings.provider === provider.id && runtime.isRunning() &&
-        (!backup || activeIsBackup)) {
+        stored.index === activeToken) {
       try {
         await runtime.restart();
         restarted = true;
@@ -316,13 +388,10 @@ function createAiIpc({
       }
     }
 
-    const primary = keyStore.status(providerTokenSlot(provider.id));
-    const backupStatus = keyStore.status(providerTokenSlot(provider.id, 1));
     return {
       success: true,
-      configured: primary.configured,
-      backupConfigured: backupStatus.configured,
-      backup,
+      index: stored.index,
+      ...tokenResponse(provider.id),
       provider: provider.id,
       model: settings.model,
       secure: stored.secure,
@@ -332,62 +401,89 @@ function createAiIpc({
     };
   });
 
-  ipcMain.handle('ai:clear-provider-key', async (_event, payload) => {
+  handle('ai:set-active-provider-key', async (_event, payload) => {
     const provider = getProvider(payload && payload.provider);
-    const backup = !!(payload && payload.backup === true);
+    const index = payload && Number.isInteger(payload.index) ? payload.index : -1;
     if (!provider) {
       return failure('provider_invalid', 'Choose a supported model provider.');
     }
-    try {
-      keyStore.clear(providerTokenSlot(provider.id, backup ? 1 : 0));
-    } catch (error) {
-      return failure('provider_key_remove_failed', 'The provider token could not be removed.');
+    if (!keyStore.setActiveProviderToken(provider.id, index)) {
+      return failure('provider_key_missing', 'That provider token is not saved.');
     }
 
     const settings = keyStore.getSettings();
-    const primary = keyStore.status(providerTokenSlot(provider.id));
-    const backupStatus = keyStore.status(providerTokenSlot(provider.id, 1));
     let restarted = false;
     let warning = '';
-
-    if (backup) {
-      /* Removing the backup while it is the active token must put the primary
-         back in use. Removing an inactive backup needs no runtime change. */
-      const activeIsBackup = typeof runtime.activeToken === 'function' &&
-        runtime.activeToken(provider.id) === 'backup';
-      if (activeIsBackup && typeof runtime.usePrimaryToken === 'function') {
-        runtime.usePrimaryToken(provider.id);
+    if (settings.provider === provider.id && runtime.isRunning()) {
+      try {
+        await runtime.restart();
+        restarted = true;
+      } catch (error) {
+        warning = 'The token was selected, but the assistant could not restart. Turn it off and on again.';
+        await stopRuntime();
       }
-      if (activeIsBackup && settings.provider === provider.id && runtime.isRunning()) {
-        if (!primary.configured) {
-          await stopRuntime();
-          warning = 'The backup token was removed. Save a provider token before turning chat on again.';
-        } else {
-          try {
-            await runtime.restart();
-            restarted = true;
-          } catch (error) {
-            warning = 'The backup token was removed, but the assistant could not restart. Turn it off and on again.';
-            await stopRuntime();
-          }
-        }
-      }
-    } else if (settings.provider === provider.id) {
-      await stopRuntime();
     }
-
     return {
       success: true,
-      configured: primary.configured,
-      backupConfigured: backupStatus.configured,
-      backup,
+      ...tokenResponse(provider.id),
       provider: provider.id,
       restarted,
       ...(warning ? { warning } : {}),
     };
   });
 
-  ipcMain.handle('ai:set-provider-model', async (_event, payload) => {
+  handle('ai:clear-provider-key', async (_event, payload) => {
+    const provider = getProvider(payload && payload.provider);
+    const legacyBackup = !!(payload && payload.backup === true);
+    const index = payload && Number.isInteger(payload.index)
+      ? payload.index
+      : (legacyBackup ? 1 : 0);
+    if (!provider) {
+      return failure('provider_invalid', 'Choose a supported model provider.');
+    }
+    const previousActive = keyStore.getActiveProviderToken(provider.id);
+    let removed;
+    try {
+      removed = keyStore.removeProviderToken(provider.id, index);
+    } catch (error) {
+      return failure('provider_key_remove_failed', 'The provider token could not be removed.');
+    }
+    if (!removed || removed.ok === false) {
+      return failure('provider_key_remove_failed', 'The provider token could not be removed.');
+    }
+
+    const settings = keyStore.getSettings();
+    const summary = tokenResponse(provider.id);
+    let restarted = false;
+    let warning = '';
+
+    if (settings.provider === provider.id && runtime.isRunning() &&
+        (previousActive === index || !summary.configured)) {
+      if (!summary.configured) {
+        await stopRuntime();
+        warning = 'The provider token was removed. Save a token before turning chat on again.';
+      } else {
+        try {
+          await runtime.restart();
+          restarted = true;
+        } catch (error) {
+          warning = 'The token was removed, but the assistant could not restart. Turn it off and on again.';
+          await stopRuntime();
+        }
+      }
+    }
+
+    return {
+      success: true,
+      index,
+      ...summary,
+      provider: provider.id,
+      restarted,
+      ...(warning ? { warning } : {}),
+    };
+  });
+
+  handle('ai:set-provider-model', async (_event, payload) => {
     const provider = getProvider(payload && payload.provider);
     if (!provider) {
       return failure('provider_invalid', 'Choose a supported model provider.');
@@ -425,7 +521,7 @@ function createAiIpc({
     };
   });
 
-  ipcMain.handle('ai:set-reasoning', async (_event, payload) => {
+  handle('ai:set-reasoning', async (_event, payload) => {
     const requested = String((payload && payload.reasoning) || '').trim().toLowerCase();
     if (!isReasoningLevel(requested)) {
       return failure('reasoning_invalid', 'Choose a valid thinking level.');
@@ -453,7 +549,7 @@ function createAiIpc({
     };
   });
 
-  ipcMain.handle('ai:transcribe', async (_event, payload) => {
+  handle('ai:transcribe', async (_event, payload) => {
     if (!aiInputState.enabled) {
       return failure('disabled', 'The AI assistant is off.');
     }
@@ -483,7 +579,7 @@ function createAiIpc({
     return result;
   });
 
-  ipcMain.handle('ai:chat', async (_event, payload) => {
+  handle('ai:chat', async (_event, payload) => {
     if (!aiInputState.enabled) {
       return failure('disabled', 'The AI assistant is off.');
     }
@@ -531,7 +627,16 @@ function createAiIpc({
     if (!provider) {
       return failure('provider_invalid', 'Choose a supported model provider.');
     }
-    const chatKey = keyStore.read(`provider:${provider.id}`);
+    const slots = keyStore.providerTokenSlots(provider.id);
+    const activeIndex = keyStore.getActiveProviderToken(provider.id);
+    let chatKey = keyStore.read(providerTokenSlot(provider.id, activeIndex));
+    if (!chatKey.key) {
+      const fallback = slots.find((index) => keyStore.read(providerTokenSlot(provider.id, index)).key);
+      if (fallback !== undefined) {
+        keyStore.setActiveProviderToken(provider.id, fallback);
+        chatKey = keyStore.read(providerTokenSlot(provider.id, fallback));
+      }
+    }
     if (!chatKey.key) {
       return failure(
         chatKey.error === 'unreadable' ? 'provider_key_unreadable' : 'provider_key_missing',
@@ -546,17 +651,34 @@ function createAiIpc({
         message,
         reset: payload && payload.reset === true,
         history,
+        answer: readChatAnswer(payload),
+        attachedIds: readAttachedIds(payload),
         authToken,
         branchId,
         username,
         conversationId,
+        onProgress: (progress) => {
+          /* Progress is advisory. A closed window or a failed send must not
+             turn a working request into an error. */
+          try {
+            const sender = _event && _event.sender;
+            if (!sender || (typeof sender.isDestroyed === 'function' && sender.isDestroyed())) return;
+            sender.send('ai:chat-progress', {
+              conversationId,
+              stage: String((progress && progress.stage) || ''),
+              at: Number(progress && progress.at) || Date.now(),
+            });
+          } catch (error) {
+            /* no UI to update */
+          }
+        },
       });
     } catch (error) {
       return runtimeFailure(error);
     }
   });
 
-  ipcMain.handle('ai:attach', async (_event, payload) => {
+  handle('ai:attach', async (_event, payload) => {
     if (!aiInputState.enabled) {
       return failure('disabled', 'The AI assistant is off.');
     }
@@ -576,7 +698,7 @@ function createAiIpc({
     return result;
   });
 
-  ipcMain.handle('ai:remove-attachment', async (_event, payload) => {
+  handle('ai:remove-attachment', async (_event, payload) => {
     const conversationId = typeof (payload && payload.conversationId) === 'string'
       ? payload.conversationId.trim() : '';
     const id = typeof (payload && payload.id) === 'string' ? payload.id.trim() : '';
@@ -590,7 +712,7 @@ function createAiIpc({
     return result;
   });
 
-  ipcMain.handle('ai:confirm-plan', async (event, payload) => {
+  handle('ai:confirm-plan', async (event, payload) => {
     if (!aiInputState.enabled) {
       return failure('disabled', 'The AI assistant is off.');
     }
@@ -638,7 +760,7 @@ function createAiIpc({
     }
   });
 
-  ipcMain.handle('ai:cancel-plan', async (_event, payload) => {
+  handle('ai:cancel-plan', async (_event, payload) => {
     const planId = typeof (payload && payload.planId) === 'string'
       ? payload.planId.trim() : '';
     const conversationId = typeof (payload && payload.conversationId) === 'string'
@@ -653,7 +775,7 @@ function createAiIpc({
     }
   });
 
-  ipcMain.handle('ai:reset-chat', async (_event, payload) => {
+  handle('ai:reset-chat', async (_event, payload) => {
     const conversationId = typeof (payload && payload.conversationId) === 'string'
       ? payload.conversationId.trim() : '';
     try {
@@ -664,8 +786,39 @@ function createAiIpc({
     }
   });
 
+  /*
+   * The local API is a second door to the same room.
+   *
+   * A phone on the shop Wi-Fi has no electronAPI, so it cannot use the IPC
+   * bridge. The API server runs in this same main process; this object lets
+   * its authenticated /ai routes call the exact handlers above instead of
+   * duplicating the key store, provider calls or runtime.
+   *
+   * Only the API process can see this. It is never exposed to a page, and a
+   * request still passes the API's session and branch-write checks first.
+   */
+  const bridge = {
+    invoke(channel, payload, event) {
+      const handler = handlers.get(channel);
+      if (!handler) {
+        return failure('bridge_unknown', 'That assistant action is not available.');
+      }
+      const safeEvent = event || {
+        sender: { isDestroyed: () => true, send: () => {} },
+      };
+      return handler(safeEvent, payload);
+    },
+  };
+  aiInputState.bridge = bridge;
+  if (typeof global !== 'undefined') {
+    global.__posnicAiBridge = bridge;
+  }
+
   if (app && typeof app.once === 'function') {
     app.once('before-quit', () => {
+      if (typeof global !== 'undefined' && global.__posnicAiBridge === bridge) {
+        global.__posnicAiBridge = null;
+      }
       stopRuntime();
     });
   }

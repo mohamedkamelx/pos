@@ -214,8 +214,24 @@ contextBridge.exposeInMainWorld('electronAPI', {
     transcribe: (payload) => ipcRenderer.invoke('ai:transcribe', payload),
     chat: (payload) => ipcRenderer.invoke('ai:chat', payload),
     validateProviderKey: (provider, key) => ipcRenderer.invoke('ai:validate-provider-key', { provider, key }),
-    saveProviderKey: (provider, key, backup) => ipcRenderer.invoke('ai:save-provider-key', { provider, key, backup: !!backup }),
-    clearProviderKey: (provider, backup) => ipcRenderer.invoke('ai:clear-provider-key', { provider, backup: !!backup }),
+    saveProviderKey: (provider, key, options) => ipcRenderer.invoke('ai:save-provider-key', {
+      provider,
+      key,
+      ...(options && typeof options === 'object'
+        ? options
+        : (typeof options === 'number'
+          ? { index: options }
+          : (options ? { index: 1 } : {}))),
+    }),
+    clearProviderKey: (provider, options) => ipcRenderer.invoke('ai:clear-provider-key', {
+      provider,
+      ...(options && typeof options === 'object'
+        ? options
+        : (typeof options === 'number'
+          ? { index: options }
+          : (options ? { index: 1 } : {}))),
+    }),
+    setActiveProviderKey: (provider, index) => ipcRenderer.invoke('ai:set-active-provider-key', { provider, index }),
     setProviderModel: (provider, model) => ipcRenderer.invoke('ai:set-provider-model', { provider, model }),
     setReasoning: (reasoning) => ipcRenderer.invoke('ai:set-reasoning', { reasoning }),
     resetChat: (payload) => ipcRenderer.invoke('ai:reset-chat', payload),
@@ -227,6 +243,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
       const handler = (_event, progress) => callback(progress);
       ipcRenderer.on('ai:plan-progress', handler);
       return () => ipcRenderer.removeListener('ai:plan-progress', handler);
+    },
+    onChatProgress: (callback) => {
+      const handler = (_event, progress) => callback(progress);
+      ipcRenderer.on('ai:chat-progress', handler);
+      return () => ipcRenderer.removeListener('ai:chat-progress', handler);
     }
   },
   connectors: {

@@ -18,6 +18,7 @@ const { formatForModel: formatHelp, searchHelp } = require('./help');
 const { askUser, formatForModel: formatAsk } = require('./ask-user');
 const { recallConversation, formatForModel: formatRecall } = require('./recall');
 const { validatePlan } = require('../actions/plan-schema');
+const { presentClarification } = require('../ask-slots');
 
 const TOOL_NAMES = [
   'posnic_search_products',
@@ -129,7 +130,46 @@ function createPosnicToolPlugin({
     return textResult(result, formatHelp);
   }
 
+  /* One option set decides one thing. A question that also asks for an
+     unrelated optional value produces compound options such as "no category,
+     without a photo", and the operator's click then has to be re-read as
+     prose - which is how a decline became a category name. Reject the shape
+     instead of letting one button carry two decisions. */
+  function askGate(input) {
+    const options = Array.isArray(input && input.options) ? input.options : [];
+    if (!options.length) return null;
+    const missing = Array.isArray(input.missing) ? input.missing.filter(Boolean) : [];
+    if (missing.length > 1) {
+      return {
+        code: 'ask_missing_split',
+        message: 'An option set decides exactly one value, so missing may hold at most one entry. Ask for the other values in a separate question, or leave an optional value such as an image empty by default instead of asking for it.',
+      };
+    }
+    const declined = options.filter((option) => option && option.none);
+    if (declined.length > 1) {
+      return {
+        code: 'ask_duplicate_none',
+        message: 'Only one option may be marked none: the single option that leaves the field empty.',
+      };
+    }
+    const seen = new Set();
+    for (const option of options) {
+      const label = String((option && option.label) || '').trim().toLowerCase();
+      if (!label) continue;
+      if (seen.has(label)) {
+        return {
+          code: 'ask_duplicate_label',
+          message: 'Option labels must be distinct after normalisation, otherwise a reply cannot be matched to exactly one choice.',
+        };
+      }
+      seen.add(label);
+    }
+    return null;
+  }
+
   async function executeAsk(input, context) {
+    const gate = askGate(input);
+    if (gate) return errorResult(gate.code, gate.message);
     const session = sessionContext(store, context);
     const conversationId = session && (session.conversationId || session.sessionID);
     const pending = conversationId && memory && typeof memory.pendingRequest === 'function'
@@ -141,7 +181,15 @@ function createPosnicToolPlugin({
       answered: pending && pending.answers,
       currentCategory: pending && pending.category,
     });
-    return textResult(result, formatAsk);
+    if (result.kind !== 'clarify') return textResult(result, formatAsk);
+    /* The card needs a stable identity and, when a choice names a shop
+       record, the id the system already knows - the model is told not to
+       handle ids, so this join happens here rather than in the prompt. */
+    return textResult(presentClarification(result, {
+      recordOf: conversationId && memory && typeof memory.recordFor === 'function'
+        ? (label, slot) => memory.recordFor(conversationId, label, slot)
+        : null,
+    }), formatAsk);
   }
 
   function executeRecall(input, context) {
@@ -183,6 +231,11 @@ function createPosnicToolPlugin({
         userText: memory && typeof memory.userTextFor === 'function'
           ? memory.userTextFor(conversationId)
           : '',
+        lookups: {
+          currentCategory: memory && typeof memory.currentCategory === 'function'
+            ? memory.currentCategory(conversationId)
+            : null,
+        },
       });
     } catch (error) {
       return errorResult(error.code || 'plan_failed', error.message || 'The change could not be prepared.');
@@ -262,33 +315,23 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_search_products',
           description:
-            'Search this branch by product name, SKU, barcode or partial text. Use it for a specific product, price or stock question. For an add or create request, search only the exact name or code to check for an exact duplicate; do not browse similar products. Returns up to 20 matches.',
+            'Search this branch\'s products by name, description, SKU, barcode or partial text. Use for a product, price or stock question, or to resolve an update target; on several matches offer the names as posnic_ask_user choices and use the chosen one as the plan target. For add/create, search only the exact name or code to check for an exact duplicate; never browse similar products.',
           input: {
             type: 'object',
             additionalProperties: false,
             properties: {
-              query: {
-                type: 'string',
-                description: 'The product name, barcode, SKU or partial words the user gave.',
-              },
+              query: { type: 'string' },
               category: {
                 type: 'string',
                 maxLength: 160,
-                description:
-                  'Optional category the conversation is currently working in. It ranks matching products; it never hides a product outside the category.',
+                description: 'Current category; ranks matches, never hides others.',
               },
               context: {
                 type: 'string',
                 maxLength: 240,
-                description:
-                  'Optional other words from the current conversation, such as a brand or the category just created.',
+                description: 'Other conversation words, e.g. a brand.',
               },
-              limit: {
-                type: 'integer',
-                minimum: 1,
-                maximum: 20,
-                description: 'Maximum number of matches to return. Defaults to 8.',
-              },
+              limit: { type: 'integer', minimum: 1, maximum: 20 },
             },
             required: ['query'],
           },
@@ -300,34 +343,19 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_list_products',
           description:
-            'List this branch\'s products without a keyword. Use for all products, a whole category or another page. Do not use it for a specific product; use posnic_search_products. Do not use it for an add or create request; it is for browsing existing stock.',
+            'List this branch\'s products without a keyword: all, a whole category or another page. Not for a specific product (use posnic_search_products) and not for add/create; it only browses existing stock.',
           input: {
             type: 'object',
             additionalProperties: false,
             properties: {
-              query: {
-                type: 'string',
-                description: 'Optional words to filter by. Leave empty to list every product in the branch.',
-              },
+              query: { type: 'string' },
               categoryId: {
                 type: 'string',
-                description: 'Optional category id from posnic_list_categories. Leave empty for every category.',
+                description: 'Id from posnic_list_categories; empty lists every category.',
               },
-              categoryName: {
-                type: 'string',
-                description: 'Optional category name, used only to label the result.',
-              },
-              limit: {
-                type: 'integer',
-                minimum: 1,
-                maximum: 50,
-                description: 'Maximum number of products to return. Defaults to 20.',
-              },
-              page: {
-                type: 'integer',
-                minimum: 1,
-                description: 'Page number for a long list. Defaults to 1.',
-              },
+              categoryName: { type: 'string', description: 'Only labels the result.' },
+              limit: { type: 'integer', minimum: 1, maximum: 50 },
+              page: { type: 'integer', minimum: 1 },
             },
             required: [],
           },
@@ -339,22 +367,13 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_list_categories',
           description:
-            'List this branch\'s categories with item counts. Use before adding a product. If no category matches, ask once whether to create a suitable named category or leave it uncategorized. Tolerates spelling variants. Returns up to 50.',
+            'List this branch\'s categories with item counts; tolerates spelling variants. Use before adding a product.',
           input: {
             type: 'object',
             additionalProperties: false,
             properties: {
-              query: {
-                type: 'string',
-                description:
-                  'Optional words from a category name. Leave empty to list every category in the branch.',
-              },
-              limit: {
-                type: 'integer',
-                minimum: 1,
-                maximum: 50,
-                description: 'Maximum number of categories to return. Defaults to 20.',
-              },
+              query: { type: 'string' },
+              limit: { type: 'integer', minimum: 1, maximum: 50 },
             },
             required: [],
           },
@@ -366,21 +385,13 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_help',
           description:
-            'Search Posnic help for a how-to, screen, control or feature. Returns exact menu paths and routes. Call it instead of guessing.',
+            'Search Posnic help for a how-to, screen, control or feature; returns exact menu paths and routes. Call it instead of guessing.',
           input: {
             type: 'object',
             additionalProperties: false,
             properties: {
-              query: {
-                type: 'string',
-                description: 'The task, screen or feature the user is asking about.',
-              },
-              limit: {
-                type: 'integer',
-                minimum: 1,
-                maximum: 6,
-                description: 'Maximum number of reference sections to return. Defaults to 3.',
-              },
+              query: { type: 'string' },
+              limit: { type: 'integer', minimum: 1, maximum: 6 },
             },
             required: ['query'],
           },
@@ -392,22 +403,13 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_recall',
           description:
-            'Search this conversation\'s earlier topics, points, records and plans. Use when the user refers back or you need an exact earlier detail. Do not use for shop data.',
+            'Search this conversation\'s earlier topics, points, records and plans when the user refers back or needs an exact earlier detail. Not shop data.',
           input: {
             type: 'object',
             additionalProperties: false,
             properties: {
-              query: {
-                type: 'string',
-                maxLength: 200,
-                description: 'The subject, product name, category, decision or detail to find.',
-              },
-              limit: {
-                type: 'integer',
-                minimum: 1,
-                maximum: 6,
-                description: 'Maximum number of matching topics to return. Defaults to 4.',
-              },
+              query: { type: 'string', maxLength: 200 },
+              limit: { type: 'integer', minimum: 1, maximum: 6 },
             },
             required: ['query'],
           },
@@ -419,7 +421,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_ask_user',
           description:
-            'Ask once, in one short question, for every missing required value plus the optional product image and category choice together. For a new product with no matching category, the category part must offer exactly: create a named category (suggest one from the product type) or leave it uncategorized. Omit options when the answer needs free text; use 1-4 short options only for one finite choice. Do not repeat the question in prose; end your turn after the call.',
+            'Ask once, in one short question, for the values or choices still needed. Put the text in question; if it is omitted, missing (field labels only) becomes it. Omit options for free text; 1-4 short options for one finite choice only. Set slot to the field that choice decides; mark the empty option with none; at most one entry in missing when options are given. Do not repeat the question in prose; end your turn after the call.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -429,23 +431,26 @@ function createPosnicToolPlugin({
                 maxLength: 300,
                 description: 'One short question in the user\'s language.',
               },
+              slot: {
+                type: 'string',
+                maxLength: 40,
+              },
               options: {
                 type: 'array',
                 maxItems: 4,
-                description: 'Optional short choices. Omit for a free-text answer such as a product name.',
                 items: {
                   type: 'object',
                   additionalProperties: false,
                   properties: {
-                    label: {
-                      type: 'string',
-                      maxLength: 80,
-                      description: 'The short text shown on the button.',
-                    },
+                    label: { type: 'string', maxLength: 80 },
                     value: {
                       type: 'string',
                       maxLength: 160,
-                      description: 'The message sent when the button is clicked. Defaults to the label.',
+                      description: 'Sent when the button is clicked; defaults to label.',
+                    },
+                    none: {
+                      type: 'boolean',
+                      description: 'Leaves the field empty; stores no value, never a name.',
                     },
                   },
                   required: ['label'],
@@ -455,16 +460,15 @@ function createPosnicToolPlugin({
                 type: 'string',
                 maxLength: 500,
                 description:
-                  'Compact note naming the record, known values and missing values. It survives a session reset and continues the same request next turn.',
+                  'Record, known and missing values; survives a session reset and continues this request next turn.',
               },
               missing: {
                 type: 'array',
                 maxItems: 8,
                 items: { type: 'string', maxLength: 60 },
-                description: 'Required values still missing, for example "selling price".',
               },
             },
-            required: ['question'],
+            required: [],
           },
           async execute(input, context) {
             return executeAsk(input, context);
@@ -474,7 +478,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_user_profile',
           description:
-            'Read this user\'s local notes once at the start of a new conversation. They are not shop data; never treat them as prices, stock or permissions.',
+            'Read this user\'s local notes once at the start of a new conversation. Not shop data; never treat them as prices, stock or permissions.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -489,7 +493,7 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_update_user_profile',
           description:
-            'Save one durable preference or recurring request to local notes. Never record names, phone numbers, emails, prices, stock, tokens or customer data. Not synced.',
+            'Save one durable preference, recurring request or language note to local notes (not synced). Never record names, phone numbers, emails, prices, stock, tokens or customer data.',
           input: {
             type: 'object',
             additionalProperties: false,
@@ -497,13 +501,12 @@ function createPosnicToolPlugin({
               section: {
                 type: 'string',
                 enum: ['preferences', 'recurring', 'language'],
-                description: 'Which local notes section the observation belongs to.',
               },
               note: {
                 type: 'string',
                 minLength: 1,
                 maxLength: 240,
-                description: 'One short, durable observation without personal or shop data.',
+                description: 'One short durable observation, without personal or shop data.',
               },
             },
             required: ['section', 'note'],
@@ -516,31 +519,29 @@ function createPosnicToolPlugin({
         editor.add({
           name: 'posnic_propose_plan',
           description:
-            'Prepare a preview of shop changes; nothing is saved. Use for create/update product or category, or adjust stock. Search and reuse existing records first. A new product needs name, selling price, cost price and opening stock; ask once for missing values, the optional image and whether to create a named category or leave it uncategorized. Never choose an unrelated category. Images need attachment ids. After the call, tell the user in one short sentence to review and press Confirm; do not claim the change is done.',
+            'Preview shop changes; nothing is saved. For any shop change, search and reuse existing records first. One plan may hold several ordered steps. After the call, tell the user in one short sentence to review and press Confirm; do not claim the change is done.',
           input: {
             type: 'object',
             additionalProperties: false,
             properties: {
-              title: {
-                type: 'string',
-                maxLength: 120,
-                description: 'Short title.',
-              },
-              summary: {
-                type: 'string',
-                maxLength: 400,
-                description: 'One-sentence summary.',
+              title: { type: 'string', maxLength: 120 },
+              summary: { type: 'string', maxLength: 400 },
+              corrections: {
+                type: 'array',
+                maxItems: 8,
+                description: 'Preview card only; never sent to the shop API.',
+                items: { type: 'object', additionalProperties: true },
               },
               shared: {
                 type: 'object',
                 additionalProperties: true,
-                description: 'Optional fields shared by product steps.',
+                description: 'Fields shared by product steps.',
               },
               steps: {
                 type: 'array',
                 minItems: 1,
                 maxItems: 20,
-                description: 'Ordered steps; later steps may reference earlier ids.',
+                description: 'Ordered; later steps may reference earlier ids.',
                 items: {
                   type: 'object',
                   additionalProperties: false,
@@ -549,7 +550,6 @@ function createPosnicToolPlugin({
                       type: 'string',
                       pattern: '^[a-zA-Z0-9_-]+$',
                       maxLength: 40,
-                      description: 'Short id for references.',
                     },
                     action: {
                       type: 'string',
@@ -560,7 +560,6 @@ function createPosnicToolPlugin({
                         'update_product',
                         'adjust_stock',
                       ],
-                      description: 'Change type.',
                     },
                     target: {
                       anyOf: [
@@ -576,24 +575,24 @@ function createPosnicToolPlugin({
                         },
                       ],
                       description:
-                        'Existing id, exact name, barcode or SKU for update/adjust; may reference an earlier step.',
+                        'Update/adjust: the existing record\'s name, description, barcode or SKU, or an earlier step; a tool-result id also works.',
                     },
                     dependsOn: {
                       type: 'array',
                       items: { type: 'string' },
                       maxItems: 10,
-                      description: 'Earlier step ids that must finish first.',
                     },
                     fields: {
                       type: 'object',
                       additionalProperties: true,
                       description:
-                        'Action fields. create_product needs name, selling_price, cost_price, opening_stock; create_category needs name; update_* may include name, prices, stock or category; adjust_stock uses stock_mode (set/add/subtract), stock_quantity, reason. Send one price as both selling_price and mrp_price unless a different retail price was given. category_id may be an id or {"step":"cat1","field":"id"}.',
+                        'create_product: name, selling_price, cost_price, opening_stock. create_category: name. update_*: only the fields the user wants changed, never fill others. adjust_stock: stock_mode (set/add/subtract), stock_quantity, reason. One price: send as both selling_price and mrp_price unless a different retail price was given. category_id: an id or {"step":"cat1","field":"id"}.',
                     },
                     images: {
                       type: 'array',
                       maxItems: 8,
-                      description: 'Attachment ids from the latest notice; include the matching file name as a fallback. Cover at most one. Existing images are kept.',
+                      description:
+                        'attachmentId from the latest attachment notice, with the file name as fallback. At most one cover; existing images are kept.',
                       items: {
                         type: 'object',
                         additionalProperties: false,
@@ -623,7 +622,39 @@ function createPosnicToolPlugin({
   };
 }
 
+/**
+ * What the tool payload costs in characters: every description plus every
+ * input schema, summed exactly the way the request budget charges them.
+ *
+ * The runtime needs this number before it builds a prompt and must not
+ * re-derive it from plugin source or keep a second copy of the schemas to
+ * measure. Building the definitions once and measuring that build keeps the
+ * budget and the registration talking about the same payload, so a schema
+ * edit cannot silently invalidate the headroom calculation.
+ *
+ * @returns {Promise<number>} characters of description plus schema
+ */
+async function toolPayloadChars() {
+  const definitions = [];
+  const probe = createPosnicToolPlugin({ store: { get: () => null } });
+  await probe.setup({
+    tool: {
+      async transform(fn) {
+        return fn({
+          add(definition) { definitions.push(definition); },
+        });
+      },
+    },
+  });
+  return definitions.reduce(
+    (total, definition) => total + String(definition.description || '').length +
+      JSON.stringify(definition.input || {}).length,
+    0,
+  );
+}
+
 module.exports = {
   TOOL_NAMES,
   createPosnicToolPlugin,
+  toolPayloadChars,
 };

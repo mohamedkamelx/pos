@@ -15,8 +15,10 @@ const { normaliseSettings } = require('./provider-registry');
 
 const TRANSCRIPTION_SLOT = 'transcription';
 const SETTINGS_FILE = 'ai-settings.json';
+const TOKEN_STATE_FILE = 'ai-token-state.json';
 const TRANSCRIPTION_FILE = 'ai-groq-key.json';
 const LEGACY_TRANSCRIPTION_FILES = ['voice-groq-key.json'];
+const MAX_PROVIDER_TOKENS = 10;
 
 function slotFileName(slot) {
   if (slot === TRANSCRIPTION_SLOT) return TRANSCRIPTION_FILE;
@@ -25,9 +27,9 @@ function slotFileName(slot) {
   return `ai-provider-${id}.json`;
 }
 
-/* The primary provider token keeps its historical slot so existing installs
-   keep working. A second token lives in a sibling slot and is used only when
-   the primary reports a quota/rate limit. */
+/* Provider tokens keep their historical slot names: slot 0 is the old primary
+   and slot 1 is the old backup. Further slots are numbered from 2. The runtime
+   walks the slots in order and falls back to the next usable token. */
 function providerTokenSlot(providerID, index = 0) {
   const id = String(providerID || '').trim();
   if (!id) return '';
@@ -57,6 +59,7 @@ function secureStorageState(safeStorage) {
 function createKeyStore({ app, safeStorage }) {
   const userData = app.getPath('userData');
   const settingsPath = path.join(userData, SETTINGS_FILE);
+  const tokenStatePath = path.join(userData, TOKEN_STATE_FILE);
   const sessionKeys = new Map();
 
   function storageState() {
@@ -65,6 +68,112 @@ function createKeyStore({ app, safeStorage }) {
 
   function fileNameFor(slot) {
     return path.join(userData, slotFileName(slot));
+  }
+
+  function readTokenState() {
+    try {
+      const state = JSON.parse(fs.readFileSync(tokenStatePath, 'utf8'));
+      if (!state || typeof state !== 'object' || !state.providers ||
+          typeof state.providers !== 'object') {
+        return { v: 1, providers: {} };
+      }
+      return state;
+    } catch (error) {
+      return { v: 1, providers: {} };
+    }
+  }
+
+  function writeTokenState(state) {
+    fs.mkdirSync(path.dirname(tokenStatePath), { recursive: true });
+    fs.writeFileSync(tokenStatePath, JSON.stringify({ v: 1, ...state }), { mode: 0o600 });
+    try { fs.chmodSync(tokenStatePath, 0o600); } catch (error) { /* mode already set */ }
+  }
+
+  function hasSecret(slot) {
+    return sessionKeys.has(slot) || fs.existsSync(fileNameFor(slot));
+  }
+
+  function providerTokenSlots(providerID) {
+    const slots = [];
+    for (let index = 0; index < MAX_PROVIDER_TOKENS; index += 1) {
+      if (hasSecret(providerTokenSlot(providerID, index))) slots.push(index);
+    }
+    return slots;
+  }
+
+  function getActiveProviderToken(providerID) {
+    const slots = providerTokenSlots(providerID);
+    if (!slots.length) return 0;
+    const state = readTokenState();
+    const entry = state.providers[providerID];
+    const requested = entry && Number.isInteger(entry.active) ? entry.active : slots[0];
+    if (slots.includes(requested) && read(providerTokenSlot(providerID, requested)).key) {
+      return requested;
+    }
+    const readable = slots.find((index) => read(providerTokenSlot(providerID, index)).key);
+    return readable !== undefined ? readable : (slots.includes(requested) ? requested : slots[0]);
+  }
+
+  function setActiveProviderToken(providerID, index) {
+    if (!Number.isInteger(index) || index < 0 || index >= MAX_PROVIDER_TOKENS) return false;
+    if (!read(providerTokenSlot(providerID, index)).key) return false;
+    const state = readTokenState();
+    state.providers[providerID] = { ...(state.providers[providerID] || {}), active: index };
+    writeTokenState(state);
+    return true;
+  }
+
+  function addProviderToken(providerID, key) {
+    const slots = providerTokenSlots(providerID);
+    if (slots.length >= MAX_PROVIDER_TOKENS) {
+      return { ok: false, code: 'token_limit' };
+    }
+    let index = 0;
+    while (slots.includes(index)) index += 1;
+    const stored = write(providerTokenSlot(providerID, index), key);
+    if (!slots.length) setActiveProviderToken(providerID, index);
+    return { ok: true, index, ...stored };
+  }
+
+  function setProviderToken(providerID, index, key) {
+    if (!Number.isInteger(index) || index < 0 || index >= MAX_PROVIDER_TOKENS) {
+      return { ok: false, code: 'token_invalid' };
+    }
+    const hadTokens = providerTokenSlots(providerID).length > 0;
+    const stored = write(providerTokenSlot(providerID, index), key);
+    if (!hadTokens) setActiveProviderToken(providerID, index);
+    return { ok: true, index, ...stored };
+  }
+
+  function removeProviderToken(providerID, index) {
+    if (!Number.isInteger(index) || index < 0 || index >= MAX_PROVIDER_TOKENS) {
+      return { ok: false, code: 'token_invalid' };
+    }
+    clear(providerTokenSlot(providerID, index));
+    const slots = providerTokenSlots(providerID);
+    const state = readTokenState();
+    if (!slots.length) {
+      delete state.providers[providerID];
+    } else {
+      const entry = state.providers[providerID] || {};
+      if (entry.active === index || !slots.includes(entry.active)) entry.active = slots[0];
+      state.providers[providerID] = entry;
+    }
+    writeTokenState(state);
+    return { ok: true, active: slots.length ? state.providers[providerID].active : 0 };
+  }
+
+  function providerTokenStatuses(providerID) {
+    return providerTokenSlots(providerID).map((index) => {
+      const loaded = status(providerTokenSlot(providerID, index));
+      return {
+        index,
+        configured: loaded.configured,
+        secure: loaded.secure,
+        session: loaded.session,
+        unreadable: loaded.reason === 'unreadable',
+      };
+    });
   }
 
   function readEncrypted(filePath) {
@@ -168,10 +277,17 @@ function createKeyStore({ app, safeStorage }) {
   }
 
   return {
+    addProviderToken,
     clear,
+    getActiveProviderToken,
     getSecret: (slot) => read(slot).key,
     getSettings,
+    providerTokenSlots,
+    providerTokenStatuses,
     read,
+    removeProviderToken,
+    setActiveProviderToken,
+    setProviderToken,
     setSecret: write,
     setSettings,
     status,
@@ -180,6 +296,7 @@ function createKeyStore({ app, safeStorage }) {
 }
 
 module.exports = {
+  MAX_PROVIDER_TOKENS,
   TRANSCRIPTION_SLOT,
   createKeyStore,
   providerTokenSlot,
