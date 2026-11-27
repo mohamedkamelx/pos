@@ -19,6 +19,9 @@
 
 'use strict';
 
+const { isHowToQuestion } = require('./text-match');
+const { normaliseSlot, slotForClarification } = require('./ask-slots');
+
 const MAX_CONVERSATIONS = 40;
 const MAX_TOPICS = 40;
 const MAX_POINTS = 12;
@@ -62,7 +65,9 @@ const NEW_TOPIC_PHRASES = [
   'by the way', 'on another note', 'different question',
   'موضوع جديد', 'موضوع آخر', 'موضوع ثاني', 'سؤال جديد', 'سؤال آخر',
   'سؤال ثاني', 'نغير الموضوع', 'تغيير الموضوع', 'موضوع مختلف', 'بالمناسبة',
-  'على فكرة', 'شي ثاني', 'شيء آخر', 'سؤال مختلف',
+  'على فكرة', 'شي ثاني', 'شيء آخر', 'سؤال مختلف', 'سيبك من ده', 'سيبك من دا',
+  'سيبك من الموضوع', 'بلاش ده', 'مش ده', 'حاجة تانية', 'حاجه تانيه',
+  'كلام تاني', 'كلام ثاني',
 ];
 
 const BACK_PHRASES = [
@@ -118,10 +123,38 @@ const WRITE_ACTION_PHRASES = [
 const CANCEL_PHRASES = [
   'cancel', 'never mind', 'nevermind', 'forget it', 'stop', 'abort',
   'الغي', 'ألغي', 'إلغاء', 'الغاء', 'بلاش', 'انسى', 'انسي', 'لا تكممل',
-  'لا تكمل', 'وقف', 'مش عايز', 'مش عاوز',
+  'لا تكمل', 'وقف', 'مش عايز', 'مش عاوز', 'سيبك', 'سيب', 'كفاية',
 ];
 
+const ABANDON_PHRASES = [
+  'سيبك من ده', 'سيبك من دا', 'سيبك من الموضوع', 'بلاش ده', 'مش ده',
+  'forget this', 'drop this', 'leave this',
+];
+
+/* A read question in the middle of a write task is a side question, not an
+   answer to the pending question. It pauses the task instead of replacing it
+   or spending a correction turn. */
+const QUESTION_INTENT_RE = /(?:^|\s)(?:فين|وين|كام|إيه|ايه|إيش|ايش|هل|مين|ليه|لماذا|ازاي|إزاي|كيف|متى|امتى|أين|اين|وريني|ورينى|اعرض|أعرض|اظهر|أظهر|قولي|أعرف|اعرف|what|where|how|when|who|why|which|show|list|find|search|tell\s+me)(?:\s|$)/i;
+const QUESTION_MARK_RE = /[?؟]\s*$/;
+const VALUE_ONLY_RE = /^\s*[\d٠-٩]+(?:[.,][\d٠-٩]+)?\s*[?؟]?\s*$/;
+const ACK_ONLY_RE = /^(?:تمام|تم|ماشي|حاضر|اوك|أوك|اوكي|أوكي|ok|okay|sure|yes|نعم|موافق)[!.?]*$/i;
+const CREATE_ENTITY_RE = /(?:أضيف|اضيف|أضف|اضف|ضيف|أنشئ|انشئ|سجل|اعمل|create|add|new)\s+(?:منتج|صنف|برودكت|product|item)|(?:منتج|صنف|برودكت|product|item)\s+(?:جديد|جديده|جديدة|new)/i;
+const CORRECTION_ACTION_RE = /(?:^|\s)(?:غير|غيّر|عدل|عدّل|صحح|بدل|خلي|خلى|اجعل|اجعلها|update|change|set|fix|correct)\b|(?:أضف|اضف|زود|قلل)\s+[\d٠-٩]+\s*(?:لل|لـ|ل)|(?:سعر|تكلفة|كمية|مخزون|price|cost|stock|quantity)\s*[:=]?\s*[\d٠-٩]+/i;
+
 const NOT_IMPORTANT_RE = /^(مش مهم|مش مهمه|مش مهمة|لا يهم|مهمش|مش ضروري|مش ضرورى|whatever|doesn'?t matter|not important|skip)[!.?]*$/i;
+
+/* One explicit stage per topic keeps the model from confusing an unfinished
+   request with a pending preview or a completed change. The stage is written
+   by the same store that records the pending request and the plans, so it
+   survives a provider session reset. */
+const STAGE_GUIDANCE = {
+  collecting: 'Stage: collecting the values for an unfinished request. Ask for the missing values themselves; never ask for permission to continue or whether to enter them.',
+  paused: 'Stage: the user asked a side question while a request is unfinished. Answer the side question, then remind the user that the unfinished request is still waiting; do not discard it.',
+  awaiting_confirmation: 'Stage: a plan preview is waiting for the user to press Confirm. Do not ask for confirmation in chat, do not propose another plan, and do not claim the change is done. If the user asks a side question, answer it and remind them the preview is still waiting.',
+  done: 'Stage: the last plan completed. The records exist; do not create them again. Answer questions about them.',
+  cancelled: 'Stage: the last request was cancelled. Do not continue it unless the user asks again.',
+  failed: 'Stage: the last plan failed. Report the failure and ask only for the values needed to retry.',
+};
 
 const GREETING_RE = /^(hi|hello|hey|thanks|thank you|good morning|good evening|السلام عليكم|مرحبا|أهلا|اهلا|شكرا|شكراً|صباح الخير|مساء الخير)[!.?]*$/i;
 const SHORT_REPLY_RE = /^(yes|no|ok|okay|sure|continue|go ahead|do it|نعم|لا|أوكي|اوكي|تمام|موافق|كمل|تابع|تفضل|استمر)[!.?]*$/i;
@@ -194,6 +227,7 @@ function hasPhrase(value, phrases) {
    topic, not in the model session, because the session can be reset by a
    provider error or a compaction. */
 function looksLikeWriteRequest(value) {
+  if (isHowToQuestion(value)) return false;
   return hasPhrase(value, WRITE_ACTION_PHRASES) || hasPhrase(value, NEW_ENTITY_PHRASES);
 }
 
@@ -201,8 +235,25 @@ function isCancellation(value) {
   return hasPhrase(value, CANCEL_PHRASES);
 }
 
+function isAbandon(value) {
+  return hasPhrase(value, ABANDON_PHRASES);
+}
+
 function isNotImportant(value) {
   return NOT_IMPORTANT_RE.test(normalise(value));
+}
+
+function looksLikeQuestion(value) {
+  const text = normalise(value);
+  if (!text || VALUE_ONLY_RE.test(text)) return false;
+  if (QUESTION_MARK_RE.test(text)) return true;
+  return QUESTION_INTENT_RE.test(` ${text} `);
+}
+
+function looksLikeCorrection(value) {
+  const text = normalise(value);
+  if (!text) return false;
+  return hasPhrase(value, CORRECTION_PHRASES) || CORRECTION_ACTION_RE.test(text);
 }
 
 function nowStamp() {
@@ -287,6 +338,7 @@ function createConversationMemoryStore({
       clarifications: [],
       pendingRequest: null,
       currentCategory: null,
+      stage: 'idle',
       summary: '',
     };
     conversation.topics.push(topic);
@@ -403,9 +455,146 @@ function createConversationMemoryStore({
   }
 
   function isCategoryAnswer(item) {
-    return /(?:فئة|قسم|تصنيف|category)/i.test(item.question || '') ||
-      (Array.isArray(item.missing) &&
-        item.missing.some((missing) => /(?:category|فئة|قسم|تصنيف)/i.test(missing)));
+    return slotForClarification(item) === 'category';
+  }
+
+  /* A finite choice is a decision, not a sentence. The reply either is the
+     choice the operator pressed or it is ordinary text, and only the second
+     is ever re-read as prose. A declined option carries no value key at all,
+     which is what makes it structurally impossible to read back as a name
+     later. Returns null when the question had no options or the reply
+     matches none of them.
+
+     Three ways in, in this order:
+       1. the answer object the card sent back (ids, never wording);
+       2. a typed reply that equals the label or the value of one option;
+       3. nothing - the reply stays text for the model to interpret. */
+  function resolveClarification(pending, message, answer) {
+    if (!pending) return null;
+    const options = Array.isArray(pending.options) ? pending.options : [];
+    const slot = slotForClarification(pending);
+    const labelOf = (option) => (typeof option === 'string' ? option : option && option.label) || '';
+    const valueOf = (option) => (typeof option === 'string'
+      ? option
+      : (option && (option.value || option.label))) || '';
+    const noneOf = (option) => !!(option && typeof option === 'object' && option.none);
+    const recordOf = (option) => {
+      const record = option && typeof option === 'object' && option.record;
+      return record && record.id ? record : null;
+    };
+
+    if (answer && typeof answer === 'object') {
+      const sentId = cleanText(answer.clarificationId, 60);
+      /* A card from an earlier question is not an answer to this one.
+         Returning nothing is deliberate: matching a stale click against the
+         new options would decide a question the operator never saw. */
+      if (!sentId || sentId !== cleanText(pending.id, 60)) return null;
+      const chosen = options.find((option) =>
+        option && typeof option === 'object' && option.id &&
+        option.id === cleanText(answer.optionId, 40));
+      if (chosen) {
+        const label = cleanText(chosen.label, 80);
+        if (chosen.none) return { slot, kind: 'none', value: '', label };
+        if (chosen.action === 'attach') {
+          const ids = imageIds(answer);
+          if (!ids.length) return null;
+          return { slot: slot || 'image', kind: 'attachment', value: '', ids, label };
+        }
+        const record = recordOf(chosen);
+        return {
+          slot,
+          kind: record ? 'record' : 'value',
+          value: cleanText(chosen.value || chosen.label, 160),
+          id: record ? record.id : '',
+          entity: record ? record.entity : '',
+          label,
+        };
+      }
+      const ids = imageIds(answer);
+      if (ids.length && (slot === 'image' || !slot)) {
+        return { slot: 'image', kind: 'attachment', value: '', ids, label: '' };
+      }
+      const value = cleanText(answer.value, 160);
+      if (value && cleanText(answer.slot, 40)) {
+        const answeredSlot = normaliseSlot(answer.slot) || slot;
+        return { slot: answeredSlot, kind: 'value', value, label: value };
+      }
+      return null;
+    }
+
+    if (!options.length) return null;
+    const text = normalise(message);
+    if (!text) return null;
+    const hits = options.filter((option) => {
+      const label = normalise(labelOf(option));
+      const value = normalise(valueOf(option));
+      return !!label && (label === text || (!!value && value === text));
+    });
+    if (hits.length !== 1) return null;
+    const option = hits[0];
+    const label = cleanText(labelOf(option), 80);
+    if (noneOf(option)) return { slot, kind: 'none', value: '', label };
+    const record = recordOf(option);
+    return {
+      slot,
+      kind: record ? 'record' : 'value',
+      value: cleanText(valueOf(option), 160),
+      id: record ? record.id : '',
+      entity: record ? record.entity : '',
+      label,
+    };
+  }
+
+  function imageIds(answer) {
+    const list = Array.isArray(answer && answer.attachmentIds) ? answer.attachmentIds : [];
+    return list
+      .map((id) => cleanText(id, 80))
+      .filter(Boolean)
+      .slice(0, 8);
+  }
+
+  /* An image the operator attached for this request. The draft owns it, with
+     an explicit status, so the image question is never asked again after it
+     is answered and an attachment from an earlier request is never reused. */
+  function setImageStatus(topic, status, attachmentIds) {
+    const draft = topic && topic.pendingRequest && topic.pendingRequest.draft;
+    if (!draft || typeof draft !== 'object') return null;
+    const ids = (Array.isArray(attachmentIds) ? attachmentIds : [])
+      .map((id) => cleanText(id, 80))
+      .filter(Boolean)
+      .slice(0, 8);
+    if (status === 'attached' && !ids.length) return draft.image || null;
+    draft.image = { status, attachmentIds: ids };
+    return draft.image;
+  }
+
+  function noteImage(conversationId, status, attachmentIds, { onlyIfUnset = false } = {}) {
+    const conversation = ensureConversation(conversationId);
+    if (!conversation) return null;
+    const topic = activeTopic(conversation);
+    const draft = topic && topic.pendingRequest && topic.pendingRequest.draft;
+    if (onlyIfUnset && draft && typeof draft === 'object' && draft.image) return null;
+    return setImageStatus(topic, status, attachmentIds);
+  }
+
+  /* How a settled answer is written into the prompt. A decision is rendered
+     from its meaning rather than its wording, so a declined option reads as
+     an empty field instead of a name, and a record choice carries the id the
+     system resolved instead of leaving the model to pick one. */
+  function settledAnswer(item) {
+    if (!item) return '';
+    const decision = item.decision;
+    if (!decision) return `${item.question} -> ${item.answer}`;
+    const slot = decision.slot || item.question;
+    if (decision.kind === 'none') return `${slot} = none (leave empty)`;
+    if (decision.kind === 'attachment') {
+      const ids = Array.isArray(decision.ids) ? decision.ids.filter(Boolean) : [];
+      return `${slot} = attached${ids.length ? ` (attachment ${ids.join(', ')})` : ''}`;
+    }
+    if (decision.kind === 'record' && decision.id) {
+      return `${slot} = ${decision.value} (id ${decision.id})`;
+    }
+    return `${slot} = ${decision.value}`;
   }
 
   function addPlan(topic, plan) {
@@ -459,10 +648,21 @@ function createConversationMemoryStore({
         setCurrentCategory(topic, step.categoryName, step.categoryId);
       }
     }
+    topic.stage = plan.status === 'completed'
+      ? 'done'
+      : plan.status === 'cancelled'
+        ? 'cancelled'
+        : plan.status === 'failed'
+          ? 'failed'
+          : 'awaiting_confirmation';
   }
 
   function addClarification(topic, result) {
     if (!result || !result.question) return;
+    /* The local product flow keeps its structured draft here. It is local
+       working state: never a shop record, never synced, and cleared when the
+       plan is proposed or the request is abandoned. */
+    const draft = result.draft && typeof result.draft === 'object' ? result.draft : null;
     for (const item of topic.clarifications) {
       if (item.status === 'pending') item.status = 'superseded';
     }
@@ -472,11 +672,36 @@ function createConversationMemoryStore({
       .filter(Boolean)
       .slice(0, 8);
     topic.clarifications.push({
+      /* Stable identity for the options, so a click can name the exact choice
+         it was made on instead of being re-read from its wording. Cards are
+         presented by ask-slots, which mints this id; the fallback keeps an
+         unpresented result (a test, an older caller) resolvable too. */
+      id: cleanText(result.id, 60) || `c${Date.now().toString(36)}${topic.clarifications.length}`,
       question: cleanText(result.question, 300),
+      /* The one field this question decides. Absent when neither the model,
+         the field labels nor the question wording name one, which keeps the
+         older free-text path working. */
+      slot: normaliseSlot(result.slot),
+      /* Kept as objects rather than label strings: `value` is what the button
+         sends, `none` marks the option that leaves the field empty, `action`
+         says what the page does with it and `record` is a system-resolved id.
+         `id` comes from the position here when the card did not carry one. */
       options: (Array.isArray(result.options) ? result.options : [])
         .slice(0, 4)
-        .map((option) => cleanText(option && option.label, 80))
-        .filter(Boolean),
+        .map((option, index) => ({
+          id: cleanText(option && option.id, 40) || `o${index + 1}`,
+          label: cleanText(option && option.label, 80),
+          value: cleanText(option && option.value, 160),
+          none: !!(option && option.none),
+          action: cleanText(option && option.action, 20),
+          record: option && option.record && option.record.id
+            ? {
+                entity: cleanText(option.record.entity, 20) || 'product',
+                id: cleanText(option.record.id, 80),
+              }
+            : null,
+        }))
+        .filter((option) => option.label),
       note,
       missing,
       status: 'pending',
@@ -494,24 +719,83 @@ function createConversationMemoryStore({
         at: current(),
         note: '',
         asked: false,
+        draft: null,
       };
     }
     if (note) topic.pendingRequest.note = note;
+    if (draft) topic.pendingRequest.draft = draft;
     topic.pendingRequest.asked = true;
+    topic.stage = 'collecting';
   }
 
-  function markClarification(topic, message, status) {
-    if (!topic) return;
+  function noteDraft(conversationId, draft) {
+    const conversation = ensureConversation(conversationId);
+    const topic = activeTopic(conversation);
+    if (!topic) return null;
+    if (!topic.pendingRequest) {
+      const lastWrite = [...topic.points].reverse().find((point) => looksLikeWriteRequest(point.text));
+      topic.pendingRequest = {
+        text: lastWrite ? lastWrite.text : '',
+        at: current(),
+        note: '',
+        asked: false,
+        draft: null,
+      };
+    }
+    topic.pendingRequest.draft = draft && typeof draft === 'object'
+      ? JSON.parse(JSON.stringify(draft))
+      : null;
+    return topic.pendingRequest.draft;
+  }
+
+  function markClarification(topic, message, status, answer) {
+    if (!topic) return null;
     const pending = [...topic.clarifications].reverse().find((item) => item.status === 'pending');
-    if (!pending) return;
+    if (!pending) return null;
+    let resolved = null;
     pending.status = status || 'answered';
     if (pending.status === 'answered') {
       pending.answer = cleanText(message, 200);
       pending.answeredAt = current();
 
-      if (isCategoryAnswer(pending) && pending.answer) {
-        const known = matchingCategory(topic, pending.answer);
-        setCurrentCategory(topic, known ? known.name : pending.answer, known ? known.id : '');
+      /* A finite choice is decided by the option that was offered, not by
+         reading the reply as prose. Only an unmatched reply stays text for
+         the model to interpret. */
+      const decision = resolveClarification(pending, pending.answer, answer);
+      if (decision) pending.decision = decision;
+      resolved = decision || null;
+
+      /* The category is a fact about the shop, so a finite choice may only
+         ever name one that exists: it was one of a small set of buttons, so
+         its wording is not evidence of a record. "لا فئة" declines it and a
+         name nobody has created is not one either; storing either would put a
+         category that does not exist into the prompt, and the model would
+         obediently write it into the plan. Free text keeps the older
+         behaviour, where a typed name carries the request forward until the
+         plan creates it. */
+      const asksCategory = isCategoryAnswer(pending);
+      const declined = decision && decision.kind === 'none';
+      const wasChoice = Array.isArray(pending.options) && pending.options.length > 0;
+      if (asksCategory && !declined) {
+        if (decision && decision.kind === 'record' && decision.entity !== 'category') {
+          /* A product was picked for a category question; naming it a
+             category would be inventing a record. Leave the category alone. */
+        } else if (decision && decision.kind === 'record' && decision.id) {
+          setCurrentCategory(topic, decision.value, decision.id);
+        } else {
+          const source = decision && decision.kind === 'value' ? decision.value : pending.answer;
+          const known = matchingCategory(topic, source);
+          if (known) setCurrentCategory(topic, known.name, known.id || '');
+          else if (!wasChoice) setCurrentCategory(topic, source, '');
+        }
+      }
+
+      /* An image answer writes the draft's explicit image status, which is
+         what stops the assistant asking for the picture a second time and
+         what the local product path builds its plan images from. */
+      if (decision && decision.slot === 'image') {
+        if (decision.kind === 'attachment') setImageStatus(topic, 'attached', decision.ids);
+        else if (decision.kind === 'none') setImageStatus(topic, 'none', []);
       }
 
       /* The old draft note was written before this answer and can still say
@@ -523,9 +807,17 @@ function createConversationMemoryStore({
         topic.pendingRequest.answers = topic.clarifications
           .filter((item) => item.status === 'answered' && item.answer)
           .slice(-6)
-          .map((item) => ({ question: item.question, answer: item.answer }));
+          /* The decision travels with the answer so the prompt can render it
+             by meaning. Without it a declined option would still print as the
+             label the user clicked. */
+          .map((item) => ({
+            question: item.question,
+            answer: item.answer,
+            decision: item.decision || null,
+          }));
       }
     }
+    return resolved;
   }
 
   function ingestToolCalls(topic, toolCalls) {
@@ -600,7 +892,7 @@ function createConversationMemoryStore({
     }
     const answered = topic.clarifications.filter((item) => item.status === 'answered').slice(-3);
     if (answered.length) {
-      parts.push(`Answered: ${answered.map((item) => `${item.question} -> ${item.answer}`).join('; ')}`);
+      parts.push(`Answered: ${answered.map(settledAnswer).join('; ')}`);
     }
     const corrections = topic.corrections.slice(-3);
     if (corrections.length) parts.push(`Corrections: ${corrections.map((item) => item.text).join('; ')}`);
@@ -644,7 +936,7 @@ function createConversationMemoryStore({
     return hasPhrase(message, ACTION_PHRASES);
   }
 
-  function beginTurn(conversationId, text) {
+  function beginTurn(conversationId, text, { answer = null } = {}) {
     const conversation = ensureConversation(conversationId);
     if (!conversation) return null;
     const message = cleanText(text, 4000);
@@ -657,6 +949,7 @@ function createConversationMemoryStore({
         switched: false,
         resumed: false,
         reason: 'empty',
+        stage: topic.stage,
       } : null;
     }
 
@@ -676,7 +969,7 @@ function createConversationMemoryStore({
       isNotImportant(normalised) ||
       GREETING_RE.test(normalised);
     const actionFollowUp = isActionFollowUp(message, previous);
-    const newEntity = hasPhrase(message, NEW_ENTITY_PHRASES);
+    const newEntity = hasPhrase(message, NEW_ENTITY_PHRASES) || CREATE_ENTITY_RE.test(message);
     /* A category the user already settled belongs to this topic, not to one
        product. Adding the next product is a continuation while that category
        is current, otherwise the assistant forgets the shelf it was just told
@@ -685,13 +978,28 @@ function createConversationMemoryStore({
       previous && previous.currentCategory && previous.currentCategory.name &&
       !newSignal && !backSignal
     );
-    const cancellation = isCancellation(message);
+    const cancellation = isCancellation(message) && !(newSignal && !backSignal);
     const wasPending = !!(previous && previous.pendingRequest);
-    /* The first create/update request also creates a pending draft. Only a
-       short follow-up while that draft already existed is an answer; the
-       original request itself must still be allowed to search first. */
+    const waitingClarification = previous
+      ? [...previous.clarifications].reverse().find((item) => item.status === 'pending')
+      : null;
+    const acknowledgement = ACK_ONLY_RE.test(normalised) &&
+      !!(waitingClarification &&
+        Array.isArray(waitingClarification.missing) &&
+        waitingClarification.missing.length);
+    const correction = looksLikeCorrection(message);
+    const question = looksLikeQuestion(message);
+    /* A read question in the middle of a task pauses it. It is not the answer
+       to the pending question and it must not replace the pending request. */
+    const sideQuestion = wasPending && !newSignal && !newEntity && !cancellation &&
+      question && !correction;
+    /* The first create/update request also creates a pending draft. A short
+       answer continues it; a new write action starts a new request unless it
+       is a correction such as "change the price to 50". A bare "تمام" while
+       fields are still missing is an acknowledgement, not a value. */
     const pendingAnswer = wasPending && !newSignal && !newEntity && !cancellation &&
-      (!looksLikeWriteRequest(message) || forms.size <= 3);
+      !sideQuestion && !acknowledgement &&
+      (!looksLikeWriteRequest(message) || correction);
 
     let topic = previous;
     let switched = false;
@@ -712,7 +1020,7 @@ function createConversationMemoryStore({
       resumed = switched;
       reason = 'resume';
     } else if (best && best.score >= 2.5 && activeScore <= 0.5 && !continuation &&
-      !actionFollowUp && !pendingAnswer) {
+      !actionFollowUp && !pendingAnswer && !sideQuestion) {
       topic = best.topic;
       switched = true;
       resumed = true;
@@ -723,16 +1031,30 @@ function createConversationMemoryStore({
       reason = 'new';
     } else if (actionFollowUp || pendingAnswer || (newEntity && carriedCategory)) {
       reason = 'follow-up';
-    } else if (!continuation && !actionFollowUp && activeScore <= 0 && forms.size >= 2 &&
-      !GREETING_RE.test(normalised)) {
+    } else if (!continuation && !actionFollowUp && !sideQuestion && activeScore <= 0 &&
+      forms.size >= 2 && !GREETING_RE.test(normalised)) {
       topic = createTopic(conversation, message);
       switched = true;
       reason = 'new';
     }
+    if (sideQuestion && !switched) reason = 'side-question';
+    if (acknowledgement && !switched) reason = 'acknowledgement';
 
     if (previous && switched && previous !== topic) {
       previous.status = 'archived';
-      markClarification(previous, '', 'abandoned');
+      /* Leaving a task for another topic pauses it, so it can be resumed.
+         "سيبك من ده" is an explicit abandon and clears it. A plan waiting for
+         confirmation stays waiting; its card is still the decision. */
+      if (isAbandon(message)) {
+        previous.pendingRequest = null;
+        previous.stage = 'cancelled';
+        for (const item of previous.clarifications) {
+          if (item.status === 'pending') item.status = 'cancelled';
+        }
+      } else if (previous.pendingRequest &&
+        (previous.stage === 'collecting' || previous.stage === 'paused' || previous.stage === 'idle')) {
+        previous.stage = 'paused';
+      }
     }
     if (!topic) topic = createTopic(conversation, message);
     topic.status = 'active';
@@ -743,20 +1065,43 @@ function createConversationMemoryStore({
 
     if (cancellation) {
       topic.pendingRequest = null;
+      topic.stage = 'cancelled';
       for (const item of topic.clarifications) {
         if (item.status === 'pending') item.status = 'cancelled';
       }
-    } else if (looksLikeWriteRequest(message) &&
+    } else if (sideQuestion) {
+      if (topic.stage === 'collecting' || topic.stage === 'paused') topic.stage = 'paused';
+    } else if (!sideQuestion && looksLikeWriteRequest(message) &&
       (!topic.pendingRequest || newEntity || !pendingAnswer)) {
       topic.pendingRequest = {
         text: cleanText(message, MAX_TEXT_CHARS),
         at: current(),
         note: '',
         asked: false,
+        draft: null,
       };
+      for (const item of topic.clarifications) {
+        if (item.status === 'pending') item.status = 'superseded';
+      }
+      topic.stage = 'collecting';
+    } else if (pendingAnswer && topic.stage !== 'awaiting_confirmation') {
+      topic.stage = 'collecting';
     }
 
-    markClarification(topic, message, 'answered');
+    /* A card click arrives with its ids. It settles the question it belongs
+       to even when the display text would not read as an answer, and a card
+       from an older question settles nothing. */
+    const structuredAnswer = !!(answer && typeof answer === 'object' &&
+      waitingClarification &&
+      cleanText(answer.clarificationId, 60) === cleanText(waitingClarification.id, 60));
+    /* A settled decision tells the local flow which slot this turn answered,
+       so its click label is never parsed as a sentence. pendingAnswer stays
+       text-based: this turn still answers the pending request. */
+    let answered = null;
+    if ((pendingAnswer || structuredAnswer) && !switched) {
+      const decision = markClarification(topic, message, 'answered', structuredAnswer ? answer : null);
+      if (decision && decision.slot) answered = { slot: decision.slot, kind: decision.kind };
+    }
     addPoint(topic, message);
     mergeKeywords(topic, message);
     addTurn(topic, 'user', message);
@@ -769,8 +1114,13 @@ function createConversationMemoryStore({
       switched,
       resumed,
       reason,
-      writeRequest: looksLikeWriteRequest(message),
+      stage: topic.stage,
+      writeRequest: !sideQuestion && !cancellation && looksLikeWriteRequest(message),
       pendingAnswer: pendingAnswer && !switched,
+      answered,
+      sideQuestion: sideQuestion && !switched,
+      acknowledgement: acknowledgement && !switched,
+      contextChange: switched || sideQuestion || cancellation || isAbandon(message),
     };
   }
 
@@ -786,7 +1136,7 @@ function createConversationMemoryStore({
     topic.updatedAt = current();
     topic.lastAt = current();
     conversation.updatedAt = current();
-    return { topicId: topic.id, title: topic.title };
+    return { topicId: topic.id, title: topic.title, stage: topic.stage };
   }
 
   function notePlan(conversationId, plan, status) {
@@ -808,10 +1158,16 @@ function createConversationMemoryStore({
     if (status === 'completed' || status === 'cancelled' || plan.status === 'completed' || plan.status === 'cancelled') {
       topic.pendingRequest = null;
     }
+    if (status === 'completed' || plan.status === 'completed') topic.stage = 'done';
+    else if (status === 'cancelled' || plan.status === 'cancelled') topic.stage = 'cancelled';
+    else if (status === 'failed' || plan.status === 'failed') topic.stage = 'failed';
+    else if (topic.stage !== 'done' && topic.stage !== 'cancelled') {
+      topic.stage = 'awaiting_confirmation';
+    }
     addPoint(topic, `Plan ${plan.id} ${status || plan.status || 'updated'}`);
     updateSummary(topic);
     conversation.updatedAt = current();
-    return { topicId: topic.id, title: topic.title };
+    return { topicId: topic.id, title: topic.title, stage: topic.stage };
   }
 
   function contextFor(conversationId, { full = false, message = '' } = {}) {
@@ -821,6 +1177,8 @@ function createConversationMemoryStore({
     const currentMessage = normalise(message);
     const lines = ['[Conversation memory]'];
     lines.push(`Active topic: ${topic.title}`);
+    const stageGuidance = STAGE_GUIDANCE[topic.stage];
+    if (stageGuidance) lines.push(stageGuidance);
     if (topic.summary) lines.push(`Summary: ${topic.summary}`);
 
     if (topic.pendingRequest && (topic.pendingRequest.text || topic.pendingRequest.note)) {
@@ -834,12 +1192,19 @@ function createConversationMemoryStore({
         .slice(-6);
       if (settled.length) {
         lines.push('Answered for this request (settled; never ask again):');
-        for (const item of settled) lines.push(`- ${item.question} -> ${item.answer}`);
+        for (const item of settled) lines.push(`- ${settledAnswer(item)}`);
       }
       const waiting = [...topic.clarifications].reverse().find((item) => item.status === 'pending');
-      if (waiting) lines.push(`- Waiting for the answer to: ${waiting.question}`);
+      if (waiting) {
+        lines.push(`- Waiting for the answer to: ${waiting.question}`);
+        const lastUser = [...topic.turns].reverse().find((turn) => turn.role === 'user');
+        if (lastUser && ACK_ONLY_RE.test(normalise(lastUser.text)) &&
+            Array.isArray(waiting.missing) && waiting.missing.length) {
+          lines.push('- The last message was only an acknowledgement; the question above is still unanswered. Ask for the remaining values once.');
+        }
+      }
       if (resumed) {
-        lines.push('A short answer, including "مش مهم", answers this request. It is not a reason to search or change topic.');
+        lines.push('A short answer that supplies the missing value, or an explicit skip such as "مش مهم", answers this request. A bare acknowledgement is not a value; ask for the remaining values once. Do not search or change topic.');
       }
     }
 
@@ -893,7 +1258,7 @@ function createConversationMemoryStore({
       .slice(-3);
     if (answered.length) {
       lines.push('Already answered (do not ask again):');
-      for (const item of answered) lines.push(`- ${item.question} -> ${item.answer}`);
+      for (const item of answered) lines.push(`- ${settledAnswer(item)}`);
     }
 
     const earlier = conversation.topics
@@ -942,6 +1307,7 @@ function createConversationMemoryStore({
       id: topic.id,
       title: topic.title,
       status: topic.status,
+      stage: topic.stage || 'idle',
       summary: topic.summary,
       points: topic.points.slice(-6).map((point) => point.text),
       corrections: topic.corrections.slice(-3).map((item) => item.text),
@@ -982,20 +1348,68 @@ function createConversationMemoryStore({
     conversations.clear();
   }
 
+  function currentCategory(conversationId) {
+    const conversation = conversations.get(key(conversationId));
+    const topic = activeTopic(conversation);
+    if (!topic || !topic.currentCategory || !topic.currentCategory.name) return null;
+    return {
+      id: topic.currentCategory.id || '',
+      name: topic.currentCategory.name,
+    };
+  }
+
+  function recordFor(conversationId, name, slot) {
+    const wanted = normalise(name);
+    if (!wanted) return null;
+    const conversation = conversations.get(key(conversationId));
+    const topic = activeTopic(conversation);
+    if (!topic) return null;
+    const products = () => {
+      for (const product of topic.products.values()) {
+        if (product.name && normalise(product.name) === wanted) {
+          return { entity: 'product', id: product.id };
+        }
+      }
+      return null;
+    };
+    const categories = () => {
+      for (const category of topic.categories.values()) {
+        if (category.name && normalise(category.name) === wanted) {
+          return { entity: 'category', id: category.id };
+        }
+      }
+      return null;
+    };
+    /* The slot says which kind of record the choice can name, so an option
+       can only ever resolve to the kind the question was about. */
+    if (slot === 'category') return categories();
+    if (slot === 'target') return products();
+    return products() || categories();
+  }
+
   function pendingRequest(conversationId) {
     const conversation = conversations.get(key(conversationId));
     const topic = activeTopic(conversation);
-    if (!topic || !topic.pendingRequest) return null;
-    const waiting = [...topic.clarifications].reverse().find((item) => item.status === 'pending');
+    if (!topic || !topic.pendingRequest) return null;    const waiting = [...topic.clarifications].reverse().find((item) => item.status === 'pending');
     return {
       text: topic.pendingRequest.text || '',
       note: topic.pendingRequest.note || '',
       asked: !!topic.pendingRequest.asked,
+      draft: topic.pendingRequest.draft && typeof topic.pendingRequest.draft === 'object'
+        ? JSON.parse(JSON.stringify(topic.pendingRequest.draft))
+        : null,
+      stage: topic.stage || 'idle',
       question: waiting ? waiting.question : '',
       missing: waiting && Array.isArray(waiting.missing) ? waiting.missing.slice() : [],
       answers: (Array.isArray(topic.pendingRequest.answers) ? topic.pendingRequest.answers : [])
         .slice(-6)
-        .map((item) => ({ question: item.question, answer: item.answer })),
+        /* Re-mapped here, so the decision has to be carried through or the
+           prompt would render the raw wording again. */
+        .map((item) => ({
+          question: item.question,
+          answer: item.answer,
+          decision: item.decision || null,
+        })),
       category: topic.currentCategory && topic.currentCategory.name
         ? {
             id: topic.currentCategory.id || '',
@@ -1038,6 +1452,7 @@ function createConversationMemoryStore({
         clarifications: topic.clarifications,
         pendingRequest: topic.pendingRequest,
         currentCategory: topic.currentCategory,
+        stage: topic.stage || 'idle',
       })),
     };
   }
@@ -1048,11 +1463,16 @@ function createConversationMemoryStore({
     clearAll,
     completeTurn,
     contextFor,
+    currentCategory,
     has,
+    noteDraft,
+    noteImage,
     notePlan,
     pendingRequest,
     recall,
+    recordFor,
     seed,
+    settledAnswer,
     snapshot,
     userTextFor,
   };

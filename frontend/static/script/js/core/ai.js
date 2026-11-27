@@ -18,6 +18,7 @@
   var MAX_MESSAGE_CHARS = 4000;
   var MAX_ATTACHMENTS = 8;
   var MAX_IMAGE_BYTES = 5 * 1024 * 1024;
+  var MAX_AUDIO_BYTES = 12 * 1024 * 1024;
   var IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/gif', 'image/bmp'];
   var REASONING_LEVELS = ['low', 'medium', 'high'];
 
@@ -46,6 +47,7 @@
   var state = {
     initialized: false,
     enabled: false,
+    httpBridge: true,
     setupOpen: false,
     busy: false,
     recording: false,
@@ -65,8 +67,16 @@
     conversationId: '',
     attachments: [],
     attachmentBusy: false,
+    /* The card option that opened the picker, held until a file is chosen:
+       the file itself is the answer to that question. */
+    pendingChoice: null,
+    /* Images picked since the last message was sent. Only these travel as
+       the message's attachments, so a picture used for one product can never
+       be pulled into the plan of the next one. */
+    pendingAttachmentIds: [],
     planBusy: false,
     offPlanProgress: null,
+    offChatProgress: null,
     transcription: {
       configured: false,
       secure: true,
@@ -82,9 +92,9 @@
       secure: true,
       session: false,
       unreadable: false,
-      backupConfigured: false,
-      backupSecure: true,
-      activeToken: 'primary',
+      tokens: [],
+      tokenCount: 0,
+      activeToken: 0,
       reasoning: 'medium'
     },
     providers: [],
@@ -106,6 +116,13 @@
     return document.getElementById(id);
   }
 
+  function secureVoiceUrl() {
+    var location = global.location;
+    if (!location || !location.hostname) return '';
+    if (location.protocol === 'https:') return '';
+    return 'https://' + location.hostname + ':5443/';
+  }
+
   function hasIpc() {
     return !!(global.electronAPI && global.electronAPI.ai &&
       typeof global.electronAPI.ai.keyStatus === 'function' &&
@@ -114,12 +131,112 @@
       typeof global.electronAPI.ai.transcribe === 'function');
   }
 
+  /*
+   * A phone has no electronAPI. The till's API exposes the same assistant
+   * behind the signed-in session, so the page can still use it on the shop
+   * Wi-Fi. The flag is cleared after a 503 from a standalone API, which keeps
+   * the desktop-only note for a plain browser preview.
+   */
+  function hasHttpBridge() {
+    return !hasIpc() &&
+      state.httpBridge !== false &&
+      !!global.location &&
+      /^https?:$/.test(global.location.protocol);
+  }
+
+  function hasBridge() {
+    return hasIpc() || hasHttpBridge();
+  }
+
+  function httpRequest(path, body) {
+    var headers = { Accept: 'application/json' };
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    try {
+      var token = sessionToken();
+      if (token) headers.Authorization = 'Bearer ' + token;
+    } catch (error) { /* storage can be unavailable */ }
+    try {
+      if (PosnicPro.csrfToken) headers['X-XSRF-TOKEN'] = PosnicPro.csrfToken;
+    } catch (error) { /* older page boot */ }
+    try {
+      var branch = activeBranch();
+      if (branch) headers['X-Branch-Id'] = branch;
+    } catch (error) { /* no branch yet */ }
+
+    return global.fetch('/ai/' + path, {
+      method: body === undefined ? 'GET' : 'POST',
+      credentials: 'same-origin',
+      headers: headers,
+      body: body === undefined ? undefined : JSON.stringify(body),
+    }).then(function (response) {
+      try {
+        var fresh = response.headers && response.headers.get && response.headers.get('X-CSRF-TOKEN');
+        if (fresh) PosnicPro.csrfToken = fresh;
+      } catch (error) { /* token is optional on a read */ }
+      return response.json().catch(function () {
+        return { success: false, code: 'bad_response', error: 'The assistant did not answer.' };
+      }).then(function (data) {
+        if (response.status === 503 && data && data.code === 'bridge_unavailable') {
+          state.httpBridge = false;
+        }
+        return data;
+      });
+    }).catch(function () {
+      return {
+        success: false,
+        code: 'network_error',
+        error: t('lang_ai_network', 'Could not reach the provider. Check the internet connection.'),
+      };
+    });
+  }
+
+  /* JSON cannot carry an ArrayBuffer, so the HTTP bridge sends the clip as
+     base64 and the API decodes it back to a Buffer for the transcriber. */
+  function base64Audio(payload) {
+    var audio = payload && payload.audio;
+    if (!audio || typeof audio === 'string') return payload;
+    var bytes;
+    if (audio instanceof ArrayBuffer ||
+        Object.prototype.toString.call(audio) === '[object ArrayBuffer]') {
+      bytes = new Uint8Array(audio);
+    } else if (ArrayBuffer.isView(audio)) {
+      bytes = new Uint8Array(audio.buffer, audio.byteOffset, audio.byteLength);
+    } else {
+      return payload;
+    }
+    var binary = '';
+    var chunk = 0x8000;
+    for (var offset = 0; offset < bytes.length; offset += chunk) {
+      binary += String.fromCharCode.apply(null, bytes.subarray(offset, offset + chunk));
+    }
+    return Object.assign({}, payload, {
+      audio: global.btoa(binary),
+      audioEncoding: 'base64',
+    });
+  }
+
+  var httpApi = {
+    keyStatus: function () { return httpRequest('status'); },
+    setEnabled: function (enabled) { return httpRequest('enabled', { enabled: enabled === true }); },
+    chat: function (payload) { return httpRequest('chat', payload || {}); },
+    transcribe: function (payload) { return httpRequest('transcribe', base64Audio(payload || {})); },
+    attach: function (payload) { return httpRequest('attach', payload || {}); },
+    removeAttachment: function (payload) { return httpRequest('remove-attachment', payload || {}); },
+    resetChat: function (payload) { return httpRequest('reset-chat', payload || {}); },
+    confirmPlan: function (payload) { return httpRequest('confirm-plan', payload || {}); },
+    cancelPlan: function (payload) { return httpRequest('cancel-plan', payload || {}); },
+    setReasoning: function (reasoning) { return httpRequest('reasoning', { reasoning: reasoning }); },
+    setProviderModel: function (provider, model) {
+      return httpRequest('provider-model', { provider: provider, model: model });
+    },
+  };
+
   function api() {
-    return global.electronAPI.ai;
+    return hasIpc() ? global.electronAPI.ai : httpApi;
   }
 
   function canAttach() {
-    return !!(hasIpc() && api() && typeof api().attach === 'function');
+    return !!(hasBridge() && api() && typeof api().attach === 'function');
   }
 
   function newConversationId() {
@@ -147,6 +264,24 @@
     if (!el.status) return;
     el.status.textContent = text || '';
     el.status.className = 'small ' + (isError ? 'text-danger' : 'text-muted');
+  }
+
+  /* The runtime reports what it is doing while a slow model is still working.
+     A stale event from an earlier chat must not repaint this one. */
+  function showChatProgress(progress) {
+    if (!state.busy) return;
+    if (!progress || progress.conversationId !== state.conversationId) return;
+    var stage = String(progress.stage || '');
+    var labels = {
+      understanding: ['lang_ai_progress_understanding', 'Reading your request...'],
+      reading_shop: ['lang_ai_progress_reading', 'Checking live shop data...'],
+      preparing_plan: ['lang_ai_progress_planning', 'Preparing the steps...'],
+      waiting_model: ['lang_ai_progress_waiting', 'Waiting for the assistant...'],
+      working: ['lang_ai_progress_working', 'Working on it...'],
+      slow: ['lang_ai_progress_slow', 'Still working. The model is taking longer than usual.']
+    };
+    if (stage === 'done' || !labels[stage]) return;
+    setStatus(t(labels[stage][0], labels[stage][1]));
   }
 
   function showRetry() {
@@ -202,8 +337,15 @@
       provider_key_save_failed: ['lang_ai_provider_key_save_failed', 'The provider token could not be saved on this computer.'],
       provider_key_unreadable: ['lang_ai_key_unreadable', 'The saved provider token could not be read. Enter it again.'],
       provider_missing: ['lang_ai_provider_missing', 'No provider token saved.'],
+      token_limit: ['lang_ai_token_limit', 'The token limit was reached. Remove a token first.'],
+      token_invalid: ['lang_ai_token_required', 'Enter a token.'],
+      token_required: ['lang_ai_token_required', 'Enter a token.'],
+      token_save_failed: ['lang_ai_token_save_failed', 'The token could not be saved on this computer.'],
+      token_switch_failed: ['lang_ai_token_switch_failed', 'The token could not be selected.'],
+      token_remove_failed: ['lang_ai_token_remove_failed', 'The token could not be removed.'],
       provider_error: ['lang_ai_provider_error', 'The provider could not answer. Try again.'],
       provider_unavailable: ['lang_ai_provider_error', 'The provider could not answer. Try again.'],
+      request_too_large: ['lang_ai_request_too_large', 'The provider limits one request to about 8,000 tokens. Start a new chat, lower the thinking level, or choose a provider with a larger request limit.'],
       provider_model_unavailable: modelEntry,
       model_unavailable: modelEntry,
       model_unavailable_chat: modelEntry,
@@ -436,7 +578,7 @@
   }
 
   function updateProviderState() {
-    var configured = chatConfiguredForSelection();
+    var configured = chatConfiguredForSelection() && state.chat.tokenCount > 0;
     var text;
     var isError = false;
     if (!configured) {
@@ -449,29 +591,65 @@
     } else if (state.chat.session || !state.chat.secure) {
       text = t('lang_ai_provider_key_session', 'No secure keystore is available. The provider token stays only until Posnic quits.');
     } else {
-      text = t('lang_ai_provider_saved', 'Provider token saved on this computer.');
+      text = t('lang_ai_provider_saved', 'Provider tokens saved on this computer.');
     }
-    setStateText(el.providerState, text, isError);
+    setStateText(el.settingsTokenState, text, isError);
+    renderTokens();
   }
 
-  function updateBackupState() {
-    var configured = !!(state.chat.backupConfigured &&
-      (!state.chat.provider || state.chat.provider === state.provider));
-    var text;
-    var isError = false;
-    if (!configured) {
-      text = t('lang_ai_provider_backup_missing', 'No backup token saved.');
-    } else if (state.chat.activeToken === 'backup') {
-      text = t('lang_ai_provider_backup_active', 'Backup token is active now.');
-    } else if (state.chat.backupSecure === false) {
-      text = t('lang_ai_provider_backup_session', 'No secure keystore is available. The backup token stays only until Posnic quits.');
-    } else {
-      text = t('lang_ai_provider_backup_saved', 'Backup token saved on this computer.');
+  function tokenLabel(position) {
+    return t('lang_ai_token_label', 'Token {number}').replace(/\{number\}/g, String(position + 1));
+  }
+
+  function renderTokenList(container) {
+    if (!container) return;
+    container.textContent = '';
+    if (!state.chat.tokenCount) {
+      var empty = document.createElement('small');
+      empty.className = 'text-muted d-block';
+      empty.textContent = t('lang_ai_token_none', 'No provider token saved.');
+      container.append(empty);
+      return;
     }
-    setStateText(el.providerBackupState, text, isError);
-    setStateText(el.settingsBackupState, text, isError);
-    if (el.removeProviderBackup) el.removeProviderBackup.hidden = !configured;
-    if (el.removeSettingsBackup) el.removeSettingsBackup.hidden = !configured;
+    state.chat.tokens.forEach(function (token, position) {
+      var row = document.createElement('div');
+      row.className = 'd-flex align-items-center justify-content-between border rounded px-2 py-1 mb-1';
+      var label = document.createElement('span');
+      label.className = 'small';
+      label.textContent = tokenLabel(position);
+      if (token.index === state.chat.activeToken) {
+        var badge = document.createElement('span');
+        badge.className = 'badge badge-primary ml-2';
+        badge.textContent = t('lang_ai_token_active', 'Active');
+        label.append(badge);
+      }
+      row.append(label);
+      if (hasIpc()) {
+        var actions = document.createElement('span');
+        if (token.index !== state.chat.activeToken) {
+          var use = document.createElement('button');
+          use.type = 'button';
+          use.className = 'btn btn-link p-0 mr-2 small';
+          use.textContent = t('lang_ai_token_use', 'Use');
+          use.disabled = state.providerBusy;
+          use.addEventListener('click', function () { useProviderToken(token.index); });
+          actions.append(use);
+        }
+        var remove = document.createElement('button');
+        remove.type = 'button';
+        remove.className = 'btn btn-link p-0 text-danger small';
+        remove.textContent = t('lang_ai_token_remove', 'Remove');
+        remove.disabled = state.providerBusy;
+        remove.addEventListener('click', function () { removeProviderToken(token.index); });
+        actions.append(remove);
+        row.append(actions);
+      }
+      container.append(row);
+    });
+  }
+
+  function renderTokens() {
+    renderTokenList(el.settingsTokens);
   }
 
   function reasoningLabel(level) {
@@ -506,7 +684,7 @@
   }
 
   async function saveReasoning() {
-    if (!hasIpc() || !el.reasoning || state.reasoningBusy) return;
+    if (!hasBridge() || !el.reasoning || state.reasoningBusy) return;
     if (typeof api().setReasoning !== 'function') return;
     var level = REASONING_LEVELS[Number(el.reasoning.value)] || 'medium';
     if (level === state.chat.reasoning) {
@@ -550,8 +728,8 @@
     var ready = credentialsReady();
     updateTranscriptionState();
     updateProviderState();
-    updateBackupState();
     if (el.turnOn) el.turnOn.disabled = !ready || state.busy;
+    if (el.disable) el.disable.hidden = !state.enabled;
     setSetupStatus(ready
       ? t('lang_ai_setup_ready', 'Both credentials are saved. Turn on the assistant when you are ready.')
       : t('lang_ai_setup_incomplete', 'Save both credentials to turn on the assistant.'));
@@ -580,9 +758,13 @@
     state.chat.session = !!chat.session;
     state.chat.unreadable =
       chat.reason === 'unreadable' || chat.unreadable === true;
-    state.chat.backupConfigured = !!chat.backupConfigured;
-    state.chat.backupSecure = chat.backupSecure !== false;
-    state.chat.activeToken = chat.activeToken === 'backup' ? 'backup' : 'primary';
+    state.chat.tokens = Array.isArray(chat.tokens) ? chat.tokens : [];
+    state.chat.tokenCount = Number.isInteger(chat.tokenCount)
+      ? chat.tokenCount
+      : state.chat.tokens.length;
+    state.chat.activeToken = Number.isInteger(chat.activeToken)
+      ? chat.activeToken
+      : (state.chat.tokens[0] ? state.chat.tokens[0].index : 0);
     state.chat.reasoning = REASONING_LEVELS.indexOf(String(chat.reasoning)) >= 0
       ? String(chat.reasoning)
       : 'medium';
@@ -617,15 +799,19 @@
   function showSetupForm(focus) {
     el.setupCard.hidden = false;
     el.chatCard.hidden = true;
-    el.settingsCard.hidden = true;
+    el.settingsCard.hidden = false;
+    if (el.settingsColumn) {
+      el.settingsColumn.classList.add('order-first');
+      el.settingsColumn.classList.add('order-xl-last');
+    }
     el.enable.hidden = true;
     el.setupForm.hidden = false;
     setSetupError('');
     updateSetupState();
     if (focus === 'transcription' && el.transcriptionKey) {
       setTimeout(function () { el.transcriptionKey.focus(); }, 0);
-    } else if (focus === 'provider' && el.providerKey) {
-      setTimeout(function () { el.providerKey.focus(); }, 0);
+    } else if (focus === 'provider' && el.settingsTokenKey) {
+      setTimeout(function () { el.settingsTokenKey.focus(); }, 0);
     }
   }
 
@@ -633,8 +819,19 @@
     el.setupCard.hidden = true;
     el.chatCard.hidden = false;
     el.settingsCard.hidden = false;
+    if (el.settingsColumn) {
+      el.settingsColumn.classList.remove('order-first');
+      el.settingsColumn.classList.add('order-xl-last');
+    }
     setSetupError('');
     setConnectionStatus('');
+    /* A phone can use the assistant, but the keys stay on the till. Hide
+       controls that would only return desktop_only. */
+    if (!hasIpc()) {
+      if (el.removeKey) el.removeKey.hidden = true;
+      if (el.settingsAddGroup) el.settingsAddGroup.hidden = true;
+    }
+    if (el.disable) el.disable.hidden = !state.enabled;
     renderMessages();
     renderAttachments();
     renderReasoning();
@@ -662,7 +859,7 @@
   }
 
   async function refresh() {
-    if (!hasIpc()) {
+    if (!hasBridge()) {
       showDesktopOnly();
       return;
     }
@@ -674,6 +871,11 @@
       showSetupCardError(t('lang_ai_failed', 'The assistant could not be loaded. Try again.'));
       return;
     }
+    if (status && status.code === 'bridge_unavailable') {
+      state.httpBridge = false;
+      showDesktopOnly();
+      return;
+    }
     if (!status || status.success === false) {
       showSetupCardError(status && status.error
         ? status.error
@@ -683,6 +885,33 @@
 
     applyStatus(status, true);
     var ready = credentialsReady();
+
+    /*
+     * The till owns the assistant. A phone follows the till's on/off state
+     * instead of writing its own local preference back over it, and it never
+     * asks for a key here - the setup form is a desktop action.
+     */
+    if (hasHttpBridge()) {
+      if (!ready) {
+        showSetupCardError(t(
+          'lang_ai_desktop_setup',
+          'Configure the AI assistant in the Posnic desktop app.',
+        ));
+        return;
+      }
+      if (status.enabled === true) {
+        state.enabled = true;
+        saveSettings();
+        showChat();
+        return;
+      }
+      if (state.enabled) {
+        state.enabled = false;
+        saveSettings();
+      }
+      showInitial();
+      return;
+    }
 
     if (state.enabled && ready) {
       var permission = await enableInput();
@@ -732,13 +961,24 @@
   }
 
   function revealSetup() {
+    if (hasHttpBridge()) {
+      if (!credentialsReady()) {
+        showSetupCardError(t(
+          'lang_ai_desktop_setup',
+          'Configure the AI assistant in the Posnic desktop app.',
+        ));
+        return;
+      }
+      turnOn();
+      return;
+    }
     if (!hasIpc()) return;
     state.setupOpen = true;
     showSetupForm(state.transcription.configured ? 'provider' : 'transcription');
   }
 
   async function turnOn() {
-    if (!hasIpc() || state.busy) return;
+    if (!hasBridge() || state.busy) return;
     if (!credentialsReady()) {
       setSetupStatus(t('lang_ai_setup_incomplete', 'Save both credentials to turn on the assistant.'));
       return;
@@ -774,8 +1014,14 @@
     state.enabled = false;
     state.setupOpen = true;
     saveSettings();
-    if (hasIpc()) {
+    if (hasBridge()) {
       try { await api().setEnabled(false); } catch (error) { /* already off */ }
+    }
+    /* The key fields only work on the till. A phone returns to the initial
+       card, where it can turn the assistant back on once the till is set up. */
+    if (hasHttpBridge()) {
+      showInitial();
+      return;
     }
     showSetupForm();
   }
@@ -821,132 +1067,48 @@
   async function saveProviderKey() {
     if (!hasIpc() || state.providerBusy) return;
     if (!state.provider || !state.model) {
-      setSetupError(t('lang_ai_provider_missing', 'No provider token saved.'));
+      setStateText(el.settingsTokenState, t('lang_ai_provider_missing', 'No provider token saved.'), true);
       return;
     }
 
-    var key = String((el.providerKey && el.providerKey.value) || '').trim();
-    if (!key && !chatConfiguredForSelection()) {
-      setSetupError(t('lang_ai_provider_key_required', 'Enter the provider token.'));
-      setStateText(el.providerState, t('lang_ai_provider_key_required', 'Enter the provider token.'), true);
-      if (el.providerKey) el.providerKey.focus();
+    var key = String((el.settingsTokenKey && el.settingsTokenKey.value) || '').trim();
+    if (!key) {
+      setStateText(el.settingsTokenState, t('lang_ai_token_required', 'Enter a token.'), true);
+      if (el.settingsTokenKey) el.settingsTokenKey.focus();
       return;
     }
 
     state.providerBusy = true;
     setSetupError('');
-    setStateText(el.providerState, t('lang_ai_provider_key_checking', 'Checking provider token...'), false);
-    if (el.providerSave) el.providerSave.disabled = true;
+    setStateText(el.settingsTokenState, t('lang_ai_token_checking', 'Checking token...'), false);
+    if (el.settingsTokenSave) el.settingsTokenSave.disabled = true;
     try {
       var selection = await api().setProviderModel(state.provider, state.model);
       if (!selection || selection.success === false) {
-        setStateText(el.providerState, '', false);
-        setSetupError(messageFor(selection, 'chat'));
-        return;
-      }
-
-      /* The bridge can only validate a token it is given; it has no
-         "validate the stored provider token" call. An empty field therefore
-         refreshes the saved status instead of sending an empty token. */
-      if (!key) {
-        var status = await api().keyStatus();
-        if (!status || status.success === false) {
-          setStateText(el.providerState, '', false);
-          setSetupError(messageFor(status, 'chat'));
-          return;
-        }
-        applyStatus(status, false);
+        setStateText(el.settingsTokenState, messageFor(selection, 'chat'), true);
         return;
       }
 
       var result = await api().saveProviderKey(state.provider, key);
       if (!result || !result.success) {
-        setStateText(el.providerState, '', false);
-        setSetupError(messageFor(result, 'chat'));
+        setStateText(el.settingsTokenState, messageFor(result, 'chat'), true);
         return;
       }
 
-      if (key && el.providerKey) el.providerKey.value = '';
-      state.chat.configured = result.configured !== false;
-      if (result.provider) state.provider = result.provider;
-      if (result.model) state.model = result.model;
-      state.chat.provider = state.provider;
-      state.chat.model = state.model;
-      if (result.providerLabel) state.chat.providerLabel = result.providerLabel;
-      if (result.modelLabel) state.chat.modelLabel = result.modelLabel;
-      state.chat.secure = result.secure !== false;
-      state.chat.session = !!result.session;
-      state.chat.unreadable = false;
-      state.chat.activeToken = 'primary';
-      renderProviderOptions();
-      renderModelOptions();
-      updateSetupState();
-      } catch (error) {
-      setStateText(el.providerState, '', false);
-      setSetupError(t('lang_ai_provider_key_save_failed', 'The provider token could not be saved on this computer.'));
-    } finally {
-      state.providerBusy = false;
-      if (el.providerSave) el.providerSave.disabled = false;
-      if (el.providerBackupSave) el.providerBackupSave.disabled = false;
-    }
-  }
-
-  async function saveProviderBackupKey(scope) {
-    if (!hasIpc() || state.providerBusy) return;
-    var live = scope === 'settings';
-    var keyEl = live ? el.settingsBackupKey : el.providerBackupKey;
-    var stateEl = live ? el.settingsBackupState : el.providerBackupState;
-    var saveEl = live ? el.settingsBackupSave : el.providerBackupSave;
-    if (!state.provider || !state.model) {
-      setStateText(stateEl, t('lang_ai_provider_missing', 'No provider token saved.'), true);
-      return;
-    }
-
-    var key = String((keyEl && keyEl.value) || '').trim();
-    if (!key) {
-      setStateText(stateEl, t('lang_ai_provider_backup_required', 'Enter the backup token.'), true);
-      if (keyEl) keyEl.focus();
-      return;
-    }
-
-    state.providerBusy = true;
-    setSetupError('');
-    setStateText(stateEl, t('lang_ai_provider_backup_checking', 'Checking backup token...'), false);
-    if (saveEl) saveEl.disabled = true;
-    if (el.providerBackupSave) el.providerBackupSave.disabled = true;
-    if (el.providerSave) el.providerSave.disabled = true;
-    try {
-      var selection = await api().setProviderModel(state.provider, state.model);
-      if (!selection || selection.success === false) {
-        setStateText(stateEl, messageFor(selection, 'chat'), true);
-        return;
-      }
-
-      var result = await api().saveProviderKey(state.provider, key, true);
-      if (!result || !result.success) {
-        setStateText(stateEl, messageFor(result, 'chat'), true);
-        return;
-      }
-
-      if (el.providerBackupKey) el.providerBackupKey.value = '';
-      if (el.settingsBackupKey) el.settingsBackupKey.value = '';
-      state.chat.backupConfigured = result.backupConfigured !== false;
-      state.chat.backupSecure = result.secure !== false;
-      if (result.provider) state.provider = result.provider;
-      if (result.model) state.model = result.model;
-      state.chat.provider = state.provider;
-      state.chat.model = state.model;
-      renderProviderOptions();
-      renderModelOptions();
-      updateSetupState();
-      setStateText(stateEl, t('lang_ai_provider_backup_saved', 'Backup token saved on this computer.'), false);
+      if (el.settingsTokenKey) el.settingsTokenKey.value = '';
+      var status = await api().keyStatus();
+      if (status && status.success !== false) applyStatus(status, false);
+      setStateText(
+        el.settingsTokenState,
+        result.warning || t('lang_ai_token_saved', 'Token saved on this computer.'),
+        !!result.warning,
+      );
     } catch (error) {
-      setStateText(stateEl, t('lang_ai_provider_backup_save_failed', 'The backup token could not be saved on this computer.'), true);
+      setStateText(el.settingsTokenState, t('lang_ai_token_save_failed', 'The token could not be saved on this computer.'), true);
     } finally {
       state.providerBusy = false;
-      if (saveEl) saveEl.disabled = false;
-      if (el.providerBackupSave) el.providerBackupSave.disabled = false;
-      if (el.providerSave) el.providerSave.disabled = false;
+      if (el.settingsTokenSave) el.settingsTokenSave.disabled = false;
+      renderTokens();
     }
   }
 
@@ -959,7 +1121,7 @@
       var result = await api().setProviderModel(state.provider, state.model);
       if (seq !== state.selectionSeq) return;
       if (!result || result.success === false) {
-        setStateText(el.providerState,
+        setStateText(el.settingsTokenState,
           result && result.error
             ? result.error
             : t('lang_ai_provider_error', 'The provider could not be updated. Try again.'),
@@ -975,7 +1137,7 @@
       }
     } catch (error) {
       if (seq !== state.selectionSeq) return;
-      setStateText(el.providerState, t('lang_ai_provider_error', 'The provider could not be updated. Try again.'), true);
+      setStateText(el.settingsTokenState, t('lang_ai_provider_error', 'The provider could not be updated. Try again.'), true);
     }
   }
 
@@ -1032,76 +1194,70 @@
     }
   }
 
-  async function removeProvider() {
-    if (!hasIpc()) return;
-    if (state.recording) {
-      state.cancelled = true;
-      stopRecording();
+  async function useProviderToken(index) {
+    if (!hasIpc() || state.providerBusy) return;
+    var provider = state.chat.provider || state.provider;
+    if (!provider || typeof api().setActiveProviderKey !== 'function') return;
+    state.providerBusy = true;
+    renderTokens();
+    setConnectionStatus('');
+    try {
+      var result = await api().setActiveProviderKey(provider, index);
+      if (!result || !result.success) {
+        setConnectionStatus(result && result.error
+          ? result.error
+          : t('lang_ai_token_switch_failed', 'The token could not be selected.'), true);
+        return;
+      }
+      var status = await api().keyStatus();
+      if (status && status.success !== false) applyStatus(status, false);
+      setConnectionStatus(t('lang_ai_token_switched', 'The selected token is active now.'), false);
+      if (result.warning) setConnectionStatus(result.warning, true);
+    } catch (error) {
+      setConnectionStatus(t('lang_ai_token_switch_failed', 'The token could not be selected.'), true);
+    } finally {
+      state.providerBusy = false;
+      renderTokens();
     }
+  }
+
+  async function removeProviderToken(index) {
+    if (!hasIpc() || state.providerBusy) return;
     var provider = state.chat.provider || state.provider;
     if (!provider) {
       setConnectionStatus(t('lang_ai_provider_key_none', 'No provider token saved.'), true);
       return;
     }
     var ok = global.confirm
-      ? global.confirm(t('lang_ai_remove_key_confirm', 'Remove the saved key from this computer?'))
+      ? global.confirm(t('lang_ai_token_remove_confirm', 'Remove this token from this computer?'))
       : true;
     if (!ok) return;
 
+    state.providerBusy = true;
+    renderTokens();
     try {
-      var result = await api().clearProviderKey(provider);
+      var result = await api().clearProviderKey(provider, index);
       if (!result || !result.success) {
         setConnectionStatus(result && result.error
           ? result.error
-          : t('lang_ai_failed', 'The provider token could not be removed.'), true);
+          : t('lang_ai_token_remove_failed', 'The token could not be removed.'), true);
         return;
       }
-      state.chat.configured = false;
-      state.chat.session = false;
-      state.chat.unreadable = false;
-      state.enabled = false;
-      state.setupOpen = true;
-      saveSettings();
-      try { await api().setEnabled(false); } catch (error) { /* already off */ }
-      showSetupForm();
-      setStateText(el.providerState, t('lang_ai_provider_key_removed', 'Provider token removed.'), false);
-    } catch (error) {
-      setConnectionStatus(t('lang_ai_failed', 'The provider token could not be removed.'), true);
-    }
-  }
-
-  async function removeProviderBackup() {
-    if (!hasIpc()) return;
-    var provider = state.chat.provider || state.provider;
-    if (!provider) {
-      setConnectionStatus(t('lang_ai_provider_backup_missing', 'No backup token saved.'), true);
-      return;
-    }
-    var ok = global.confirm
-      ? global.confirm(t('lang_ai_provider_backup_remove_confirm', 'Remove the saved backup token from this computer?'))
-      : true;
-    if (!ok) return;
-
-    try {
-      var result = await api().clearProviderKey(provider, true);
-      if (!result || !result.success) {
-        setConnectionStatus(result && result.error
-          ? result.error
-          : t('lang_ai_provider_backup_remove_failed', 'The backup token could not be removed.'), true);
-        return;
-      }
-      state.chat.backupConfigured = false;
-      if (state.chat.activeToken === 'backup') state.chat.activeToken = 'primary';
-      updateSetupState();
-      setStateText(el.providerBackupState, t('lang_ai_provider_backup_removed', 'Backup token removed.'), false);
+      var status = await api().keyStatus();
+      if (status && status.success !== false) applyStatus(status, false);
       if (result.warning) setConnectionStatus(result.warning, true);
+      else setConnectionStatus(t('lang_ai_token_removed', 'Token removed.'), false);
       if (result.configured === false) {
         state.enabled = false;
         saveSettings();
+        try { await api().setEnabled(false); } catch (error) { /* already off */ }
         showSetupForm();
       }
     } catch (error) {
-      setConnectionStatus(t('lang_ai_provider_backup_remove_failed', 'The backup token could not be removed.'), true);
+      setConnectionStatus(t('lang_ai_token_remove_failed', 'The token could not be removed.'), true);
+    } finally {
+      state.providerBusy = false;
+      renderTokens();
     }
   }
 
@@ -1199,8 +1355,36 @@
           preview: local.data || ''
         });
       });
+      /* Only the files picked just now are this message's attachments. They
+         stay queued until a message actually carries them, and are dropped
+         from the queue by that send. */
+      state.pendingAttachmentIds = state.pendingAttachmentIds
+        .concat(saved.map(function (attachment) { return attachment.id; }))
+        .filter(function (id, index, all) {
+          return !!id && all.indexOf(id) === index;
+        });
       renderAttachments();
       setStatus('');
+      /* The operator attached the image the card asked for. That file is the
+         answer, so it goes back with the card's ids instead of as a sentence
+         about having attached something. */
+      var choice = state.pendingChoice;
+      state.pendingChoice = null;
+      if (choice && choice.answer && choice.answer.clarificationId) {
+        if (choice.payload) choice.payload.answered = true;
+        var ids = state.pendingAttachmentIds.slice();
+        if (!ids.length && saved.length) {
+          ids = saved.map(function (attachment) { return attachment.id; });
+        }
+        await sendMessage(choice.label || t('lang_ai_use_image', 'Use the attached image.'), {
+          answer: {
+            clarificationId: choice.answer.clarificationId,
+            optionId: choice.answer.optionId || '',
+            attachmentIds: ids
+          }
+        });
+        return;
+      }
     } catch (error) {
       setStatus(t('lang_ai_attach_failed', 'That image could not be attached.'), true);
     } finally {
@@ -1225,6 +1409,9 @@
       state.attachments = state.attachments.filter(function (attachment) {
         return attachment.id !== id;
       });
+      state.pendingAttachmentIds = state.pendingAttachmentIds.filter(function (pending) {
+        return pending !== id;
+      });
       renderAttachments();
       setStatus('');
     } catch (error) {
@@ -1243,6 +1430,8 @@
     state.planBusy = false;
     state.messages.length = 0;
     state.attachments = [];
+    state.pendingChoice = null;
+    state.pendingAttachmentIds = [];
     state.conversationId = newConversationId();
     renderAttachments();
     renderMessages();
@@ -1253,7 +1442,7 @@
       el.prompt.value = '';
       el.prompt.focus();
     }
-    if (hasIpc() && typeof api().resetChat === 'function') {
+    if (hasBridge() && typeof api().resetChat === 'function') {
       try { await api().resetChat({ conversationId: previous }); } catch (error) { /* renderer is already clear */ }
     }
   }
@@ -1264,6 +1453,7 @@
   var CONFIRM_COMMANDS = [
     'confirm', 'confirm it', 'confirmed', 'yes confirm', 'yes confirm it',
     'go ahead', 'do it', 'execute', 'run it', 'apply', 'save', 'save it',
+    'ok', 'okay', 'تمام', 'تم', 'ماشي', 'حاضر', 'اوك', 'اوكي',
     'تمام نفذ', 'تم نفذ', 'نفذ', 'نفذها', 'نفذ التغييرات',
     'اكد', 'اكدها', 'تاكيد', 'موافق', 'اعتمد', 'قم بالتنفيذ',
     'احفظ', 'احفظها', 'طبق', 'طبقها'
@@ -1295,6 +1485,13 @@
   async function sendMessage(text, options) {
     if (state.busy) return;
     var retry = !!(options && options.retry);
+    /* A card click travels as an answer object: the ids of the question and
+       the option, never wording the model has to interpret again. */
+    var answer = options && options.answer && typeof options.answer === 'object'
+      ? options.answer : null;
+    if (answer && (!answer.clarificationId || typeof answer.clarificationId !== 'string')) {
+      answer = null;
+    }
     if (!state.enabled) {
       setStatus(t('lang_ai_disabled', 'Turn the assistant on first.'), true);
       return;
@@ -1315,6 +1512,10 @@
       setStatus(t('lang_ai_message_too_long', 'That message is too long. Keep it under 4,000 characters.'), true);
       return;
     }
+    /* Typing instead of attaching abandons the choice the card offered, so a
+       later attachment cannot answer a question the operator walked away
+       from. */
+    if (!answer) state.pendingChoice = null;
 
     var pendingPlan = latestPendingPlan();
     var pendingCommand = pendingPlan ? planCommand(message) : '';
@@ -1349,6 +1550,8 @@
         message: message,
         history: history,
         conversationId: state.conversationId,
+        answer: answer || undefined,
+        attachedIds: state.pendingAttachmentIds.slice(),
         authToken: sessionToken(),
         branchId: activeBranch(),
         username: currentUsername()
@@ -1368,6 +1571,9 @@
         showRetry();
         return;
       }
+      /* The message carried these images, so they belong to it now and are
+         not offered to the next one. */
+      state.pendingAttachmentIds = [];
       addMessage('assistant', reply, toolCalls);
       setStatus('');
     } catch (error) {
@@ -1564,6 +1770,11 @@
     return button;
   }
 
+  /* A click on this card is a decision the system takes, not a sentence for
+     the model to re-read. An option that means "enter something" opens the
+     entry - the picker, a number field - instead of describing it in chat;
+     everything else sends the ids of the question and the option alongside
+     the label, and only text that really is an answer goes back as text. */
   function buildClarifyCard(payload) {
     var card = cardShell(t('lang_ai_need_detail', 'Need one detail'), '');
     var body = document.createElement('div');
@@ -1572,6 +1783,18 @@
     question.className = 'posnic-ai-card-note posnic-ai-clarify-question';
     question.textContent = payload.question || '';
     body.append(question);
+    var answerFor = function (option) {
+      return {
+        clarificationId: String(payload.id || ''),
+        optionId: String((option && option.id) || '')
+      };
+    };
+    var settle = function () {
+      payload.answered = true;
+      body.querySelectorAll('button, input').forEach(function (item) {
+        item.disabled = true;
+      });
+    };
     var options = Array.isArray(payload.options) ? payload.options : [];
     if (options.length) {
       var list = document.createElement('div');
@@ -1584,15 +1807,67 @@
         button.disabled = payload.answered === true || state.busy;
         button.addEventListener('click', function () {
           if (payload.answered || state.busy) return;
-          payload.answered = true;
-          button.parentNode.querySelectorAll('button').forEach(function (item) {
-            item.disabled = true;
-          });
-          sendMessage(option.value || option.label || '');
+          var answer = answerFor(option);
+          if (option.action === 'attach') {
+            /* Open the picker. The card stays live until a file is chosen,
+               so cancelling the dialog costs nothing and asks nothing. */
+            startAttachment(answer, option.label, payload);
+            return;
+          }
+          settle();
+          sendMessage(option.value || option.label || '', { answer: answer });
         });
         list.append(button);
       });
       body.append(list);
+    } else if (payload.action === 'attach') {
+      var attach = document.createElement('button');
+      attach.type = 'button';
+      attach.className = 'btn btn-outline-primary btn-sm posnic-ai-option';
+      attach.textContent = t('lang_ai_attach_image', 'Attach image');
+      attach.disabled = payload.answered === true || state.busy;
+      attach.addEventListener('click', function () {
+        if (payload.answered || state.busy) return;
+        startAttachment(answerFor(null), '', payload);
+      });
+      body.append(attach);
+    } else if (payload.action === 'number') {
+      var row = document.createElement('div');
+      row.className = 'posnic-ai-number';
+      var input = document.createElement('input');
+      input.type = 'number';
+      input.className = 'form-control';
+      input.min = '0';
+      input.step = 'any';
+      input.setAttribute('aria-label', payload.question || '');
+      var use = document.createElement('button');
+      use.type = 'button';
+      use.className = 'btn btn-primary btn-sm';
+      use.textContent = t('lang_ai_use_value', 'Use this value');
+      use.disabled = payload.answered === true || state.busy;
+      var submitNumber = function () {
+        if (payload.answered || state.busy) return;
+        var value = String(input.value || '').trim();
+        if (!value) return;
+        settle();
+        sendMessage(value, {
+          answer: {
+            clarificationId: String(payload.id || ''),
+            optionId: '',
+            slot: String(payload.slot || ''),
+            value: value
+          }
+        });
+      };
+      use.addEventListener('click', submitNumber);
+      input.addEventListener('keydown', function (event) {
+        if (event.key === 'Enter') {
+          event.preventDefault();
+          submitNumber();
+        }
+      });
+      row.append(input, use);
+      body.append(row);
     } else {
       var hint = document.createElement('div');
       hint.className = 'posnic-ai-card-note';
@@ -1601,6 +1876,25 @@
     }
     card.append(body);
     return card;
+  }
+
+  /* The picker is opened for a card that asked for an image. Nothing is sent
+     yet: the file is the answer, and it only becomes one once it is actually
+     attached. */
+  function startAttachment(answer, label, payload) {
+    if (!el.attach || el.attach.disabled || !el.attachInput || !canAttach()) {
+      setStatus(t('lang_ai_attach_failed', 'That image could not be attached.'), true);
+      return;
+    }
+    state.pendingChoice = {
+      answer: {
+        clarificationId: String(answer.clarificationId || ''),
+        optionId: String(answer.optionId || '')
+      },
+      label: String(label || ''),
+      payload: payload || null
+    };
+    el.attachInput.click();
   }
 
   function planActionLabel(action) {
@@ -1729,7 +2023,7 @@
 
   async function confirmPlanCard(payload) {
     if (state.busy || state.planBusy || !payload || !payload.plan) return;
-    if (!hasIpc() || typeof api().confirmPlan !== 'function') {
+    if (!hasBridge() || typeof api().confirmPlan !== 'function') {
       setStatus(t('lang_ai_failed', 'The assistant could not be loaded. Try again.'), true);
       return;
     }
@@ -1771,7 +2065,7 @@
 
   async function cancelPlanCard(payload) {
     if (state.busy || state.planBusy || !payload || !payload.plan) return;
-    if (!hasIpc() || typeof api().cancelPlan !== 'function') return;
+    if (!hasBridge() || typeof api().cancelPlan !== 'function') return;
     var generation = state.chatGeneration;
     state.planBusy = true;
     updateControls();
@@ -2258,10 +2552,21 @@
 
     if (cancelled) return;
     var blob = new Blob(chunks, { type: (recorder && recorder.mimeType) || 'audio/webm' });
-    if (!blob.size) {
+    await transcribeBlob(blob);
+  }
+
+  /* One path for a clip from MediaRecorder, so the page sends the same
+     base64 payload on desktop and phone. */
+  async function transcribeBlob(blob) {
+    if (!blob || !blob.size) {
       setStatus(t('lang_ai_empty_transcript', 'No speech was recognised. Try again a little closer to the microphone.'), true);
       return;
     }
+    if (blob.size > MAX_AUDIO_BYTES) {
+      setStatus(t('lang_ai_too_large', 'That recording is too large. Keep it under 30 seconds.'), true);
+      return;
+    }
+    if (state.busy) return;
 
     state.busy = true;
     updateControls();
@@ -2285,7 +2590,7 @@
     } catch (error) {
       state.busy = false;
       updateControls();
-      console.error('[AI] transcription request failed in the desktop bridge.', error);
+      console.error('[AI] transcription request failed.', error);
       setStatus(t('lang_ai_audio_failed', 'That recording could not be read. Try again.'), true);
     }
   }
@@ -2304,9 +2609,22 @@
       setStatus(t('lang_ai_key_missing', 'Add your Groq Whisper key first.'), true);
       return;
     }
-    if (!global.navigator || !navigator.mediaDevices ||
+    if (global.isSecureContext === false ||
+        !global.navigator || !navigator.mediaDevices ||
         typeof navigator.mediaDevices.getUserMedia !== 'function' ||
         !global.MediaRecorder) {
+      /* Browsers only expose in-page recording on a secure origin. A phone on
+         plain HTTP cannot use the microphone, and opening the system recorder
+         is not a substitute. Send it to the local HTTPS front door instead. */
+      var secureUrl = secureVoiceUrl();
+      if (secureUrl) {
+        setStatus(
+          t('lang_ai_voice_https_required', 'Voice recording needs the secure Posnic address. Open {url} and log in again.')
+            .replace(/\{url\}/g, secureUrl),
+          true,
+        );
+        return;
+      }
       setStatus(t('lang_ai_recorder_failed', 'Recording is not available here. Type your question instead.'), true);
       return;
     }
@@ -2366,6 +2684,7 @@
   function cacheElements() {
     el.setupCard = byId('ai_setup_card');
     el.chatCard = byId('ai_chat_card');
+    el.settingsColumn = byId('ai_settings_column');
     el.settingsCard = byId('ai_settings_card');
     el.enable = byId('ai_enable');
     el.setupForm = byId('ai_setup_form');
@@ -2376,17 +2695,11 @@
     el.transcriptionState = byId('ai_transcription_state');
     el.provider = byId('ai_provider');
     el.model = byId('ai_model');
-    el.providerKey = byId('ai_provider_key');
-    el.providerSave = byId('ai_provider_save');
-    el.providerState = byId('ai_provider_state');
-    el.providerBackupKey = byId('ai_provider_backup_key');
-    el.providerBackupSave = byId('ai_provider_backup_save');
-    el.providerBackupState = byId('ai_provider_backup_state');
-    el.removeProviderBackup = byId('ai_provider_backup_remove');
-    el.settingsBackupKey = byId('ai_settings_backup_key');
-    el.settingsBackupSave = byId('ai_settings_backup_save');
-    el.settingsBackupState = byId('ai_settings_backup_state');
-    el.removeSettingsBackup = byId('ai_settings_backup_remove');
+    el.settingsTokens = byId('ai_settings_tokens');
+    el.settingsTokenKey = byId('ai_settings_token_key');
+    el.settingsTokenSave = byId('ai_settings_token_save');
+    el.settingsTokenState = byId('ai_settings_token_state');
+    el.settingsAddGroup = byId('ai_settings_add_group');
     el.turnOn = byId('ai_turn_on');
     el.reasoning = byId('ai_reasoning');
     el.reasoningValue = byId('ai_reasoning_value');
@@ -2394,7 +2707,6 @@
     el.connectionStatus = byId('ai_connection_status');
     el.disable = byId('ai_disable');
     el.removeKey = byId('ai_remove_key');
-    el.removeProvider = byId('ai_remove_provider');
     el.messages = byId('ai_messages');
     el.empty = byId('ai_empty');
     el.status = byId('ai_status');
@@ -2420,33 +2732,15 @@
     });
     el.provider.addEventListener('change', onProviderChange);
     el.model.addEventListener('change', onModelChange);
-    el.providerSave.addEventListener('click', saveProviderKey);
-    el.providerKey.addEventListener('keydown', function (event) {
-      if (event.key === 'Enter') {
-        event.preventDefault();
-        saveProviderKey();
-      }
-    });
-    if (el.providerBackupSave) el.providerBackupSave.addEventListener('click', function () { saveProviderBackupKey('setup'); });
-    if (el.providerBackupKey) {
-      el.providerBackupKey.addEventListener('keydown', function (event) {
+    if (el.settingsTokenSave) el.settingsTokenSave.addEventListener('click', saveProviderKey);
+    if (el.settingsTokenKey) {
+      el.settingsTokenKey.addEventListener('keydown', function (event) {
         if (event.key === 'Enter') {
           event.preventDefault();
-          saveProviderBackupKey('setup');
+          saveProviderKey();
         }
       });
     }
-    if (el.removeProviderBackup) el.removeProviderBackup.addEventListener('click', removeProviderBackup);
-    if (el.settingsBackupSave) el.settingsBackupSave.addEventListener('click', function () { saveProviderBackupKey('settings'); });
-    if (el.settingsBackupKey) {
-      el.settingsBackupKey.addEventListener('keydown', function (event) {
-        if (event.key === 'Enter') {
-          event.preventDefault();
-          saveProviderBackupKey('settings');
-        }
-      });
-    }
-    if (el.removeSettingsBackup) el.removeSettingsBackup.addEventListener('click', removeProviderBackup);
     el.turnOn.addEventListener('click', turnOn);
     if (el.reasoning) {
       el.reasoning.addEventListener('input', onReasoningInput);
@@ -2454,7 +2748,6 @@
     }
     el.disable.addEventListener('click', disableFeature);
     el.removeKey.addEventListener('click', removeTranscription);
-    el.removeProvider.addEventListener('click', removeProvider);
     el.newChat.addEventListener('click', function () { newChat(); });
     el.send.addEventListener('click', function () { sendMessage(); });
     if (el.retry) el.retry.addEventListener('click', retryLastMessage);
@@ -2468,6 +2761,11 @@
         var files = el.attachInput.files;
         attachFiles(files);
         el.attachInput.value = '';
+      });
+      /* Cancelling the dialog answers nothing: the card stays live and the
+         operator can still type an answer or attach later. */
+      el.attachInput.addEventListener('cancel', function () {
+        state.pendingChoice = null;
       });
     }
     el.prompt.addEventListener('keydown', function (event) {
@@ -2499,6 +2797,9 @@
       state.conversationId = newConversationId();
       if (hasIpc() && typeof api().onPlanProgress === 'function') {
         state.offPlanProgress = api().onPlanProgress(updatePlanProgress);
+      }
+      if (hasIpc() && typeof api().onChatProgress === 'function') {
+        state.offChatProgress = api().onChatProgress(showChatProgress);
       }
       state.initialized = true;
     }

@@ -19,7 +19,7 @@
                         </button>
                         <div id="ai_setup_form" class="mt-4" hidden>
                             <div class="row">
-                                <div class="col-lg-6 mb-3">
+                                <div class="col-12 mb-3">
                                     <div class="card border h-100 posnic-ai-credential" aria-labelledby="ai_transcription_heading">
                                         <div class="card-body">
                                             <h6 class="card-title" id="ai_transcription_heading"><lang class="lang_ai_transcription_title">Speech to text</lang></h6>
@@ -35,48 +35,6 @@
                                                 </div>
                                             </div>
                                             <small class="text-muted d-block" id="ai_transcription_state" role="status" aria-live="polite"></small>
-                                        </div>
-                                    </div>
-                                </div>
-                                <div class="col-lg-6 mb-3">
-                                    <div class="card border h-100 posnic-ai-credential" aria-labelledby="ai_chat_heading">
-                                        <div class="card-body">
-                                            <h6 class="card-title" id="ai_chat_heading"><lang class="lang_ai_chat_title">Assistant model</lang></h6>
-                                            <div class="form-row">
-                                                <div class="form-group col-sm-6">
-                                                    <label for="ai_provider"><lang class="lang_ai_provider_label">Provider</lang></label>
-                                                    <select class="form-control" id="ai_provider" aria-describedby="ai_provider_state"></select>
-                                                </div>
-                                                <div class="form-group col-sm-6">
-                                                    <label for="ai_model"><lang class="lang_ai_model_label">Model</lang></label>
-                                                    <select class="form-control" id="ai_model" aria-describedby="ai_provider_state"></select>
-                                                </div>
-                                            </div>
-                                            <div class="form-group">
-                                                <label for="ai_provider_key"><lang class="lang_ai_provider_key_label">Provider token</lang></label>
-                                                <div class="input-group">
-                                                    <input type="password" class="form-control" id="ai_provider_key" autocomplete="new-password" spellcheck="false" aria-describedby="ai_provider_state">
-                                                    <div class="input-group-append">
-                                                        <button type="button" class="btn btn-primary" id="ai_provider_save">
-                                                            <span><lang class="lang_ai_use_provider_key">Use this token</lang></span>
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                            </div>
-                                            <small class="text-muted d-block" id="ai_provider_state" role="status" aria-live="polite"></small>
-                                            <div class="form-group mt-3">
-                                                <label for="ai_provider_backup_key"><lang class="lang_ai_provider_backup_label">Backup token (optional)</lang></label>
-                                                <div class="input-group">
-                                                    <input type="password" class="form-control" id="ai_provider_backup_key" autocomplete="new-password" spellcheck="false" aria-describedby="ai_provider_backup_state">
-                                                    <div class="input-group-append">
-                                                        <button type="button" class="btn btn-outline-primary" id="ai_provider_backup_save">
-                                                            <span><lang class="lang_ai_provider_backup_save">Save backup</lang></span>
-                                                        </button>
-                                                    </div>
-                                                </div>
-                                                <small class="text-muted d-block mt-2" id="ai_provider_backup_state" role="status" aria-live="polite"></small>
-                                                <button type="button" class="btn btn-link p-0 mt-1" id="ai_provider_backup_remove" hidden><lang class="lang_ai_provider_backup_remove">Remove backup token</lang></button>
-                                            </div>
                                         </div>
                                     </div>
                                 </div>
@@ -138,10 +96,34 @@
                 </div>
             </div>
 
-            <div class="col-xl-4">
+            <div class="col-xl-4 order-first order-xl-last" id="ai_settings_column">
                 <div class="card m-b-30" id="ai_settings_card" hidden>
                     <div class="card-body">
                         <h5 class="card-title"><lang class="lang_setting">Setting</lang></h5>
+                        <div class="form-row">
+                            <div class="form-group col-sm-6">
+                                <label for="ai_provider"><lang class="lang_ai_provider_label">Provider</lang></label>
+                                <select class="form-control" id="ai_provider" aria-describedby="ai_provider_state"></select>
+                            </div>
+                            <div class="form-group col-sm-6">
+                                <label for="ai_model"><lang class="lang_ai_model_label">Model</lang></label>
+                                <select class="form-control" id="ai_model" aria-describedby="ai_provider_state"></select>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label for="ai_settings_token_key"><lang class="lang_ai_tokens_label">Provider tokens</lang></label>
+                            <div class="posnic-ai-token-list" id="ai_settings_tokens"></div>
+                            <div class="input-group mt-2" id="ai_settings_add_group">
+                                <input type="password" class="form-control" id="ai_settings_token_key" autocomplete="new-password" spellcheck="false" aria-describedby="ai_settings_token_state">
+                                <div class="input-group-append">
+                                    <button type="button" class="btn btn-outline-primary" id="ai_settings_token_save">
+                                        <span><lang class="lang_ai_token_add">Add token</lang></span>
+                                    </button>
+                                </div>
+                            </div>
+                            <small class="text-muted d-block mt-2" id="ai_settings_token_state" role="status" aria-live="polite"></small>
+                            <small class="text-muted d-block mt-1"><lang class="lang_ai_token_rotation_note">If a token is rate-limited, the next one is tried automatically.</lang></small>
+                        </div>
                         <div class="form-group">
                             <label for="ai_reasoning"><lang class="lang_ai_reasoning_label">Thinking level</lang></label>
                             <input type="range" class="form-control-range" id="ai_reasoning" min="0" max="2" step="1" value="1" aria-describedby="ai_reasoning_state">
@@ -154,23 +136,9 @@
                         </div>
                         <div class="d-flex flex-wrap align-items-center">
                             <button type="button" class="btn btn-link p-0 mr-3" id="ai_disable"><lang class="lang_ai_turn_off">Turn off</lang></button>
-                            <button type="button" class="btn btn-link p-0 mr-3" id="ai_remove_key"><lang class="lang_ai_remove_key">Remove key</lang></button>
-                            <button type="button" class="btn btn-link p-0" id="ai_remove_provider"><lang class="lang_ai_provider_key_remove">Remove provider token</lang></button>
+                            <button type="button" class="btn btn-link p-0" id="ai_remove_key"><lang class="lang_ai_remove_key">Remove speech key</lang></button>
                         </div>
                         <small class="text-muted d-block mt-2" id="ai_connection_status" role="status" aria-live="polite"></small>
-                        <div class="form-group mt-3">
-                            <label for="ai_settings_backup_key"><lang class="lang_ai_provider_backup_label">Backup token (optional)</lang></label>
-                            <div class="input-group">
-                                <input type="password" class="form-control" id="ai_settings_backup_key" autocomplete="new-password" spellcheck="false" aria-describedby="ai_settings_backup_state">
-                                <div class="input-group-append">
-                                    <button type="button" class="btn btn-outline-primary" id="ai_settings_backup_save">
-                                        <span><lang class="lang_ai_provider_backup_save">Save backup</lang></span>
-                                    </button>
-                                </div>
-                            </div>
-                            <small class="text-muted d-block mt-2" id="ai_settings_backup_state" role="status" aria-live="polite"></small>
-                            <button type="button" class="btn btn-link p-0 mt-1" id="ai_settings_backup_remove" hidden><lang class="lang_ai_provider_backup_remove">Remove backup token</lang></button>
-                        </div>
                     </div>
                 </div>
             </div>

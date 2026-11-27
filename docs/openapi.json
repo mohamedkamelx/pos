@@ -24,6 +24,10 @@
       "description": "Mounted at /activity-logs"
     },
     {
+      "name": "Ai",
+      "description": "Mounted at /ai"
+    },
+    {
       "name": "Auth utils",
       "description": "Mounted at /auth-utils"
     },
@@ -345,6 +349,413 @@
             "description": "Server error"
           }
         }
+      }
+    },
+    "/ai/status": {
+      "get": {
+        "summary": "status",
+        "operationId": "get_ai_status",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        }
+      }
+    },
+    "/ai/enabled": {
+      "post": {
+        "summary": "enabled",
+        "operationId": "post_ai_enabled",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/chat": {
+      "post": {
+        "summary": "body",
+        "operationId": "post_ai_chat",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/transcribe": {
+      "post": {
+        "summary": "body",
+        "operationId": "post_ai_transcribe",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/attach": {
+      "post": {
+        "summary": "body",
+        "operationId": "post_ai_attach",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/remove-attachment": {
+      "post": {
+        "summary": "body",
+        "operationId": "post_ai_remove_attachment",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/reset-chat": {
+      "post": {
+        "summary": "body",
+        "operationId": "post_ai_reset_chat",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/confirm-plan": {
+      "post": {
+        "summary": "body",
+        "operationId": "post_ai_confirm_plan",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/cancel-plan": {
+      "post": {
+        "summary": "body",
+        "operationId": "post_ai_cancel_plan",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/reasoning": {
+      "post": {
+        "summary": "reasoning",
+        "operationId": "post_ai_reasoning",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/provider-model": {
+      "post": {
+        "summary": "model",
+        "operationId": "post_ai_provider_model",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/validate-key": {
+      "post": {
+        "summary": "desktopOnly",
+        "operationId": "post_ai_validate_key",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/save-key": {
+      "post": {
+        "summary": "desktopOnly",
+        "operationId": "post_ai_save_key",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/clear-key": {
+      "post": {
+        "summary": "desktopOnly",
+        "operationId": "post_ai_clear_key",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/validate-provider-key": {
+      "post": {
+        "summary": "desktopOnly",
+        "operationId": "post_ai_validate_provider_key",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/save-provider-key": {
+      "post": {
+        "summary": "desktopOnly",
+        "operationId": "post_ai_save_provider_key",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
+      }
+    },
+    "/ai/clear-provider-key": {
+      "post": {
+        "summary": "desktopOnly",
+        "operationId": "post_ai_clear_provider_key",
+        "tags": [
+          "Ai"
+        ],
+        "responses": {
+          "200": {
+            "description": "Success"
+          },
+          "400": {
+            "description": "Validation failed"
+          },
+          "401": {
+            "description": "Authentication required"
+          },
+          "500": {
+            "description": "Server error"
+          }
+        },
+        "description": "Request body is not yet documented. This endpoint has no validation middleware, so its shape cannot be derived from the source. Adding validation improves both runtime safety and this document."
       }
     },
     "/auth-utils/sign-token": {
@@ -6098,6 +6509,10 @@
                   "register_license": {
                     "type": "string"
                   },
+                  "business_type": {
+                    "type": "string",
+                    "maxLength": 80
+                  },
                   "register_firstname": {
                     "type": "string"
                   },
@@ -6187,6 +6602,10 @@
                   },
                   "register_license": {
                     "type": "string"
+                  },
+                  "business_type": {
+                    "type": "string",
+                    "maxLength": 80
                   },
                   "register_firstname": {
                     "type": "string"
